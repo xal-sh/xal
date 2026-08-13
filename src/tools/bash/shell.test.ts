@@ -1,7 +1,8 @@
 import { afterEach, expect, test } from "bun:test"
-import { mkdir, mkdtemp, rm } from "node:fs/promises"
+import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { getJob, stopJob, suppressDelivery, waitForProcessOutput } from "../../background/jobs"
 import { disposeShellSession, executeShellCommand } from "./shell"
 import { bashTool } from "./tool"
 
@@ -42,17 +43,39 @@ test("keeps persistent shell state inside its owning session", async () => {
   }
 })
 
-test("rejects managed background processes in task agents", async () => {
-  await expect(
-    bashTool.execute(
-      { command: "sleep 30", background: true },
+test("runs owner-scoped managed background Bash for task agents with a durable log", async () => {
+  const sessionId = crypto.randomUUID()
+  const directory = await mkdtemp(join(tmpdir(), "tack-shell-bg-test-"))
+  try {
+    const result = await bashTool.execute(
+      { command: "echo durable-marker && sleep 30", background: true },
       {
         cwd: process.cwd(),
-        sessionId: crypto.randomUUID(),
+        sessionId,
         sessionKind: "subagent",
+        directory,
         signal: new AbortController().signal,
         update() {},
       },
-    ),
-  ).rejects.toThrow("background Bash is unavailable in task agents")
+    )
+    const id = /background job ([\w-]+)/.exec(result.output)?.[1]
+    if (!id) throw new Error(`background job id missing from: ${result.output}`)
+    const job = getJob(id)
+    if (!job || job.kind !== "process") throw new Error("background job was not registered")
+
+    expect(job.ownerId).toBe(sessionId)
+    await waitForProcessOutput(job, 5_000)
+    expect(job.history).toContain("durable-marker")
+
+    await stopJob(job)
+    await job.completion
+    suppressDelivery(job)
+
+    expect(job.done).toBe(true)
+    expect(job.termination?.status).toBe("signaled")
+    if (job.record?.status !== "saved") throw new Error("background job log was not saved")
+    expect(await readFile(job.record.path, "utf8")).toContain("durable-marker")
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
 })

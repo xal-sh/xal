@@ -3,11 +3,11 @@ import { join } from "node:path"
 import { AgentSession } from "./agent-session"
 import type { AgentEvent } from "./events"
 import { registerPrompt } from "./prompt"
-import { runAgentTurn } from "./run"
 import {
   appendAgentTranscript,
   createAgentJob,
   finishAgentJob,
+  runningProcessJobs,
   sealAgentTranscript,
   setAgentActivity,
   setAgentRecord,
@@ -16,6 +16,7 @@ import {
   touchAgentActivity,
   type BackgroundAgentOutcome,
   type BackgroundAgentJob,
+  type BackgroundProcessJob,
 } from "../background/jobs"
 import { backgroundTasksChanged, registerBackgroundTask } from "../background/registry"
 import { createManagedWorktree, type ManagedWorktree } from "../git/worktrees"
@@ -25,7 +26,7 @@ import { compactPath } from "../lib/path"
 import { modeDefinition } from "../permissions/modes"
 import type { PermissionMode } from "../permissions/types"
 import { registerPolicyRule } from "../permissions/service"
-import { isThinkingEffort, type ThinkingEffort, type Usage } from "../providers/types"
+import { isThinkingEffort, type ThinkingEffort, type Usage, type UserInput } from "../providers/types"
 import { redactText } from "../secrets/redactor"
 import { toolFailed } from "../tools/output"
 import { registerTool } from "../tools/registry"
@@ -255,6 +256,9 @@ function activity(
       backgroundTasksChanged()
       break
     case "background_results":
+      state.activity = "Reconciling background results"
+      for (const result of event.results) record(`\n> background result: ${result.id} · ${result.status}\n`)
+      break
     case "plan_updated":
     case "task_list_updated":
     case "session_started":
@@ -398,6 +402,138 @@ function registerTask(
   })
 }
 
+type TaskDriveOutcome =
+  { status: "completed"; report: string } | { status: "failed"; error: string } | { status: "interrupted" }
+
+type TaskTurnEnd = { status: "completed" } | { status: "failed"; error: string } | { status: "interrupted" }
+
+function runningJobsNotice(running: BackgroundProcessJob[]): string {
+  const listing = running.map((job) => `- ${job.id}: ${job.command.split("\n", 1)[0]}`).join("\n")
+  return [
+    "<system-notice>",
+    "Your response is not final while managed background jobs are still running:",
+    listing,
+    "Collect their results with job_output (pass wait to block), stop servers and watchers with job_kill, and finish only after every job has settled. Your final report must account for their results.",
+    "</system-notice>",
+  ].join("\n")
+}
+
+async function driveTaskToQuiescence(
+  child: AgentSession,
+  input: UserInput,
+  handle: (event: AgentEvent) => void,
+  signal: AbortSignal,
+): Promise<TaskDriveOutcome> {
+  const turns: TaskTurnEnd[] = []
+  let candidate = ""
+  let idle = false
+  let waiter: (() => void) | undefined
+
+  const wake = (): void => waiter?.()
+  const wait = (): Promise<void> =>
+    new Promise((resolve) => {
+      const settle = (): void => {
+        signal.removeEventListener("abort", settle)
+        if (waiter === settle) waiter = undefined
+        resolve()
+      }
+      waiter = settle
+      signal.addEventListener("abort", settle)
+    })
+
+  const unsubscribe = child.subscribe((event) => {
+    handle(event)
+    switch (event.type) {
+      case "assistant_message":
+        candidate = event.text
+        break
+      case "background_results":
+        candidate = ""
+        break
+      case "state_changed":
+        idle = event.state === "idle"
+        if (idle) wake()
+        break
+      case "turn_ended":
+        turns.push({ status: "completed" })
+        wake()
+        break
+      case "turn_failed":
+        turns.push({ status: "failed", error: event.message })
+        wake()
+        break
+      case "turn_interrupted":
+        turns.push({ status: "interrupted" })
+        wake()
+        break
+      case "plan_updated":
+      case "task_list_updated":
+      case "session_started":
+      case "session_replay_finished":
+      case "session_title_changed":
+      case "workspace_changed":
+      case "mode_changed":
+      case "model_changed":
+      case "thinking_changed":
+      case "user_message":
+      case "conversation_rewound":
+      case "conversation_redone":
+      case "tool_call_updated":
+      case "hook_started":
+      case "hook_finished":
+      case "queue_changed":
+      case "queue_flushed":
+      case "text_delta":
+      case "reasoning_summary_delta":
+      case "reasoning_delta":
+      case "reasoning_summary":
+      case "retry_scheduled":
+      case "approval_requested":
+      case "elicitation_requested":
+      case "elicitation_resolved":
+      case "tool_started":
+      case "tool_updated":
+      case "shell_finished":
+      case "tool_finished":
+      case "compacted":
+      case "error":
+        break
+    }
+  })
+
+  try {
+    if (!child.send(input)) return { status: "failed", error: "task session did not accept the prompt" }
+    let noticeSent = false
+    while (true) {
+      if (turns.length === 0) {
+        if (signal.aborted) return { status: "interrupted" }
+        await wait()
+        continue
+      }
+      const turn = turns.shift()!
+      if (turn.status === "failed") return { status: "failed", error: turn.error }
+      if (turn.status === "interrupted") return { status: "interrupted" }
+      while (!idle && !signal.aborted) await wait()
+      if (signal.aborted) return { status: "interrupted" }
+      if (turns.length > 0) continue
+      if (!child.hasPendingAsyncWork()) {
+        const report = candidate.trim()
+        if (report) return { status: "completed", report }
+        return { status: "failed", error: "completed without a final report" }
+      }
+      if (!noticeSent) {
+        const running = runningProcessJobs(child.id)
+        if (running.length > 0) {
+          noticeSent = true
+          child.send({ text: runningJobsNotice(running), images: [] })
+        }
+      }
+    }
+  } finally {
+    unsubscribe()
+  }
+}
+
 async function runTask(
   job: BackgroundAgentJob,
   item: TaskItem,
@@ -415,6 +551,12 @@ async function runTask(
   let child: AgentSession | undefined
   let terminal: TaskTerminal | undefined
   const record = (text: string): void => appendAgentTranscript(job, text)
+  const cleanupFailure = (error: unknown): void => {
+    const message = describeError(error)
+    record(`\nTask agent cleanup failed: ${message}\n`)
+    terminal = { outcome: { status: "failed" }, detail: `failed to clean up task resources: ${message}` }
+    setAgentActivity(job, "Cleanup failed")
+  }
   try {
     await scheduler.acquire(controller.signal)
     acquired = true
@@ -455,15 +597,23 @@ async function runTask(
     child = taskSession
     setChild(taskSession)
     taskSession.setMode(childMode(item.access, ctx.session.mode))
-    const abortChild = (): void => taskSession.interrupt()
+    const abortChild = (): void => {
+      taskSession.suppressAsyncDeliveries()
+      taskSession.interrupt()
+    }
     controller.signal.addEventListener("abort", abortChild)
-    let outcome: Awaited<ReturnType<typeof runAgentTurn>>
+    let outcome: TaskDriveOutcome
     try {
-      outcome = await runAgentTurn(taskSession, { text: childPrompt(context, item.task), images: [] }, (event) => {
-        if (job.done) return
-        touchAgentActivity(job)
-        activity(event, taskSession, state, record, (value) => setAgentActivity(job, value))
-      })
+      outcome = await driveTaskToQuiescence(
+        taskSession,
+        { text: childPrompt(context, item.task), images: [] },
+        (event) => {
+          if (job.done) return
+          touchAgentActivity(job)
+          activity(event, taskSession, state, record, (value) => setAgentActivity(job, value))
+        },
+        controller.signal,
+      )
     } finally {
       controller.signal.removeEventListener("abort", abortChild)
     }
@@ -476,18 +626,11 @@ async function runTask(
       terminal = { outcome: { status: "interrupted" }, detail: "interrupted" }
     } else if (outcome.status === "failed") {
       setAgentActivity(job, "Failed")
+      record(`\nTask agent failed: ${outcome.error}\n`)
       terminal = { outcome: { status: "failed" }, detail: `failed: ${outcome.error}` }
     } else {
-      const report =
-        typeof outcome.response === "string" ? outcome.response.trim() : JSON.stringify(outcome.response, null, 2)
-      if (!report) {
-        setAgentActivity(job, "Failed")
-        record("\nTask agent completed without a final report.\n")
-        terminal = { outcome: { status: "failed" }, detail: "completed without a final report" }
-      } else {
-        setAgentActivity(job, "Report ready")
-        terminal = { outcome: { status: "completed", report }, detail: "completed" }
-      }
+      setAgentActivity(job, "Report ready")
+      terminal = { outcome: { status: "completed", report: outcome.report }, detail: "completed" }
     }
   } catch (error) {
     if (timedOut) {
@@ -504,18 +647,22 @@ async function runTask(
     }
   } finally {
     if (deadline) clearTimeout(deadline)
-    try {
-      child?.disposeToolResources()
-    } catch (error) {
-      const message = describeError(error)
-      record(`\nTask agent cleanup failed: ${message}\n`)
-      terminal = { outcome: { status: "failed" }, detail: `failed to clean up task resources: ${message}` }
-      setAgentActivity(job, "Cleanup failed")
+    if (child) {
+      try {
+        await child.cancelAndReapAsyncWork()
+      } catch (error) {
+        cleanupFailure(error)
+      }
+      child.disposeAsyncDelivery()
+      try {
+        child.disposeToolResources()
+      } catch (error) {
+        cleanupFailure(error)
+      }
     }
     if (acquired) scheduler.release()
     terminal ??= { outcome: { status: "failed" }, detail: "task ended without an outcome" }
     await finishTask(job, terminal, ctx.session.directory, worktree)
-    ctx.session.deliverAgentResult(job.id)
   }
 }
 
@@ -529,6 +676,7 @@ function spawnTask(item: TaskItem, context: string, ctx: SessionToolContext): Ba
     task: item.task,
     stop: () => {
       controller.abort()
+      child?.suppressAsyncDeliveries()
       child?.interrupt()
     },
     send: (message) => child?.steer(`Parent guidance:\n${message}`) ?? false,
@@ -657,8 +805,8 @@ export function registerTaskAgents(): void {
       return [
         "You are a one-shot task agent working for a primary coding agent. Your first user message contains all shared context and your complete assignment.",
         "Complete only that assignment, work independently with the available tools, and do not ask the user or attempt further delegation.",
-        "Background Bash is unavailable. Run commands in the foreground; task resources are torn down before your result is delivered.",
-        "Return a concise, self-contained final report with the result, evidence, changed files, and verification relevant to the assignment. Report failures clearly.",
+        "Managed background Bash (background:true) is available for long commands; keep working while they run, and their results are delivered back into this conversation automatically. Your task cannot finish while a managed job is running, so stop every long-lived server or watcher with job_kill before your final report. Never detach processes with nohup, setsid, or a trailing &.",
+        "Return a concise, self-contained final report with the result, evidence, changed files, and verification relevant to the assignment. A report produced before a background result arrives is discarded, so account for every delivered result. Report failures clearly.",
       ].join("\n")
     },
   })

@@ -1,0 +1,238 @@
+import { setTimeout as sleep } from "node:timers/promises"
+import { describeError } from "../lib/error"
+import {
+  profileProviderFirstEvent,
+  profileProviderRequestFinished,
+  profileProviderRequestStarted,
+  type ProviderRequestProfile,
+} from "../profiler/profiler"
+import { ProviderError } from "../providers/errors"
+import type { Provider, ProviderOutputItem, StreamRequest, ThinkingEffort, Usage } from "../providers/types"
+import { createRedactedStream, type RedactedStream } from "../secrets/redactor"
+import type { AgentEvent } from "./events"
+import { OutputLoopDetector, type OutputLoop } from "./loop-detection"
+import { isAbortError } from "./session-types"
+import type { SessionKind } from "./types"
+
+const MAX_PROVIDER_ATTEMPTS = 6
+
+export type StreamKind = "assistant" | "reasoning"
+
+export class StreamBuffer {
+  private streaming: { kind: StreamKind; text: string; redactor: RedactedStream } | undefined
+
+  constructor(private readonly emit: (event: AgentEvent) => void) {}
+
+  write(kind: StreamKind, text: string): void {
+    if (this.streaming && this.streaming.kind !== kind) this.flush()
+    const streaming = this.streaming ?? { kind, text: "", redactor: createRedactedStream() }
+    const redacted = streaming.redactor.write(text)
+    streaming.text += redacted
+    this.streaming = streaming
+    if (!redacted) return
+    this.emit(
+      kind === "assistant"
+        ? { type: "text_delta", text: redacted }
+        : { type: "reasoning_summary_delta", text: redacted },
+    )
+  }
+
+  flush(): void {
+    const streaming = this.streaming
+    this.streaming = undefined
+    if (!streaming) return
+    const tail = streaming.redactor.end()
+    if (tail) {
+      streaming.text += tail
+      this.emit(
+        streaming.kind === "assistant"
+          ? { type: "text_delta", text: tail }
+          : { type: "reasoning_summary_delta", text: tail },
+      )
+    }
+    if (!streaming.text) return
+    this.emit(
+      streaming.kind === "assistant"
+        ? { type: "assistant_message", text: streaming.text }
+        : { type: "reasoning_summary", text: streaming.text },
+    )
+  }
+
+  reset(): void {
+    this.streaming = undefined
+  }
+}
+
+export interface StreamRoundHost {
+  readonly kind: SessionKind
+  readonly buffer: StreamBuffer
+  sessionId(): string
+  emit(event: AgentEvent): void
+  pushItem(item: ProviderOutputItem): void
+  buildRequest(
+    provider: Provider,
+    model: string,
+    thinking: ThinkingEffort | undefined,
+    signal: AbortSignal,
+  ): StreamRequest
+  redactOutputItem(item: ProviderOutputItem): ProviderOutputItem
+  onUsage(usage: Usage): void
+}
+
+interface StreamRound {
+  received: boolean
+  items: ProviderOutputItem[]
+  profile: ProviderRequestProfile
+  usage?: Usage
+}
+
+export async function streamProviderTurn(
+  host: StreamRoundHost,
+  signal: AbortSignal,
+  provider: Provider,
+  model: string,
+  thinking: ThinkingEffort | undefined,
+): Promise<ProviderOutputItem[] | undefined> {
+  let attempt = 1
+
+  while (true) {
+    const profile = profileProviderRequestStarted(
+      host.sessionId(),
+      host.kind,
+      "turn",
+      provider.id,
+      model,
+      thinking,
+      attempt,
+    )
+    const round: StreamRound = { received: false, items: [], profile }
+    try {
+      await consumeStream(host, signal, provider, model, thinking, round)
+      profileProviderRequestFinished(profile, "completed", round.usage)
+      return round.items
+    } catch (error) {
+      profileProviderRequestFinished(
+        profile,
+        isAbortError(error) || signal.aborted ? "interrupted" : "failed",
+        round.usage,
+        describeError(error),
+      )
+      if (isAbortError(error) || signal.aborted) {
+        host.buffer.flush()
+        for (const item of round.items.filter((item) => item.type === "assistant_message")) host.pushItem(item)
+        host.emit({ type: "turn_interrupted" })
+        return undefined
+      }
+      if (!(error instanceof ProviderError) || !error.retryable || round.received || attempt >= MAX_PROVIDER_ATTEMPTS) {
+        host.buffer.flush()
+        throw error
+      }
+
+      const delayMs = error.retryAfterMs ?? 1_000 * 2 ** (attempt - 1)
+      attempt += 1
+      host.emit({
+        type: "retry_scheduled",
+        attempt,
+        maxAttempts: MAX_PROVIDER_ATTEMPTS,
+        delayMs,
+        message: error.message,
+      })
+      try {
+        await sleep(delayMs, undefined, { signal })
+      } catch (waitError) {
+        if (!isAbortError(waitError) && !signal.aborted) throw waitError
+        host.emit({ type: "turn_interrupted" })
+        return undefined
+      }
+    }
+  }
+}
+
+async function consumeStream(
+  host: StreamRoundHost,
+  signal: AbortSignal,
+  provider: Provider,
+  model: string,
+  thinking: ThinkingEffort | undefined,
+  round: StreamRound,
+): Promise<void> {
+  const outputLoops = {
+    assistant: new OutputLoopDetector(),
+    reasoning: new OutputLoopDetector(),
+    rawReasoning: new OutputLoopDetector(),
+  }
+  let assistantStreamed = false
+  let reasoningStreamed = false
+
+  const rejectLoop = (loop: OutputLoop | undefined, label: string): void => {
+    if (!loop) return
+    const description = loop === "repeated" ? "repeated text" : "low-novelty text"
+    throw new ProviderError(`model output loop detected in ${label}: ${description}`, { retryable: true })
+  }
+  const detectLoop = (detector: OutputLoopDetector, text: string, label: string): void => {
+    rejectLoop(detector.add(text), label)
+  }
+  const finishLoop = (detector: OutputLoopDetector, label: string): void => {
+    rejectLoop(detector.finish(), label)
+  }
+
+  const rawReasoning = createRedactedStream()
+  for await (const event of provider.stream(host.buildRequest(provider, model, thinking, signal))) {
+    if (!round.received) profileProviderFirstEvent(round.profile, event.type)
+    round.received = true
+    switch (event.type) {
+      case "text_delta":
+        detectLoop(outputLoops.assistant, event.text, "assistant response")
+        assistantStreamed = true
+        host.buffer.write("assistant", event.text)
+        break
+      case "reasoning_summary_delta":
+        detectLoop(outputLoops.reasoning, event.text, "reasoning summary")
+        reasoningStreamed = true
+        host.buffer.write("reasoning", event.text)
+        break
+      case "reasoning_delta":
+        detectLoop(outputLoops.rawReasoning, event.text, "reasoning")
+        {
+          const text = rawReasoning.write(event.text)
+          if (text) host.emit({ type: "reasoning_delta", text })
+        }
+        break
+      case "item_done": {
+        const item = host.redactOutputItem(event.item)
+        if (event.item.type === "assistant_message") {
+          if (!assistantStreamed) {
+            detectLoop(outputLoops.assistant, event.item.text, "assistant response")
+            if (item.type === "assistant_message" && item.text) {
+              host.emit({ type: "assistant_message", text: item.text })
+            }
+          }
+          finishLoop(outputLoops.assistant, "assistant response")
+          assistantStreamed = false
+        }
+        if (event.item.type === "reasoning") {
+          if (!reasoningStreamed) {
+            detectLoop(outputLoops.reasoning, event.item.summary, "reasoning summary")
+            if (item.type === "reasoning" && item.summary) {
+              host.emit({ type: "reasoning_summary", text: item.summary })
+            }
+          }
+          finishLoop(outputLoops.reasoning, "reasoning summary")
+          reasoningStreamed = false
+        }
+        round.items.push(item)
+        break
+      }
+      case "done": {
+        finishLoop(outputLoops.assistant, "assistant response")
+        finishLoop(outputLoops.reasoning, "reasoning summary")
+        finishLoop(outputLoops.rawReasoning, "reasoning")
+        round.usage = event.usage
+        if (round.usage) host.onUsage(round.usage)
+        break
+      }
+    }
+  }
+  const rawReasoningTail = rawReasoning.end()
+  if (rawReasoningTail) host.emit({ type: "reasoning_delta", text: rawReasoningTail })
+}

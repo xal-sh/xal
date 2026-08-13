@@ -21,6 +21,7 @@ function context(cwd: string): ToolExecutionContext {
     cwd,
     sessionId: "files-test",
     sessionKind: "primary",
+    directory: cwd,
     signal: new AbortController().signal,
     update() {},
   }

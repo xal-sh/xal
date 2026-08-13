@@ -72,6 +72,7 @@ interface ToolContract extends ToolDefinition {
 export interface ToolExecutionContext extends ToolCallContext {
   sessionId: string
   sessionKind: SessionKind
+  directory: string
   signal: AbortSignal
   update(text: string): void
 }
@@ -93,7 +94,6 @@ export interface SessionToolContext {
     mode: PermissionMode
     workspaceUndo: WorkspaceUndo
     changeWorkspace(cwd: string): void
-    deliverAgentResult(id: string): void
   }
   signal: AbortSignal
   update(text: string): void

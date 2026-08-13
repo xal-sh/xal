@@ -7,6 +7,7 @@ function context(): ToolExecutionContext {
     cwd: process.cwd(),
     sessionId: "web-test",
     sessionKind: "primary",
+    directory: process.cwd(),
     signal: new AbortController().signal,
     update() {},
   }

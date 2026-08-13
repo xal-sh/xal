@@ -15,12 +15,26 @@ export interface QueuedEntry {
   imageCount: number
 }
 
-export interface BackgroundResult {
+export interface AgentBackgroundResult {
+  kind: "agent"
   id: string
   task: string
   status: "completed" | "failed" | "interrupted" | "timed_out"
   output: string
 }
+
+export interface ProcessBackgroundResult {
+  kind: "process"
+  id: string
+  command: string
+  status: "completed" | "failed" | "interrupted"
+  output: string
+  exitCode?: number
+  signal?: string
+  record?: string
+}
+
+export type BackgroundResult = AgentBackgroundResult | ProcessBackgroundResult
 
 export interface SessionStartedEvent {
   type: "session_started"

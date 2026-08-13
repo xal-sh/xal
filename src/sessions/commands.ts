@@ -1,5 +1,5 @@
 import { resumeSession } from "../agent/compose"
-import type { UndoCheckpoint } from "../agent/agent-session"
+import type { UndoCheckpoint } from "../agent/session-types"
 import { registerCommand } from "../commands/registry"
 import type { Command, CommandContext } from "../commands/types"
 import { compactPath } from "../lib/path"

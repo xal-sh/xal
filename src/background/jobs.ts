@@ -1,4 +1,5 @@
 import { setTimeout as sleep } from "node:timers/promises"
+import { describeError } from "../lib/error"
 import { profileJobCreated, profileJobFinished } from "../profiler/profiler"
 import { createRedactedStream, redactText, type RedactedStream } from "../secrets/redactor"
 import { backgroundTasksChanged, listBackgroundTasks, removeBackgroundTask, subscribeBackgroundTasks } from "./registry"
@@ -6,7 +7,9 @@ import { backgroundTasksChanged, listBackgroundTasks, removeBackgroundTask, subs
 const MAX_PENDING_CHARS = 2_000_000
 const MAX_HISTORY_CHARS = 200_000
 const STOP_WAIT_MS = 2_000
-const AGENT_RETENTION_MS = 5 * 60 * 1_000
+const SETTLED_RETENTION_MS = 5 * 60 * 1_000
+
+export type DeliveryState = "none" | "pending" | "in_flight" | "delivered" | "suppressed" | "dead_lettered"
 
 interface BackgroundJobBase {
   id: string
@@ -15,23 +18,31 @@ interface BackgroundJobBase {
   finishedAt?: number
   done: boolean
   detail: string
+  delivery: DeliveryState
   completion: Promise<void>
   stop(): void
 }
 
+export type BackgroundJobRecord = { status: "saved"; path: string } | { status: "failed"; message: string }
+
+export type ProcessTermination =
+  | { status: "exited"; exitCode: number }
+  | { status: "signaled"; signal: string }
+  | { status: "launch_failed"; message: string }
+
 export interface BackgroundProcessJob extends BackgroundJobBase {
   kind: "process"
+  command: string
   pending: string
   dropped: boolean
   history: string
-  consumed: boolean
+  termination?: ProcessTermination
+  record?: BackgroundJobRecord
   waiters: Set<() => void>
 }
 
 export type BackgroundAgentOutcome =
   { status: "completed"; report: string } | { status: "failed" } | { status: "interrupted" } | { status: "timed_out" }
-
-export type BackgroundAgentRecord = { status: "saved"; path: string } | { status: "failed"; message: string }
 
 export interface BackgroundAgentControls {
   id?: string
@@ -50,8 +61,7 @@ export interface BackgroundAgentJob extends BackgroundJobBase {
   transcript: string
   activity: string
   outcome?: BackgroundAgentOutcome
-  record?: BackgroundAgentRecord
-  consumed: boolean
+  record?: BackgroundJobRecord
   send(message: string): boolean
 }
 
@@ -59,10 +69,25 @@ export type BackgroundJob = BackgroundProcessJob | BackgroundAgentJob
 
 export type CollectedAgentOutcome = BackgroundAgentOutcome | { status: "already_collected" }
 
+export interface ProcessLog {
+  path: string
+  append(text: string): void
+  close(): Promise<void>
+}
+
+export interface BackgroundDeliverySink {
+  deliver(job: BackgroundJob): Promise<boolean> | boolean
+}
+
 const jobs = new Map<string, BackgroundJob>()
 const completions = new WeakMap<BackgroundJob, () => void>()
 const redactors = new WeakMap<BackgroundJob, RedactedStream>()
-const agentEvictions = new Map<string, ReturnType<typeof setTimeout>>()
+const processLogs = new WeakMap<BackgroundProcessJob, ProcessLog>()
+const finishing = new WeakSet<BackgroundProcessJob>()
+const evictions = new Map<string, ReturnType<typeof setTimeout>>()
+const sinks = new Map<string, BackgroundDeliverySink>()
+const dispatching = new Map<string, Promise<void>>()
+const pendingDeliveries: BackgroundJob[] = []
 let nextId = 1
 let cleanupRegistered = false
 
@@ -72,22 +97,24 @@ function registerCleanup(): void {
   subscribeBackgroundTasks(() => {
     const listed = new Set(listBackgroundTasks().map((task) => task.id))
     for (const [id, job] of jobs) {
-      if (listed.has(id) || !job.done || !job.consumed) continue
+      if (listed.has(id) || !job.done) continue
+      if (job.delivery !== "delivered" && job.delivery !== "suppressed") continue
       jobs.delete(id)
-      clearTimeout(agentEvictions.get(id))
-      agentEvictions.delete(id)
+      clearTimeout(evictions.get(id))
+      evictions.delete(id)
     }
   })
 }
 
-function scheduleAgentEviction(job: BackgroundAgentJob): void {
-  if (agentEvictions.has(job.id)) return
+function scheduleEviction(job: BackgroundJob): void {
+  if (evictions.has(job.id)) return
   const timer = setTimeout(() => {
-    agentEvictions.delete(job.id)
+    evictions.delete(job.id)
     removeBackgroundTask(job.id)
-  }, AGENT_RETENTION_MS)
+    if (jobs.get(job.id) === job) jobs.delete(job.id)
+  }, SETTLED_RETENTION_MS)
   timer.unref()
-  agentEvictions.set(job.id, timer)
+  evictions.set(job.id, timer)
 }
 
 function jobId(prefix: string, preferred?: string): string {
@@ -117,6 +144,7 @@ function createBase(
       startedAt: Date.now(),
       done: false,
       detail: "still running",
+      delivery: "none",
       completion,
       stop,
     },
@@ -132,15 +160,20 @@ function registerJob(job: BackgroundJob, complete: () => void): void {
   profileJobCreated(job.id)
 }
 
-export function createProcessJob(prefix: string, ownerId: string, stop: () => void): BackgroundProcessJob {
+export function createProcessJob(
+  prefix: string,
+  ownerId: string,
+  command: string,
+  stop: () => void,
+): BackgroundProcessJob {
   const created = createBase(prefix, ownerId, stop)
   const job: BackgroundProcessJob = {
     ...created.base,
     kind: "process",
+    command: redactText(command),
     pending: "",
     dropped: false,
     history: "",
-    consumed: false,
     waiters: new Set(),
   }
   registerJob(job, created.complete)
@@ -157,11 +190,14 @@ export function createAgentJob(prefix: string, controls: BackgroundAgentControls
     lastActivityAt: created.base.startedAt,
     transcript: "",
     activity: "Initializing…",
-    consumed: false,
     send: controls.send,
   }
   registerJob(job, created.complete)
   return job
+}
+
+export function attachProcessLog(job: BackgroundProcessJob, log: ProcessLog): void {
+  processLogs.set(job, log)
 }
 
 function redactorOf(job: BackgroundJob): RedactedStream {
@@ -177,6 +213,7 @@ function wakeProcess(job: BackgroundProcessJob): void {
 
 function appendProcess(job: BackgroundProcessJob, text: string): void {
   if (!text) return
+  processLogs.get(job)?.append(text)
   job.pending += text
   if (job.pending.length > MAX_PENDING_CHARS) {
     job.pending = job.pending.slice(-MAX_PENDING_CHARS)
@@ -228,9 +265,103 @@ export function sealAgentTranscript(job: BackgroundAgentJob): void {
   redactors.delete(job)
 }
 
-export function setAgentRecord(job: BackgroundAgentJob, record: BackgroundAgentRecord): void {
+export function setAgentRecord(job: BackgroundAgentJob, record: BackgroundJobRecord): void {
   job.record = record.status === "saved" ? record : { status: "failed", message: redactText(record.message) }
   backgroundTasksChanged()
+}
+
+function settleDelivery(job: BackgroundJob, state: "delivered" | "suppressed" | "dead_lettered"): void {
+  job.delivery = state
+  if (job.done && (job.kind === "agent" || state === "dead_lettered")) scheduleEviction(job)
+  backgroundTasksChanged()
+}
+
+function deadLetter(job: BackgroundJob, reason: string): void {
+  job.detail = redactText(`${job.detail}; result undelivered: ${reason}`)
+  settleDelivery(job, "dead_lettered")
+}
+
+function takeNextPendingDelivery(ownerId: string): BackgroundJob | undefined {
+  for (let cursor = pendingDeliveries.length - 1; cursor >= 0; cursor--) {
+    const job = pendingDeliveries[cursor]!
+    if (job.ownerId === ownerId && job.delivery !== "pending") pendingDeliveries.splice(cursor, 1)
+  }
+  const index = pendingDeliveries.findIndex((job) => job.ownerId === ownerId && job.delivery === "pending")
+  if (index < 0) return undefined
+  return pendingDeliveries.splice(index, 1)[0]
+}
+
+async function deliverOwnerPending(ownerId: string): Promise<void> {
+  while (true) {
+    const job = takeNextPendingDelivery(ownerId)
+    if (!job) return
+    const sink = sinks.get(ownerId)
+    if (!sink) {
+      deadLetter(job, "no delivery sink is registered for its owner")
+      continue
+    }
+    job.delivery = "in_flight"
+    let accepted = false
+    let failure: string | undefined
+    try {
+      accepted = await sink.deliver(job)
+    } catch (error) {
+      failure = describeError(error)
+    }
+    if (job.delivery !== "in_flight") continue
+    if (accepted) settleDelivery(job, "delivered")
+    else deadLetter(job, failure ?? "its owner declined the delivery")
+  }
+}
+
+function dispatchOwner(ownerId: string): void {
+  if (dispatching.has(ownerId)) return
+  const run = Promise.resolve()
+    .then(() => deliverOwnerPending(ownerId))
+    .finally(() => {
+      dispatching.delete(ownerId)
+      if (pendingDeliveries.some((job) => job.ownerId === ownerId && job.delivery === "pending")) {
+        dispatchOwner(ownerId)
+      }
+    })
+  dispatching.set(ownerId, run)
+}
+
+function enqueueDelivery(job: BackgroundJob): void {
+  if (job.delivery !== "none") {
+    if (job.kind === "agent" && (job.delivery === "suppressed" || job.delivery === "delivered")) scheduleEviction(job)
+    return
+  }
+  job.delivery = "pending"
+  pendingDeliveries.push(job)
+  dispatchOwner(job.ownerId)
+}
+
+export function registerDeliverySink(ownerId: string, sink: BackgroundDeliverySink): () => void {
+  sinks.set(ownerId, sink)
+  dispatchOwner(ownerId)
+  return () => {
+    if (sinks.get(ownerId) === sink) sinks.delete(ownerId)
+  }
+}
+
+export function acknowledgeDelivery(job: BackgroundJob): boolean {
+  if (job.delivery === "delivered" || job.delivery === "suppressed") return false
+  settleDelivery(job, "suppressed")
+  return true
+}
+
+export function suppressDelivery(job: BackgroundJob): void {
+  if (job.delivery === "delivered" || job.delivery === "dead_lettered") return
+  settleDelivery(job, "suppressed")
+}
+
+export async function drainOwnerDeliveries(ownerId: string): Promise<void> {
+  while (true) {
+    const active = dispatching.get(ownerId)
+    if (!active) return
+    await active
+  }
 }
 
 function completeJob(job: BackgroundJob, detail: string, remove: boolean): void {
@@ -246,12 +377,35 @@ function completeJob(job: BackgroundJob, detail: string, remove: boolean): void 
   else backgroundTasksChanged()
 }
 
-export function finishProcessJob(job: BackgroundProcessJob, detail: string): void {
-  if (job.done) return
+function processDetail(termination: ProcessTermination, logFailure: string | undefined): string {
+  const base =
+    termination.status === "exited"
+      ? `exited with code ${termination.exitCode}`
+      : termination.status === "signaled"
+        ? `terminated by ${termination.signal}`
+        : `failed to launch: ${termination.message}`
+  return logFailure ? `${base}; log persistence failed: ${logFailure}` : base
+}
+
+export async function finishProcessJob(job: BackgroundProcessJob, termination: ProcessTermination): Promise<void> {
+  if (job.done || finishing.has(job)) return
+  finishing.add(job)
   appendProcess(job, redactorOf(job).end())
   redactors.delete(job)
-  completeJob(job, detail, true)
+  job.termination = termination
+  const log = processLogs.get(job)
+  let logFailure: string | undefined
+  if (log) {
+    try {
+      await log.close()
+    } catch (error) {
+      logFailure = describeError(error)
+    }
+    job.record = logFailure ? { status: "failed", message: logFailure } : { status: "saved", path: log.path }
+  }
+  completeJob(job, processDetail(termination, logFailure), true)
   wakeProcess(job)
+  enqueueDelivery(job)
 }
 
 export function finishAgentJob(job: BackgroundAgentJob, outcome: BackgroundAgentOutcome, detail: string): void {
@@ -259,7 +413,7 @@ export function finishAgentJob(job: BackgroundAgentJob, outcome: BackgroundAgent
   sealAgentTranscript(job)
   job.outcome = outcome.status === "completed" ? { status: "completed", report: redactText(outcome.report) } : outcome
   completeJob(job, detail, false)
-  if (job.consumed && jobs.get(job.id) === job) scheduleAgentEviction(job)
+  enqueueDelivery(job)
 }
 
 export function getJob(id: string): BackgroundJob | undefined {
@@ -270,53 +424,85 @@ export function listJobs(): BackgroundJob[] {
   return [...jobs.values()]
 }
 
+function runningJobs(ownerId: string): BackgroundJob[] {
+  return [...jobs.values()].filter((job) => job.ownerId === ownerId && !job.done)
+}
+
+export function runningProcessJobs(ownerId: string): BackgroundProcessJob[] {
+  return [...jobs.values()].filter(
+    (job): job is BackgroundProcessJob => job.kind === "process" && job.ownerId === ownerId && !job.done,
+  )
+}
+
 export function runningAgentJobs(ownerId: string): BackgroundAgentJob[] {
   return [...jobs.values()].filter(
     (job): job is BackgroundAgentJob => job.kind === "agent" && job.ownerId === ownerId && !job.done,
   )
 }
 
+function unsettled(job: BackgroundJob): boolean {
+  return !job.done || job.delivery === "pending" || job.delivery === "in_flight"
+}
+
 export function unsettledAgentJobs(ownerId: string): BackgroundAgentJob[] {
   return [...jobs.values()].filter(
-    (job): job is BackgroundAgentJob => job.kind === "agent" && job.ownerId === ownerId && (!job.done || !job.consumed),
+    (job): job is BackgroundAgentJob => job.kind === "agent" && job.ownerId === ownerId && unsettled(job),
   )
 }
 
 export function unsettledJobs(ownerId: string): BackgroundJob[] {
-  return [...jobs.values()].filter((job) => job.ownerId === ownerId && (!job.done || !job.consumed))
+  return [...jobs.values()].filter((job) => job.ownerId === ownerId && unsettled(job))
 }
 
 export function readProcessOutput(job: BackgroundProcessJob): { text: string; dropped: boolean } {
   const { pending, dropped } = job
   job.pending = ""
   job.dropped = false
-  if (job.done) job.consumed = true
   backgroundTasksChanged()
   return { text: pending, dropped }
 }
 
 export function collectAgentOutcome(job: BackgroundAgentJob): CollectedAgentOutcome {
   if (!job.done || !job.outcome) throw new Error(`background agent ${job.id} has not finished`)
-  if (job.consumed) return { status: "already_collected" }
-  job.consumed = true
-  scheduleAgentEviction(job)
-  backgroundTasksChanged()
+  if (!acknowledgeDelivery(job)) return { status: "already_collected" }
   return job.outcome
-}
-
-export function suppressAgentOutcome(job: BackgroundAgentJob): void {
-  if (job.consumed) return
-  job.consumed = true
-  if (job.done) scheduleAgentEviction(job)
-  backgroundTasksChanged()
 }
 
 export function discardSettledAgentJobs(ownerId: string): void {
   for (const job of [...jobs.values()]) {
     if (job.kind !== "agent" || job.ownerId !== ownerId || !job.done) continue
-    suppressAgentOutcome(job)
+    suppressDelivery(job)
     removeBackgroundTask(job.id)
   }
+}
+
+export async function reapOwnerJobs(ownerId: string, graceMs: number): Promise<void> {
+  const deadline = Date.now() + graceMs
+  while (true) {
+    const running = runningJobs(ownerId)
+    if (running.length === 0) break
+    for (const job of running) {
+      suppressDelivery(job)
+      job.stop()
+    }
+    const wait = deadline - Date.now()
+    const settled =
+      wait > 0 &&
+      (await Promise.race([
+        Promise.all(running.map((job) => job.completion)).then(() => true),
+        sleep(wait, false, { ref: false }),
+      ]))
+    if (!settled) {
+      const stuck = running.filter((job) => !job.done).map((job) => job.id)
+      if (stuck.length > 0) {
+        throw new Error(`background job cleanup is stuck; still running: ${stuck.join(", ")}`)
+      }
+    }
+  }
+  for (const job of [...jobs.values()]) {
+    if (job.ownerId === ownerId) suppressDelivery(job)
+  }
+  await drainOwnerDeliveries(ownerId)
 }
 
 export async function waitForProcessOutput(
@@ -359,7 +545,7 @@ export async function waitForAgentCompletion(
 export async function stopJob(job: BackgroundJob): Promise<void> {
   if (job.done) return
   if (job.kind === "agent") {
-    suppressAgentOutcome(job)
+    suppressDelivery(job)
     setAgentActivity(job, "Stopping…")
   }
   job.stop()

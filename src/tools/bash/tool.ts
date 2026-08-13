@@ -66,7 +66,7 @@ function parameters(): Record<string, unknown> {
     background: {
       type: "boolean",
       description:
-        "True runs the command as a background job and returns its job id immediately; the timeout does not apply. Read new output with job_output and stop the job with job_kill",
+        "True runs the command as a managed background job and returns its job id immediately; the timeout does not apply. The job's result is delivered automatically when it exits; read new output with job_output and stop the job with job_kill",
     },
   }
   if (sandboxAvailable()) {
@@ -93,7 +93,7 @@ function description(): string {
 
 function guidance(): string {
   const base =
-    "Use bash for shell work: builds, tests, git. Prefer a dedicated tool over a shell equivalent when one is available. Quote paths that contain spaces. Issue independent commands as parallel calls; chain dependent commands with && so a failure stops the sequence. Prefer non-interactive flags; anything that waits for input hangs until the timeout kills it. Start long-lived processes like dev servers and watchers with background:true, follow them with job_output (pass wait to block until new output or exit instead of sleeping between polls), and stop them with job_kill; never background quick commands. Only commit, amend, or push with git when the user asks for it."
+    "Use bash for shell work: builds, tests, git. Prefer a dedicated tool over a shell equivalent when one is available. Quote paths that contain spaces. Issue independent commands as parallel calls; chain dependent commands with && so a failure stops the sequence. Prefer non-interactive flags; anything that waits for input hangs until the timeout kills it. Start long-lived processes like dev servers and watchers with background:true, follow them with job_output (pass wait to block until new output or exit instead of sleeping between polls), and stop them with job_kill; never background quick commands. Never detach processes with nohup, setsid, or a trailing &; only managed background:true jobs are tracked, delivered, and cleaned up. Only commit, amend, or push with git when the user asks for it."
   if (!sandboxAvailable()) return base
   return `${base} Use sandbox:"read" for inspection commands because the OS blocks filesystem state changes. Use sandbox:"workspace" for builds and commands that may write only in the workspace or temporary directories. Omit sandbox when the command needs network or writes elsewhere.`
 }
@@ -131,14 +131,11 @@ export const bashTool: Tool = {
     const sandbox = sandboxAccessOf(args)
 
     if (backgroundRequested(args)) {
-      if (ctx.sessionKind === "subagent") {
-        throw new Error("background Bash is unavailable in task agents; run the command in the foreground")
-      }
       const launch = shellLaunch(["-c", command], ctx.cwd, sandbox)
       const proc = spawnCommand(launch, { ...process.env, PWD: ctx.cwd }, ctx.cwd)
-      const job = startJob(command, proc, ctx.cwd, ctx.sessionId)
+      const job = startJob(command, proc, ctx.cwd, ctx.sessionId, ctx.directory)
       return {
-        output: `Started background job ${job.id}${sandbox ? ` (${sandbox} sandbox)` : ""}. Read its output with job_output and stop it with job_kill.`,
+        output: `Started background job ${job.id}${sandbox ? ` (${sandbox} sandbox)` : ""}. Its result is delivered automatically when it exits; read incremental output with job_output and stop it with job_kill.`,
       }
     }
 

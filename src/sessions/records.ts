@@ -115,14 +115,36 @@ function parseMessageIdentity(raw: Record<string, unknown>): { messageId?: strin
 function parseBackgroundResult(value: unknown): BackgroundResult | undefined {
   if (!isRecord(value)) return undefined
   const id = asString(value.id)
-  const task = asString(value.task)
   const status = asString(value.status)
   const output = asString(value.output)
-  if (!id || task === undefined || output === undefined) return undefined
-  if (status !== "completed" && status !== "failed" && status !== "interrupted" && status !== "timed_out") {
-    return undefined
+  if (!id || output === undefined) return undefined
+  if (value.kind === "agent") {
+    const task = asString(value.task)
+    if (task === undefined) return undefined
+    if (status !== "completed" && status !== "failed" && status !== "interrupted" && status !== "timed_out") {
+      return undefined
+    }
+    return { kind: "agent", id, task, status, output }
   }
-  return { id, task, status, output }
+  if (value.kind === "process") {
+    const command = asString(value.command)
+    if (command === undefined) return undefined
+    if (status !== "completed" && status !== "failed" && status !== "interrupted") return undefined
+    const exitCode = asNumber(value.exitCode)
+    const signal = asString(value.signal)
+    const record = asString(value.record)
+    return {
+      kind: "process",
+      id,
+      command,
+      status,
+      output,
+      ...(exitCode === undefined ? {} : { exitCode }),
+      ...(signal === undefined ? {} : { signal }),
+      ...(record === undefined ? {} : { record }),
+    }
+  }
+  return undefined
 }
 
 function parseEvent(raw: unknown): AgentEvent | undefined {

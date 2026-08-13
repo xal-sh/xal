@@ -1,11 +1,17 @@
+import { createWriteStream, type WriteStream } from "node:fs"
+import { mkdir } from "node:fs/promises"
+import { join } from "node:path"
 import {
   appendProcessOutput,
+  attachProcessLog,
   createProcessJob,
   finishProcessJob,
   stopJob,
   type BackgroundProcessJob,
+  type ProcessLog,
 } from "../../background/jobs"
 import { registerBackgroundTask } from "../../background/registry"
+import { describeError } from "../../lib/error"
 import { killProcessTree } from "../../lib/process"
 import type { CommandProcess } from "./process"
 
@@ -20,11 +26,54 @@ function registerExitHook(): void {
   })
 }
 
-export function startJob(command: string, proc: CommandProcess, cwd: string, ownerId: string): BackgroundProcessJob {
+function createProcessLog(directory: string, jobId: string): ProcessLog {
+  const path = join(directory, `${jobId.replace(/[^a-zA-Z0-9_-]/g, "_")}-${crypto.randomUUID()}.log`)
+  const buffered: string[] = []
+  let stream: WriteStream | undefined
+  let failure: string | undefined
+  const ready = mkdir(directory, { recursive: true, mode: 0o700 })
+    .then(() => {
+      stream = createWriteStream(path, { flags: "wx", mode: 0o600 })
+      stream.on("error", (error) => {
+        failure ??= describeError(error)
+      })
+      for (const chunk of buffered.splice(0)) stream.write(chunk)
+    })
+    .catch((error: unknown) => {
+      failure ??= describeError(error)
+    })
+  return {
+    path,
+    append(text) {
+      if (failure) return
+      if (stream) stream.write(text)
+      else buffered.push(text)
+    },
+    async close() {
+      await ready
+      const active = stream
+      if (active) {
+        await new Promise<void>((resolve) => {
+          active.once("error", () => resolve())
+          active.end(() => resolve())
+        })
+      }
+      if (failure) throw new Error(failure)
+    },
+  }
+}
+
+export function startJob(
+  command: string,
+  proc: CommandProcess,
+  cwd: string,
+  ownerId: string,
+  directory: string,
+): BackgroundProcessJob {
   registerExitHook()
   runningProcs.add(proc)
-  let exitCode: number | null = null
-  const job = createProcessJob("bash", ownerId, () => killProcessTree(proc))
+  const job = createProcessJob("bash", ownerId, command, () => killProcessTree(proc))
+  attachProcessLog(job, createProcessLog(directory, job.id))
   const collect = (chunk: Buffer): void => {
     appendProcessOutput(job, chunk.toString())
   }
@@ -33,12 +82,14 @@ export function startJob(command: string, proc: CommandProcess, cwd: string, own
   proc.once("error", (error) => {
     runningProcs.delete(proc)
     appendProcessOutput(job, `${job.history ? "\n" : ""}failed to launch: ${error.message}`)
-    finishProcessJob(job, "failed to launch")
+    void finishProcessJob(job, { status: "launch_failed", message: error.message })
   })
-  proc.once("close", (code) => {
+  proc.once("close", (code, signal) => {
     runningProcs.delete(proc)
-    exitCode = code
-    finishProcessJob(job, code === null ? "terminated by signal" : `exited with code ${code}`)
+    void finishProcessJob(
+      job,
+      code === null ? { status: "signaled", signal: signal ?? "unknown signal" } : { status: "exited", exitCode: code },
+    )
   })
   registerBackgroundTask({
     kind: "process",
@@ -48,8 +99,15 @@ export function startJob(command: string, proc: CommandProcess, cwd: string, own
     cwd,
     state: () => {
       if (!job.done) return { running: true }
-      if (exitCode !== null) return { running: false, ok: exitCode === 0, detail: `exit ${exitCode}` }
-      return { running: false, ok: false, detail: "killed" }
+      const termination = job.termination
+      if (termination?.status === "exited") {
+        return {
+          running: false,
+          ok: termination.exitCode === 0 && job.record?.status !== "failed",
+          detail: job.detail,
+        }
+      }
+      return { running: false, ok: false, detail: job.detail }
     },
     output: () => job.history,
     stop: () => stopJob(job),

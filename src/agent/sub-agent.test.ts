@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises"
 import { getJob, stopJob } from "../background/jobs"
 import { configureModes } from "../permissions/modes"
 import type { ModelCatalog, Provider, StreamRequest } from "../providers/types"
+import { bashTool } from "../tools/bash/tool"
 import { registerTool, unregisterTool } from "../tools/registry"
 import type { Tool } from "../tools/types"
 import type { AgentEvent, BackgroundResult } from "./events"
@@ -162,6 +163,111 @@ test("inherits deny rules and durably delivers a bounded task report", async () 
   }
 })
 
+test("holds the task open across nested background Bash and delivers only the fresh report", async () => {
+  registerTool(bashTool)
+  let parentSessionId = ""
+  let parentRound = 0
+  let sawPrematureTurn = false
+  let deliveredInput = ""
+
+  const provider: Provider = {
+    id: `sub-agent-async-test-${crypto.randomUUID()}`,
+    name: "Sub-agent nested async test provider",
+    aliases: [],
+    capabilities: { imageInput: false },
+    async isLoggedIn() {
+      return true
+    },
+    async listModels() {
+      return modelCatalog()
+    },
+    async defaultModel() {
+      return "test-model"
+    },
+    async *stream(request: StreamRequest) {
+      let response: ProviderRound
+      if (request.sessionId === parentSessionId) {
+        parentRound += 1
+        if (parentRound === 1) {
+          response = toolRound("dispatch-async", "task", {
+            context: "Run the build in the background and report its output.",
+            tasks: [
+              {
+                name: "async_child",
+                task: "Start the build in the background, then report its result.",
+                access: "write",
+                isolation: "shared",
+              },
+            ],
+          })
+        } else if (parentRound === 2) {
+          response = completedRound("Waiting for the task result.")
+        } else if (parentRound === 3) {
+          const input = request.input.findLast((item) => item.type === "user_message")
+          deliveredInput = input?.type === "user_message" ? input.text : ""
+          response = completedRound("Integrated the task result.")
+        } else {
+          throw new Error(`unexpected parent round ${parentRound}`)
+        }
+      } else {
+        const lastUser = request.input.findLast((item) => item.type === "user_message")
+        const text = lastUser?.type === "user_message" ? lastUser.text : ""
+        const started = request.input.some((item) => item.type === "tool_call" && item.name === "bash")
+        if (!started) {
+          response = toolRound("start-build", "bash", {
+            command: "sleep 0.3 && echo finished-marker",
+            background: true,
+          })
+        } else if (text.includes("finished-marker")) {
+          response = completedRound("Final report: the background build produced finished-marker.")
+        } else {
+          sawPrematureTurn = true
+          response = completedRound("Premature report before the build settled.")
+        }
+      }
+      yield* response(request)
+    },
+  }
+
+  const session = harness.createSession(provider, { interactive: true })
+  parentSessionId = session.id
+  session.setMode("yolo")
+  const deliveries: BackgroundResult[] = []
+  const settled = Promise.withResolvers<void>()
+  const unsubscribe = session.subscribe((event) => {
+    if (event.type === "background_results") deliveries.push(...event.results)
+    if (event.type === "state_changed" && event.state === "idle" && deliveries.length > 0) settled.resolve()
+  })
+
+  try {
+    const initial = await runSettledTurn(session, { text: "Dispatch the async build task.", images: [] })
+    expect(initial.status).toBe("completed")
+    expect(initial.response).toBe("Waiting for the task result.")
+    await settled.promise
+
+    expect(deliveries).toHaveLength(1)
+    const delivered = deliveries[0]!
+    expect(delivered.kind).toBe("agent")
+    expect(delivered.status).toBe("completed")
+    expect(delivered.output).toContain("Final report: the background build produced finished-marker.")
+    expect(delivered.output).not.toContain("Premature report")
+    expect(sawPrematureTurn).toBe(true)
+    expect(deliveredInput).toContain("finished-marker")
+    expect(parentRound).toBe(3)
+
+    const recordMatch = /^Full task record: (.+)$/m.exec(delivered.output)
+    const recordPath = recordMatch?.[1]
+    if (!recordPath) throw new Error("task result did not include its durable record path")
+    const record = await readFile(recordPath, "utf8")
+    expect(record).toContain("background result")
+    expect(record).toContain("Final report: the background build produced finished-marker.")
+  } finally {
+    unsubscribe()
+    session.disposeToolResources()
+    unregisterTool(bashTool)
+  }
+})
+
 test("does not wake the parent after a running task is cancelled", async () => {
   const childStarted = Promise.withResolvers<void>()
   let parentSessionId = ""
@@ -233,7 +339,7 @@ test("does not wake the parent after a running task is cancelled", async () => {
     await Promise.resolve()
 
     expect(job.outcome?.status).toBe("interrupted")
-    expect(job.consumed).toBe(true)
+    expect(job.delivery).toBe("suppressed")
     expect(deliveries).toBe(0)
     expect(parentRound).toBe(2)
     expect(session.currentState).toBe("idle")

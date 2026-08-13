@@ -9,6 +9,7 @@ async function execute(contract: OutputContract, args: Record<string, unknown>):
     cwd: process.cwd(),
     sessionId: "output-contract-test",
     sessionKind: "primary",
+    directory: process.cwd(),
     signal: new AbortController().signal,
     update() {},
   })

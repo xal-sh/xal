@@ -1,5 +1,5 @@
 import { isAbsolute, join, parse } from "node:path"
-import type { AgentEvent, SessionStartedEvent } from "../agent/events"
+import type { AgentEvent, BackgroundResult, SessionStartedEvent } from "../agent/events"
 import type { HistoryItem } from "../agent/history"
 import type { SessionPlan } from "../plans/types"
 import type {
@@ -139,6 +139,27 @@ function redactQuestions(questions: ElicitationQuestion[]): ElicitationQuestion[
   }))
 }
 
+function redactBackgroundResult(result: BackgroundResult): BackgroundResult {
+  switch (result.kind) {
+    case "agent":
+      return {
+        ...result,
+        id: redactText(result.id),
+        task: redactText(result.task),
+        output: redactText(result.output),
+      }
+    case "process":
+      return {
+        ...result,
+        id: redactText(result.id),
+        command: redactText(result.command),
+        output: redactText(result.output),
+        ...(result.signal === undefined ? {} : { signal: redactText(result.signal) }),
+        ...(result.record === undefined ? {} : { record: redactPath(result.record) }),
+      }
+  }
+}
+
 export function redactSessionStartedEvent(event: SessionStartedEvent): SessionStartedEvent {
   return {
     ...event,
@@ -186,15 +207,7 @@ export function redactAgentEvent(event: AgentEvent): AgentEvent {
     case "queue_flushed":
       return { ...event, inputs: event.inputs.map(redactUserInput) }
     case "background_results":
-      return {
-        ...event,
-        results: event.results.map((result) => ({
-          ...result,
-          id: redactText(result.id),
-          task: redactText(result.task),
-          output: redactText(result.output),
-        })),
-      }
+      return { ...event, results: event.results.map(redactBackgroundResult) }
     case "text_delta":
     case "reasoning_summary_delta":
     case "reasoning_delta":

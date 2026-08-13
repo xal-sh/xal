@@ -1,4 +1,5 @@
 import {
+  acknowledgeDelivery,
   collectAgentOutcome,
   appendAgentTranscript,
   getJob,
@@ -40,10 +41,19 @@ function unreadProcessOutput(job: BackgroundProcessJob): string {
   return `${dropped ? "... older output dropped ...\n" : ""}${text.trimEnd()}`
 }
 
+function processRecordNotice(job: BackgroundProcessJob): string {
+  if (!job.record) return ""
+  return job.record.status === "saved"
+    ? `\nFull log: ${job.record.path}`
+    : `\nFull log unavailable: ${job.record.message}`
+}
+
 async function processOutput(job: BackgroundProcessJob, wait: number, signal: AbortSignal): Promise<string> {
   await waitForProcessOutput(job, wait * 1_000, signal)
+  if (job.done) acknowledgeDelivery(job)
   const unread = unreadProcessOutput(job)
-  return `${unread || "(no new output)"}\n(${jobStatus(job)})`
+  const record = job.done ? processRecordNotice(job) : ""
+  return `${unread || "(no new output)"}\n(${jobStatus(job)})${record}`
 }
 
 async function agentOutput(job: BackgroundAgentJob, wait: number, signal: AbortSignal): Promise<string> {
@@ -95,7 +105,7 @@ function statusOutput(id: string | undefined, ownerId: string): string {
     .map((job) => {
       if (job.kind === "agent") return agentStatus(job, now)
       const state = jobStatus(job)
-      return `${job.id} [${state}] ${duration((job.finishedAt ?? now) - job.startedAt)}`
+      return `${job.id} [${state}] ${duration((job.finishedAt ?? now) - job.startedAt)}\n  ${job.command.split("\n", 1)[0]}`
     })
     .join("\n")
 }
@@ -164,11 +174,12 @@ export const jobKillTool: SessionTool = {
         : `Requested stop for job ${job.id}, but it has not finished yet — ${pendingCheck}.`
     if (job.kind === "agent") {
       const delivery =
-        job.outcome?.status === "completed" && !job.consumed
+        job.delivery === "pending" || job.delivery === "in_flight"
           ? " Its completed result will be delivered automatically."
           : ""
       return { output: `${headline}${delivery}` }
     }
+    if (job.done) acknowledgeDelivery(job)
     const unread = unreadProcessOutput(job)
     return { output: unread ? `${headline}\nUnread output:\n${unread}` : headline }
   },
@@ -187,9 +198,6 @@ export const jobStatusTool: SessionTool = {
   title(args) {
     const id = asString(args.id)?.trim()
     return id ? `${id} status` : "background job status"
-  },
-  available(ctx) {
-    return ctx.kind === "primary"
   },
   readOnly() {
     return true
