@@ -27,7 +27,7 @@ export const grepTool: Tool = {
         type: "string",
         enum: ["files", "content"],
         description:
-          "files lists matching file paths (default); content shows matching lines with file and line number",
+          "content shows matching lines with file and line number (default); files lists only matching file paths",
       },
       case_insensitive: {
         type: "boolean",
@@ -38,7 +38,7 @@ export const grepTool: Tool = {
     additionalProperties: false,
   },
   prompt:
-    'Use grep to search file contents instead of running rg or grep in bash. Start in the default files mode to find where something lives, then use output_mode "content" for the matching lines. Scope with path and glob to keep results small, and run independent searches as parallel calls.',
+    'Use grep for a standalone repository search. Start with the default content mode so one search identifies both locations and matching lines; use output_mode "files" only when you need paths without context. Scope with path and glob, combine related patterns when practical, and run independent searches as parallel calls. Use read-only bash when several related searches and targeted reads can be combined into one coherent inspection.',
   title(args, ctx) {
     const pattern = asString(args.pattern) ?? ""
     const glob = asString(args.glob)
@@ -54,7 +54,7 @@ export const grepTool: Tool = {
   async execute(args, ctx) {
     const pattern = asString(args.pattern)
     if (!pattern) throw new Error("pattern is required")
-    const content = asString(args.output_mode) === "content"
+    const content = asString(args.output_mode) !== "files"
 
     const argv = ["--hidden", "--glob", "!**/.git/**", "--max-columns", "500"]
     argv.push(...(content ? ["--line-number", "--with-filename"] : ["--files-with-matches"]))

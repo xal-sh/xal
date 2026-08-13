@@ -13,7 +13,7 @@ function catalogPrompt(): string {
   if (skills.length === 0) return ""
   const entries = skills.map((skill) => `- ${skill.name}: ${skill.description.replace(/\s+/g, " ")}`)
   return [
-    "Reusable skills are available. Their metadata is listed below; full instructions stay out of context until loaded with the skill tool. A user can explicitly invoke one by starting their input with $name.",
+    "Reusable skills are available. Their metadata is listed below; full instructions stay out of context until loaded with the skill tool or injected by an explicit $name invocation.",
     ...entries,
   ].join("\n")
 }

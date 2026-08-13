@@ -31,7 +31,7 @@ export const readTool: Tool = {
     additionalProperties: false,
   },
   prompt:
-    "Use read to view files instead of cat, head, tail, or sed in bash. Read several files in parallel calls when you already know which ones you need, and page through large files with offset and limit instead of tiny repeated slices.",
+    "Use read for a standalone file view. Read several known files in parallel and request the useful enclosing range instead of tiny repeated slices. Use read-only bash when related searches and ranges from several files can be inspected coherently in one call.",
   title(args, ctx) {
     return displayPath(asString(args.file_path) ?? "", ctx.cwd)
   },

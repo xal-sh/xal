@@ -10,6 +10,7 @@ export const MAX_ELICITATION_ANSWER_LENGTH = 500
 export interface ToolResult {
   output: string
   events?: ToolEvent[]
+  turnEndEvents?: ToolEvent[]
   maxOutputBytes?: number
 }
 
@@ -62,6 +63,7 @@ interface ToolContract extends ToolDefinition {
   prompt?: string
   available?(ctx: ToolAvailabilityContext): boolean
   title(args: Record<string, unknown>, ctx: ToolCallContext): string
+  requiresContinuation?(args: Record<string, unknown>, ctx: ToolCallContext): boolean
   readOnly?(args: Record<string, unknown>, ctx: ToolCallContext): boolean
   undo?(args: Record<string, unknown>, ctx: ToolCallContext): UndoAction
   sandboxed?(args: Record<string, unknown>, ctx: ToolCallContext): boolean

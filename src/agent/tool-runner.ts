@@ -38,6 +38,11 @@ export interface ToolCallBatch {
   entries: ToolCallEntry[]
 }
 
+export interface ToolCallBatchOutcome {
+  error?: Error
+  requiresContinuation: boolean
+}
+
 export type ToolCallEntry = { type: "call"; call: ToolCallItem } | { type: "outcome"; outcome: ToolCallOutcome }
 
 export interface PreparedToolCall {
@@ -52,6 +57,7 @@ export interface ToolCallOutcome {
   call: ToolCallItem
   title: string
   readOnly: boolean
+  requiresContinuation: boolean
   output: string
   events: ToolEvent[]
   denial?: DenialCause
@@ -93,6 +99,7 @@ export interface ToolRunnerHost {
   addToolOutput(call: ToolCallItem, output: string): void
   updateToolCall(call: ToolCallItem): void
   publishToolEvent(event: ToolEvent): void
+  setTurnEndToolEvents(tool: string, events: ToolEvent[]): void
   requestInput(callId: string, request: ElicitationRequest, signal: AbortSignal): Promise<ElicitationResult>
   requestApproval(resolve: (result: ApprovalResult) => void): void
   changeWorkspace(cwd: string): void
@@ -142,7 +149,13 @@ export class ToolCallRunner {
     denial?: DenialCause,
     events: ToolEvent[] = [],
   ): ToolCallOutcome {
-    return { call, title, readOnly, output, events, ...(denial ? { denial } : {}) }
+    const tool = this.host.availableTool(call.name)
+    const requiresContinuation =
+      denial !== undefined ||
+      output.startsWith(TOOL_FAILED_PREFIX) ||
+      output.startsWith(TOOL_OUTPUT_UNSAVED_PREFIX) ||
+      (tool?.requiresContinuation?.(call.args, { cwd: this.host.cwd() }) ?? true)
+    return { call, title, readOnly, requiresContinuation, output, events, ...(denial ? { denial } : {}) }
   }
 
   loopOutcome(call: ToolCallItem, action: Exclude<ToolLoopAction, "allow">): ToolCallOutcome {
@@ -172,7 +185,11 @@ export class ToolCallRunner {
     this.finishSkippedCall(entry.call, output)
   }
 
-  async runBatch(batch: ToolCallBatch, signal: AbortSignal, toolLoops: ToolLoopDetector): Promise<Error | undefined> {
+  async runBatch(
+    batch: ToolCallBatch,
+    signal: AbortSignal,
+    toolLoops: ToolLoopDetector,
+  ): Promise<ToolCallBatchOutcome> {
     const profile = profileToolBatchStarted(
       this.host.sessionId(),
       this.host.kind,
@@ -233,7 +250,10 @@ export class ToolCallRunner {
         loopError ? "failed" : signal.aborted ? "interrupted" : "completed",
         loopError?.message,
       )
-      return loopError
+      return {
+        ...(loopError ? { error: loopError } : {}),
+        requiresContinuation: outcomes.some((outcome) => outcome?.requiresContinuation ?? true),
+      }
     } catch (error) {
       profileToolBatchFinished(
         profile,
@@ -381,6 +401,7 @@ export class ToolCallRunner {
       }
       output = redactText(result.output)
       events = result.events ?? []
+      if (result.turnEndEvents !== undefined) this.host.setTurnEndToolEvents(call.name, result.turnEndEvents)
       maxOutputBytes = result.maxOutputBytes
     } catch (error) {
       output = redactText(`${TOOL_FAILED_PREFIX}${describeError(error)}`)

@@ -34,11 +34,15 @@ export const updateTasksTool: Tool = {
     additionalProperties: false,
   },
   prompt:
-    "Use update_tasks for work with several distinct steps, when the user lists multiple requests, or when new instructions arrive mid-task; skip it for single-step or conversational work. Keep steps short and concrete. Mark a step in_progress before starting it — exactly one at a time — and completed right after it is actually done and verified, never in batches and never ahead of the work. Replace the whole list on every update and add follow-up steps as you discover them.",
+    "Use update_tasks for work with several distinct steps, when the user lists multiple requests, or when new instructions arrive mid-task; skip it for single-step or conversational work. Keep steps short and concrete, with exactly one in_progress while work remains. Replace the whole list and report the current truthful state, completing every step that has actually finished since the previous update. Send progress updates alongside substantive tool calls when practical, never in a provider response whose only purpose is task bookkeeping. Do not add a final-report step or call update_tasks only to complete the list. A successful final answer automatically completes the current list after the answer is ready.",
   title(args) {
     const count = Array.isArray(args.tasks) ? args.tasks.length : 0
     if (count === 0) return "Clear task list"
     return `Update ${count} ${count === 1 ? "task" : "tasks"}`
+  },
+  requiresContinuation(args) {
+    const tasks = parseTaskList(args.tasks)
+    return !tasks || tasks.length === 0 || tasks.some((task) => task.status !== "completed")
   },
   readOnly() {
     return true
@@ -48,6 +52,10 @@ export const updateTasksTool: Tool = {
     return {
       output: JSON.stringify({ tasks }),
       events: [{ type: "task_list_updated", tasks }],
+      turnEndEvents:
+        tasks.length === 0
+          ? []
+          : [{ type: "task_list_updated", tasks: tasks.map((task) => ({ ...task, status: "completed" })) }],
     }
   },
 }

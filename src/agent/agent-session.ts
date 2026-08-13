@@ -132,6 +132,7 @@ export class AgentSession {
   private redoInvalidated: string | undefined
   private contextTokens: number | undefined
   private compactionFailures = 0
+  private readonly turnEndToolEvents = new Map<string, ToolEvent[]>()
   private readonly listeners = new Set<(event: AgentEvent) => void>()
   private readonly recorder: SessionRecorder | undefined
   private readonly interactive: boolean
@@ -223,6 +224,7 @@ export class AgentSession {
       addToolOutput: (call, output) => this.addToolOutput(call, output),
       updateToolCall: (call) => this.updateToolCall(call),
       publishToolEvent: (event) => this.publishToolEvent(event),
+      setTurnEndToolEvents: (tool, events) => this.turnEndToolEvents.set(tool, events),
       requestInput: (callId, request, signal) => this.requestInput(callId, request, signal),
       requestApproval: (resolve) => {
         this.pendingApproval = resolve
@@ -342,6 +344,7 @@ export class AgentSession {
     this.workspaceUndo = new WorkspaceUndo(this.cwd)
     this.contextTokens = undefined
     this.compactionFailures = 0
+    this.turnEndToolEvents.clear()
     this.plan = undefined
     this.planHandoffActive = false
     this.buffer.reset()
@@ -384,6 +387,7 @@ export class AgentSession {
     )
     this.contextTokens = recordedContext(target.session.events)
     this.compactionFailures = 0
+    this.turnEndToolEvents.clear()
     this.plan = undefined
     this.planHandoffActive = false
     let recordedCwd = meta.cwd
@@ -522,6 +526,7 @@ export class AgentSession {
 
   private startPreparedTurn(prepare: (signal: AbortSignal) => Promise<void>): void {
     this.outputContract?.reset()
+    this.turnEndToolEvents.clear()
     const controller = new AbortController()
     const provider = this.provider
     const model = this.model
@@ -544,6 +549,7 @@ export class AgentSession {
         this.emit({ type: "turn_failed", message: describeError(error), usage: usage.turn, context: usage.context })
       })
       .finally(() => {
+        this.turnEndToolEvents.clear()
         this.turnActive = false
         this.acceptingQueuedInput = false
         this.abortController = undefined
@@ -566,6 +572,7 @@ export class AgentSession {
   }
 
   private startDirectShell(input: UserInput): void {
+    this.turnEndToolEvents.clear()
     const controller = new AbortController()
     this.abortController = controller
     this.turnActive = true
@@ -653,7 +660,7 @@ export class AgentSession {
 
   private async acceptInput(input: UserInput, signal: AbortSignal): Promise<void> {
     this.ensureTitle(input)
-    const expanded = redactText(expandSkillInvocation(input.text) ?? input.text)
+    const expanded = redactText((await expandSkillInvocation(input.text)) ?? input.text)
     const outcome = await runPromptHooks(
       { text: expanded, imageCount: input.images.length },
       this.hookContext(signal),
@@ -1264,6 +1271,7 @@ export class AgentSession {
       }
 
       let loopError: Error | undefined
+      let requiresContinuation = false
       let sharedEntries: ToolCallEntry[] = []
       for (const [index, call] of toolCalls.entries()) {
         const entry = await this.toolRunner.applyBeforeToolHook(call, signal)
@@ -1273,11 +1281,13 @@ export class AgentSession {
         }
 
         if (sharedEntries.length > 0) {
-          loopError = await this.toolRunner.runBatch(
+          const outcome = await this.toolRunner.runBatch(
             { concurrency: "shared", entries: sharedEntries },
             signal,
             toolLoops,
           )
+          loopError = outcome.error
+          requiresContinuation ||= outcome.requiresContinuation
           sharedEntries = []
           const stopReason = this.toolRunner.stopReason(loopError, signal)
           if (stopReason) {
@@ -1287,14 +1297,26 @@ export class AgentSession {
           }
         }
 
-        loopError = await this.toolRunner.runBatch({ concurrency: "exclusive", entries: [entry] }, signal, toolLoops)
+        const outcome = await this.toolRunner.runBatch(
+          { concurrency: "exclusive", entries: [entry] },
+          signal,
+          toolLoops,
+        )
+        loopError = outcome.error
+        requiresContinuation ||= outcome.requiresContinuation
         const stopReason = this.toolRunner.stopReason(loopError, signal)
         if (!stopReason) continue
         for (const remaining of toolCalls.slice(index + 1)) this.toolRunner.finishSkippedCall(remaining, stopReason)
         break
       }
       if (sharedEntries.length > 0) {
-        loopError = await this.toolRunner.runBatch({ concurrency: "shared", entries: sharedEntries }, signal, toolLoops)
+        const outcome = await this.toolRunner.runBatch(
+          { concurrency: "shared", entries: sharedEntries },
+          signal,
+          toolLoops,
+        )
+        loopError = outcome.error
+        requiresContinuation ||= outcome.requiresContinuation
       }
       if (loopError) throw loopError
       if (this.outputContract?.output) {
@@ -1311,6 +1333,18 @@ export class AgentSession {
         this.emit({ type: "turn_interrupted" })
         return
       }
+
+      if (
+        !requiresContinuation &&
+        (this.queued.length === 0 || isDirectShellInput(this.queued[0]!)) &&
+        !this.asyncState.hasQueued()
+      ) {
+        const final = items.findLast((item) => item.type === "assistant_message")
+        if (final?.type === "assistant_message") {
+          await this.endTurn(usage, final.text, signal)
+          return
+        }
+      }
     }
   }
 
@@ -1325,6 +1359,10 @@ export class AgentSession {
       this.hookContext(signal),
       this.hookReporter,
     )
+    for (const events of this.turnEndToolEvents.values()) {
+      for (const event of events) this.publishToolEvent(event)
+    }
+    this.turnEndToolEvents.clear()
     this.emit({
       type: "turn_ended",
       usage: usage.turn,
