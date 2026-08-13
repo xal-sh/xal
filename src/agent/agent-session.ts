@@ -801,6 +801,7 @@ export class AgentSession {
       return await this.performUndo(checkpoint)
     } finally {
       this.movingHistory = false
+      this.startBackgroundResultTurn()
     }
   }
 
@@ -907,6 +908,7 @@ export class AgentSession {
       return await this.performRedo(entry)
     } finally {
       this.movingHistory = false
+      this.startBackgroundResultTurn()
     }
   }
 

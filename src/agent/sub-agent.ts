@@ -1,8 +1,10 @@
 import { mkdir, writeFile } from "node:fs/promises"
 import { join } from "node:path"
+import { setTimeout as sleep } from "node:timers/promises"
 import { AgentSession } from "./agent-session"
 import type { AgentEvent } from "./events"
 import { registerPrompt } from "./prompt"
+import { backgroundResultSection } from "./session-async"
 import {
   appendAgentTranscript,
   createAgentJob,
@@ -257,7 +259,9 @@ function activity(
       break
     case "background_results":
       state.activity = "Reconciling background results"
-      for (const result of event.results) record(`\n> background result: ${result.id} · ${result.status}\n`)
+      for (const result of event.results) {
+        record(`\n> background result: ${result.id} · ${result.status}\n\n${backgroundResultSection(result)}\n`)
+      }
       break
     case "plan_updated":
     case "task_list_updated":
@@ -648,10 +652,14 @@ async function runTask(
   } finally {
     if (deadline) clearTimeout(deadline)
     if (child) {
-      try {
-        await child.cancelAndReapAsyncWork()
-      } catch (error) {
-        cleanupFailure(error)
+      while (true) {
+        try {
+          await child.cancelAndReapAsyncWork()
+          break
+        } catch (error) {
+          cleanupFailure(error)
+          await sleep(1_000)
+        }
       }
       child.disposeAsyncDelivery()
       try {

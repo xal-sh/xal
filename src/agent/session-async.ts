@@ -62,7 +62,7 @@ function formatProcessResult(job: BackgroundProcessJob): ProcessBackgroundResult
   const status: ProcessBackgroundResult["status"] =
     termination.status === "signaled"
       ? "interrupted"
-      : termination.status === "exited" && !logFailed
+      : termination.status === "exited" && termination.exitCode === 0 && !logFailed
         ? "completed"
         : "failed"
   const bounded = boundedProcessOutput(text, dropped)
@@ -87,7 +87,7 @@ export function formatBackgroundResult(job: BackgroundJob): BackgroundResult {
   }
 }
 
-function resultSection(result: BackgroundResult): string {
+export function backgroundResultSection(result: BackgroundResult): string {
   switch (result.kind) {
     case "agent":
       return `## ${result.id} · ${result.status}\nTask: ${result.task.split("\n", 1)[0]}\n\n${result.output}`
@@ -130,7 +130,7 @@ export function backgroundResultsMessage(results: BackgroundResult[], ownerId: s
     heading,
     runningNote(runningAgentJobs(ownerId).length, runningProcessJobs(ownerId).length),
     ...caution,
-    ...results.map(resultSection),
+    ...results.map(backgroundResultSection),
     "</system-notice>",
   ].join("\n\n")
 }

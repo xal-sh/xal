@@ -9,7 +9,7 @@ const MAX_HISTORY_CHARS = 200_000
 const STOP_WAIT_MS = 2_000
 const SETTLED_RETENTION_MS = 5 * 60 * 1_000
 
-export type DeliveryState = "none" | "pending" | "in_flight" | "delivered" | "suppressed" | "dead_lettered"
+export type DeliveryState = "none" | "reserved" | "pending" | "in_flight" | "delivered" | "suppressed" | "dead_lettered"
 
 interface BackgroundJobBase {
   id: string
@@ -88,6 +88,7 @@ const evictions = new Map<string, ReturnType<typeof setTimeout>>()
 const sinks = new Map<string, BackgroundDeliverySink>()
 const dispatching = new Map<string, Promise<void>>()
 const pendingDeliveries: BackgroundJob[] = []
+const deliveryReservations = new WeakMap<BackgroundJob, symbol>()
 let nextId = 1
 let cleanupRegistered = false
 
@@ -271,6 +272,7 @@ export function setAgentRecord(job: BackgroundAgentJob, record: BackgroundJobRec
 }
 
 function settleDelivery(job: BackgroundJob, state: "delivered" | "suppressed" | "dead_lettered"): void {
+  deliveryReservations.delete(job)
   job.delivery = state
   if (job.done && (job.kind === "agent" || state === "dead_lettered")) scheduleEviction(job)
   backgroundTasksChanged()
@@ -346,9 +348,26 @@ export function registerDeliverySink(ownerId: string, sink: BackgroundDeliverySi
 }
 
 export function acknowledgeDelivery(job: BackgroundJob): boolean {
-  if (job.delivery === "delivered" || job.delivery === "suppressed") return false
+  if (job.delivery === "reserved" || job.delivery === "delivered" || job.delivery === "suppressed") return false
   settleDelivery(job, "suppressed")
   return true
+}
+
+export function reserveDelivery(job: BackgroundJob): symbol | undefined {
+  if (job.delivery !== "none") return undefined
+  const reservation = Symbol(job.id)
+  deliveryReservations.set(job, reservation)
+  job.delivery = "reserved"
+  backgroundTasksChanged()
+  return reservation
+}
+
+export function releaseDelivery(job: BackgroundJob, reservation: symbol): void {
+  if (deliveryReservations.get(job) !== reservation || job.delivery !== "reserved") return
+  deliveryReservations.delete(job)
+  job.delivery = "none"
+  if (job.done) enqueueDelivery(job)
+  else backgroundTasksChanged()
 }
 
 export function suppressDelivery(job: BackgroundJob): void {
@@ -441,7 +460,7 @@ export function runningAgentJobs(ownerId: string): BackgroundAgentJob[] {
 }
 
 function unsettled(job: BackgroundJob): boolean {
-  return !job.done || job.delivery === "pending" || job.delivery === "in_flight"
+  return !job.done || job.delivery === "reserved" || job.delivery === "pending" || job.delivery === "in_flight"
 }
 
 export function unsettledAgentJobs(ownerId: string): BackgroundAgentJob[] {
@@ -462,8 +481,15 @@ export function readProcessOutput(job: BackgroundProcessJob): { text: string; dr
   return { text: pending, dropped }
 }
 
-export function collectAgentOutcome(job: BackgroundAgentJob): CollectedAgentOutcome {
+export function collectAgentOutcome(job: BackgroundAgentJob, reservation?: symbol): CollectedAgentOutcome {
   if (!job.done || !job.outcome) throw new Error(`background agent ${job.id} has not finished`)
+  if (reservation !== undefined) {
+    if (deliveryReservations.get(job) !== reservation || job.delivery !== "reserved") {
+      return { status: "already_collected" }
+    }
+    settleDelivery(job, "suppressed")
+    return job.outcome
+  }
   if (!acknowledgeDelivery(job)) return { status: "already_collected" }
   return job.outcome
 }

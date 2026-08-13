@@ -6,6 +6,8 @@ import {
   jobStatus,
   listJobs,
   readProcessOutput,
+  releaseDelivery,
+  reserveDelivery,
   setAgentActivity,
   stopJob,
   waitForAgentCompletion,
@@ -57,10 +59,14 @@ async function processOutput(job: BackgroundProcessJob, wait: number, signal: Ab
 }
 
 async function agentOutput(job: BackgroundAgentJob, wait: number, signal: AbortSignal): Promise<string> {
+  const reservation = wait > 0 && !job.done ? reserveDelivery(job) : undefined
   await waitForAgentCompletion(job, wait * 1_000, signal)
-  if (!job.done) return `(still running: ${job.activity})`
+  if (!job.done) {
+    if (reservation !== undefined) releaseDelivery(job, reservation)
+    return `(still running: ${job.activity})`
+  }
 
-  const outcome = collectAgentOutcome(job)
+  const outcome = collectAgentOutcome(job, reservation)
   const record = agentRecord(job)
   switch (outcome.status) {
     case "completed":
@@ -165,6 +171,7 @@ export const jobKillTool: SessionTool = {
   async execute(args, ctx) {
     const job = jobOf(args, ctx.session.id)
     const alreadyDone = job.done
+    if (job.kind === "process") acknowledgeDelivery(job)
     if (!alreadyDone) await stopJob(job)
     const pendingCheck = job.kind === "agent" ? "check it with job_status" : "check it with job_output"
     const headline = alreadyDone
@@ -179,9 +186,9 @@ export const jobKillTool: SessionTool = {
           : ""
       return { output: `${headline}${delivery}` }
     }
-    if (job.done) acknowledgeDelivery(job)
     const unread = unreadProcessOutput(job)
-    return { output: unread ? `${headline}\nUnread output:\n${unread}` : headline }
+    const output = unread ? `${headline}\nUnread output:\n${unread}` : headline
+    return { output: `${output}${job.done ? processRecordNotice(job) : ""}` }
   },
 }
 
