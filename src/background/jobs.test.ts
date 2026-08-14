@@ -207,6 +207,8 @@ test("delivers settled results to the owner sink in completion order", async () 
     expect(delivered).toEqual([second.id, first.id])
     expect(first.delivery).toBe("delivered")
     expect(second.delivery).toBe("delivered")
+    expect(getJob(first.id)).toBe(first)
+    expect(getJob(second.id)).toBe(second)
   } finally {
     unregister()
   }

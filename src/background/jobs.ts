@@ -99,7 +99,7 @@ function registerCleanup(): void {
     const listed = new Set(listBackgroundTasks().map((task) => task.id))
     for (const [id, job] of jobs) {
       if (listed.has(id) || !job.done) continue
-      if (job.delivery !== "delivered" && job.delivery !== "suppressed") continue
+      if (job.delivery !== "suppressed") continue
       jobs.delete(id)
       clearTimeout(evictions.get(id))
       evictions.delete(id)
@@ -274,7 +274,7 @@ export function setAgentRecord(job: BackgroundAgentJob, record: BackgroundJobRec
 function settleDelivery(job: BackgroundJob, state: "delivered" | "suppressed" | "dead_lettered"): void {
   deliveryReservations.delete(job)
   job.delivery = state
-  if (job.done && (job.kind === "agent" || state === "dead_lettered")) scheduleEviction(job)
+  if (job.done && (job.kind === "agent" || state !== "suppressed")) scheduleEviction(job)
   backgroundTasksChanged()
 }
 

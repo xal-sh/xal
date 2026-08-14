@@ -52,8 +52,9 @@ function createProcessLog(directory: string, jobId: string): ProcessLog {
     async close() {
       await ready
       const active = stream
-      if (active) {
+      if (active && !active.destroyed) {
         await new Promise<void>((resolve) => {
+          active.once("close", () => resolve())
           active.once("error", () => resolve())
           active.end(() => resolve())
         })
@@ -79,13 +80,18 @@ export function startJob(
   }
   proc.stdout.on("data", collect)
   proc.stderr.on("data", collect)
+  let settled = false
   proc.once("error", (error) => {
     runningProcs.delete(proc)
+    if (settled) return
+    settled = true
     appendProcessOutput(job, `${job.history ? "\n" : ""}failed to launch: ${error.message}`)
     void finishProcessJob(job, { status: "launch_failed", message: error.message })
   })
   proc.once("close", (code, signal) => {
     runningProcs.delete(proc)
+    if (settled) return
+    settled = true
     void finishProcessJob(
       job,
       code === null ? { status: "signaled", signal: signal ?? "unknown signal" } : { status: "exited", exitCode: code },
