@@ -4,6 +4,7 @@ import ask from "./ask/plugin"
 import codeReview from "./code-review/plugin"
 import deepseek from "./deepseek/plugin"
 import files from "./files/plugin"
+import githubCopilot from "./github-copilot/plugin"
 import memory from "./memory/plugin"
 import openaiChatgpt from "./openai-chatgpt/plugin"
 import promptCommands from "./prompt-commands/plugin"
@@ -26,6 +27,7 @@ export const builtinPlugins: Plugin[] = [
   mcp,
   deepseek,
   alibabaCloud,
+  githubCopilot,
   openaiChatgpt,
   ask,
   tui,

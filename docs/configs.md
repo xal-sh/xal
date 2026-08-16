@@ -32,7 +32,7 @@ Commands that save model, thinking, or TUI display preferences write the user fi
 
 Malformed `permissions`, `modes`, `redaction`, or `agents` configuration fails startup instead of silently running without those rules.
 
-Built-in provider IDs are `openai-chatgpt`, `deepseek`, and `alibaba-cloud`. `chatgpt` is an alias for `openai-chatgpt`, and `dashscope` is an alias for `alibaba-cloud`. The only built-in UI ID is `tui`. Plugins may register more providers, aliases, and UIs.
+Built-in provider IDs are `openai-chatgpt`, `github-copilot`, `deepseek`, and `alibaba-cloud`. `chatgpt` is an alias for `openai-chatgpt`, `copilot` is an alias for `github-copilot`, and `dashscope` is an alias for `alibaba-cloud`. The only built-in UI ID is `tui`. Plugins may register more providers, aliases, and UIs.
 
 ### Agents
 
@@ -225,7 +225,7 @@ Custom plugins can add values from their own credential sources with `ctx.regist
 
 `<name> models` and the TUI's `/model` command refresh every connected provider's model catalog. The catalog supplies the model picker, context-window tracking, input modalities, and the choices shown by `/thinking`.
 
-The ChatGPT provider discovers the account-visible catalog from the authenticated Codex service and stores the last successful result in `<app-home>/cache/openai-chatgpt-models.json`. If live discovery is unavailable, the app reports the failure and uses that cache, then its bundled catalog. DeepSeek discovers models from its authenticated `/models` endpoint and reports when it must use bundled model metadata. Alibaba Cloud uses a bundled catalog of Qwen models shared by Model Studio and Coding Plan.
+The ChatGPT provider discovers the account-visible catalog from the authenticated Codex service and stores the last successful result in `<app-home>/cache/openai-chatgpt-models.json`. If live discovery is unavailable, the app reports the failure and uses that cache, then its bundled catalog. GitHub Copilot discovers the models enabled for the connected subscription and stores the compatible subset in `<app-home>/cache/github-copilot-models.json`, bound to the token and GitHub domain that produced it. It exposes tool-capable models that advertise `/chat/completions` or omit endpoint metadata, matching Copilot's default transport behavior; models that explicitly advertise only Responses or Anthropic Messages remain hidden instead of being sent through an incompatible protocol. Some Personal Copilot accounts leave every model-picker flag unset, so the canonical Personal endpoint falls back to explicitly policy-enabled compatible models; Enterprise endpoints keep strict picker visibility. If live discovery is unavailable, only a matching validated cache is used; without one, model discovery fails rather than publishing speculative models. DeepSeek discovers models from its authenticated `/models` endpoint and reports when it must use bundled model metadata. Alibaba Cloud uses a bundled catalog of Qwen models shared by Model Studio and Coding Plan.
 
 ## Prompt commands
 
@@ -405,6 +405,15 @@ Connected resource catalogs, resource templates, and prompts are exposed through
 
 Alibaba Cloud Model Studio API keys are region-specific. Set `baseUrl` to the OpenAI-compatible API Host shown when the key is created. Coding Plan keys use `https://coding-intl.dashscope.aliyuncs.com/v1`. `/connect` stores the key without making a billable model request; the first turn validates that the key, endpoint, and selected model are compatible.
 
+### `github-copilot`
+
+| Option             | Type   | Default                  | Description                                                  |
+| ------------------ | ------ | ------------------------ | ------------------------------------------------------------ |
+| `enterpriseDomain` | string | `github.com`             | GitHub Enterprise domain or HTTPS URL used for device login. |
+| `clientName`       | string | Package application name | Client name used in the provider request user agent.         |
+
+Run `<name> connect copilot`, open the displayed GitHub device-login URL, and enter its one-time code. The app uses the resulting GitHub OAuth token directly with the Copilot API, matching OpenCode's dedicated OAuth-app flow, and validates that the account returns at least one compatible agent model before storing the token. Personal catalogs that omit endpoint, picker, or policy metadata are accepted unless a model is explicitly incompatible or disabled. For GitHub Enterprise, configure `enterpriseDomain` before connecting.
+
 ### `openai-chatgpt`
 
 | Option          | Type             | Default  | Description                                                 |
@@ -471,6 +480,9 @@ Every option is optional. A configuration using all currently supported built-in
     },
     "alibaba-cloud": {
       "baseUrl": "https://coding-intl.dashscope.aliyuncs.com/v1"
+    },
+    "github-copilot": {
+      "enterpriseDomain": "github.example.com"
     },
     "openai-chatgpt": {
       "contextWindow": 260000
