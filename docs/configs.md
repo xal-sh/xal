@@ -84,8 +84,12 @@ A binding is a key with optional `ctrl`, `alt`, `shift`, or `super` modifiers jo
 | `session.next-mode`        | `shift+tab`                          |
 | `thinking.decrease`        | `alt+,`                              |
 | `thinking.increase`        | `alt+.`                              |
+| `transcript.page-up`       | `pageup`                             |
+| `transcript.page-down`     | `pagedown`                           |
+| `transcript.start`         | `ctrl+home`                          |
+| `transcript.end`           | `ctrl+end`                           |
 
-`display.clear` removes the visible transcript and pre-launch terminal scrollback while keeping the app's startup header, active session, and composer draft.
+The fullscreen TUI owns its transcript independently of the shell's main screen. Page Up and Page Down scroll the transcript and pause automatic tail following when moving into earlier output. Reaching the bottom with Page Down resumes following, and `transcript.end` returns immediately to live output. `display.clear` clears the visible application transcript while preserving startup headers, the active session, and the composer draft.
 
 Malformed bindings, unknown actions, duplicate assignments, and bindings that are prefixes of other bindings fail startup. Popover navigation, completion selection, task-list navigation, and ordinary text editing remain component-owned and are not remapped by this setting.
 

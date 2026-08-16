@@ -17,6 +17,10 @@ export type ShortcutAction =
   | "session.next-mode"
   | "thinking.decrease"
   | "thinking.increase"
+  | "transcript.end"
+  | "transcript.page-down"
+  | "transcript.page-up"
+  | "transcript.start"
 
 export type ShortcutOverrides = Partial<Record<ShortcutAction, string[]>>
 
@@ -80,6 +84,10 @@ const definitions: Record<ShortcutAction, ShortcutDefinition> = {
   "session.next-mode": { defaults: ["shift+tab"], description: "change mode" },
   "thinking.decrease": { defaults: ["alt+,"], description: "decrease thinking" },
   "thinking.increase": { defaults: ["alt+."], description: "increase thinking" },
+  "transcript.end": { defaults: ["ctrl+end"], description: "return to transcript tail" },
+  "transcript.page-down": { defaults: ["pagedown"], description: "scroll transcript down" },
+  "transcript.page-up": { defaults: ["pageup"], description: "scroll transcript up" },
+  "transcript.start": { defaults: ["ctrl+home"], description: "go to transcript start" },
 }
 
 function isShortcutAction(value: string): value is ShortcutAction {
@@ -99,6 +107,10 @@ function isShortcutAction(value: string): value is ShortcutAction {
     case "session.next-mode":
     case "thinking.decrease":
     case "thinking.increase":
+    case "transcript.end":
+    case "transcript.page-down":
+    case "transcript.page-up":
+    case "transcript.start":
       return true
     default:
       return false

@@ -20,11 +20,8 @@ import { AttentionController } from "./controllers/attention"
 import { AppEventController, InputQueue } from "./controllers/app-events"
 import { bindKeys } from "./controllers/keymap"
 import { setTuiCommandActions } from "./commands"
-import { COMPOSER_ROWS } from "./components/composer"
-import { STATUS_ROWS } from "./components/status-bar"
 import type { TuiConfig } from "./config"
 import { editInExternalEditor, externalEditorCommand } from "./external-editor"
-import { cursorRow } from "./lib/cursor"
 import { MessageHistory } from "./message-history"
 import { Screen } from "./screen"
 import { ResolvedShortcuts } from "./shortcuts"
@@ -33,7 +30,7 @@ import { TerminalOutput } from "./terminal-output"
 import { applyTerminalPalette, COLORS } from "./theme/colors"
 
 const RESIZE_DEBOUNCE_MS = 60
-const TERMINAL_RESET = "\u001b[r\u001b[<u\u001b[?25h"
+const TERMINAL_RESET = "\u001b[<u\u001b[?25h"
 const KITTY_KEYBOARD: KittyKeyboardOptions = { allKeysAsEscapes: true, reportText: true }
 
 function applyKeyboardProtocol(renderer: CliRenderer, capabilities: TerminalCapabilities): void {
@@ -55,7 +52,6 @@ export async function startTui(events: EventService, config: TuiConfig, options:
     MessageHistory.load(root),
   ])
 
-  const startRow = await cursorRow()
   const { promise: destroyed, resolve: finishDestroy } = Promise.withResolvers<void>()
   const writeTerminal = process.stdout.write.bind(process.stdout)
   let stopAttention = (): void => {}
@@ -67,10 +63,9 @@ export async function startTui(events: EventService, config: TuiConfig, options:
   const existingResizeListeners = new Set(process.listeners("SIGWINCH"))
   const renderer = await createCliRenderer({
     exitOnCtrlC: false,
-    useMouse: false,
+    useMouse: true,
     clearOnShutdown: true,
-    screenMode: "split-footer",
-    footerHeight: COMPOSER_ROWS + STATUS_ROWS,
+    screenMode: "alternate-screen",
     useKittyKeyboard: KITTY_KEYBOARD,
     backgroundColor: COLORS.background,
     onDestroy() {
@@ -102,7 +97,7 @@ export async function startTui(events: EventService, config: TuiConfig, options:
 
   const input = new InputQueue((submission) => session.send(submission))
   const shortcuts = new ResolvedShortcuts(config.keybindings)
-  const screen = new Screen(renderer, session, startRow, history, config, shortcuts, {
+  const screen = new Screen(renderer, session, history, config, shortcuts, {
     submit: (submission) => input.submit(submission),
     approve: (scope, pattern) => session.approve(scope, pattern),
     deny: () => session.deny(),
@@ -116,7 +111,7 @@ export async function startTui(events: EventService, config: TuiConfig, options:
   })
   const unsubscribeTerminalBackground = renderer.subscribeOsc((sequence) => {
     const background = terminalBackground(sequence)
-    if (background && screen.scrollback.setTerminalBackground(background)) screen.scrollback.replay()
+    if (background && screen.transcript.setTerminalBackground(background)) screen.transcript.rebuild()
   })
   let paletteSignature = initialPalette ? buildTerminalPaletteSignature(initialPalette) : undefined
   const applyPalette = (palette: TerminalColors): void => {
@@ -125,18 +120,18 @@ export async function startTui(events: EventService, config: TuiConfig, options:
     paletteSignature = signature
     applyTerminalPalette(palette)
     renderer.setBackgroundColor(COLORS.background)
-    screen.scrollback.setTerminalBackground(COLORS.background)
-    screen.scrollback.replay()
+    screen.transcript.setTerminalBackground(COLORS.background)
+    screen.transcript.rebuild()
   }
   renderer.on(CliRenderEvents.PALETTE, applyPalette)
   if (paletteError) {
-    screen.scrollback.appendHeader({ kind: "error", text: `terminal palette detection failed: ${paletteError}` })
+    screen.transcript.appendHeader({ kind: "error", text: `terminal palette detection failed: ${paletteError}` })
   }
   const attentionController = new AttentionController(
     (sequence) => terminalOutput.write(sequence),
     (message) => {
       if (renderer.isRunning) {
-        screen.scrollback.append({ kind: "error", text: message })
+        screen.transcript.append({ kind: "error", text: message })
         return
       }
       process.stderr.write(`${message}\n`)
@@ -153,26 +148,33 @@ export async function startTui(events: EventService, config: TuiConfig, options:
   renderer.root.add(screen.view)
   let lastWidth = renderer.terminalWidth
   let lastHeight = renderer.terminalHeight
-  let replayTimer: ReturnType<typeof setTimeout> | undefined
-  let replayPending = false
+  let reflowTimer: ReturnType<typeof setTimeout> | undefined
+  let resizePending = false
+  let reflowPending = false
   let editing = false
-  const replayLayout = (): void => {
+  const reflowLayout = (): void => {
     screen.composer.reflow()
-    screen.syncFooter()
-    screen.scrollback.replay()
+    screen.syncLayout()
+    screen.transcript.rebuild()
   }
   renderer.on(CliRenderEvents.RESIZE, () => {
     if (renderer.terminalWidth === lastWidth && renderer.terminalHeight === lastHeight) return
+    const widthChanged = renderer.terminalWidth !== lastWidth
     lastWidth = renderer.terminalWidth
     lastHeight = renderer.terminalHeight
     if (editing) {
-      replayPending = true
+      resizePending = true
+      if (widthChanged) reflowPending = true
       return
     }
-    clearTimeout(replayTimer)
-    replayTimer = setTimeout(() => {
-      replayTimer = undefined
-      replayLayout()
+    if (!widthChanged) {
+      screen.syncLayout()
+      return
+    }
+    clearTimeout(reflowTimer)
+    reflowTimer = setTimeout(() => {
+      reflowTimer = undefined
+      reflowLayout()
     }, RESIZE_DEBOUNCE_MS)
   })
   const resetCommands = setTuiCommandActions({
@@ -190,16 +192,16 @@ export async function startTui(events: EventService, config: TuiConfig, options:
   if (options.resume) {
     try {
       for (const notice of await resumeSession(session, options.resume)) {
-        screen.scrollback.appendHeader({ kind: "info", text: notice })
+        screen.transcript.appendHeader({ kind: "info", text: notice })
       }
     } catch (error) {
-      screen.scrollback.appendHeader({ kind: "error", text: describeError(error) })
+      screen.transcript.appendHeader({ kind: "error", text: describeError(error) })
     }
   } else {
-    screen.scrollback.appendHeader({ kind: "banner", model, cwd: compactPath(session.currentWorkingDirectory) })
+    screen.transcript.appendHeader({ kind: "banner", model, cwd: compactPath(session.currentWorkingDirectory) })
   }
   if (!(await session.currentProvider.isLoggedIn().catch(() => false))) {
-    screen.scrollback.appendHeader({ kind: "info", text: "not connected — run /connect" })
+    screen.transcript.appendHeader({ kind: "info", text: "not connected — run /connect" })
   }
 
   screen.view.on(RenderableEvents.DESTROYED, () => {
@@ -218,10 +220,11 @@ export async function startTui(events: EventService, config: TuiConfig, options:
     if (editing) return
     if (session.currentState !== "idle") throw new Error("external editor is available when the agent is idle")
     editing = true
-    if (replayTimer !== undefined) {
-      clearTimeout(replayTimer)
-      replayTimer = undefined
-      replayPending = true
+    if (reflowTimer !== undefined) {
+      clearTimeout(reflowTimer)
+      reflowTimer = undefined
+      resizePending = true
+      reflowPending = true
     }
     try {
       const command = externalEditorCommand()
@@ -232,16 +235,20 @@ export async function startTui(events: EventService, config: TuiConfig, options:
       process.on("SIGINT", ignoreInterrupt)
       if (rendererResizeListener) process.off("SIGWINCH", rendererResizeListener)
       try {
+        screen.transcript.preserveGeometry()
         renderer.suspend()
         suspended = true
         text = await editInExternalEditor(command, draft.text)
       } finally {
         try {
           if (suspended) {
-            renderer.resize(
-              process.stdout.columns || renderer.terminalWidth,
-              process.stdout.rows || renderer.terminalHeight,
-            )
+            const width = process.stdout.columns || renderer.terminalWidth
+            const height = process.stdout.rows || renderer.terminalHeight
+            if (width !== lastWidth || height !== lastHeight) resizePending = true
+            if (width !== lastWidth) reflowPending = true
+            renderer.resize(width, height)
+            lastWidth = width
+            lastHeight = height
             renderer.resume()
           }
         } finally {
@@ -252,12 +259,17 @@ export async function startTui(events: EventService, config: TuiConfig, options:
       if (comparableEditorText(text) !== comparableEditorText(draft.text)) {
         screen.composer.replaceDraft({ ...draft, text }, draft)
       }
-      screen.syncFooter()
+      screen.syncLayout()
+      if (!reflowPending) resizePending = false
     } finally {
       editing = false
-      if (replayPending) {
-        replayPending = false
-        replayLayout()
+      if (reflowPending) {
+        reflowPending = false
+        resizePending = false
+        reflowLayout()
+      } else if (resizePending) {
+        resizePending = false
+        screen.syncLayout()
       }
     }
   }
@@ -267,5 +279,5 @@ export async function startTui(events: EventService, config: TuiConfig, options:
   screen.composer.focus()
   await destroyed
   resetCommands()
-  clearTimeout(replayTimer)
+  clearTimeout(reflowTimer)
 }

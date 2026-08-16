@@ -221,6 +221,19 @@ export class CompletionPalette {
     this.dismiss()
   }
 
+  setLimit(limit: number): void {
+    if (!this.view.visible) return
+    const previous = this.rowCount
+    this.limit = Math.max(1, Math.min(MAX_ROWS, limit))
+    if (this.rowCount === previous) return
+    this.offset = Math.min(this.offset, Math.max(0, this.entries.length - this.rowCount))
+    if (this.selected < this.offset) this.offset = this.selected
+    if (this.selected >= this.offset + this.rowCount) this.offset = this.selected - this.rowCount + 1
+    this.renderOptions()
+    this.view.height = this.rowCount + 2
+    this.onChange()
+  }
+
   update(value: string, cursor: number, limit: number): void {
     const activeFileQuery = fileQuery(value, cursor)
     if (activeFileQuery) {

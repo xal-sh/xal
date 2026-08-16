@@ -25,12 +25,12 @@ export class AgentEventController {
         this.screen.statusBar.setContextWindow(window)
       })
       .catch((error) => {
-        this.screen.scrollback.append({ kind: "info", text: `model catalog: ${describeError(error)}` })
+        this.screen.transcript.append({ kind: "info", text: `model catalog: ${describeError(error)}` })
       })
   }
 
   handle(event: AgentEvent): void {
-    const { scrollback, live, statusBar } = this.screen
+    const { transcript, live, statusBar } = this.screen
 
     switch (event.type) {
       case "task_list_updated":
@@ -38,10 +38,10 @@ export class AgentEventController {
         break
       case "plan_updated":
         if (event.plan.status === "draft" && !event.plan.feedback) {
-          scrollback.append({ kind: "plan", path: compactPath(event.plan.path), text: event.plan.markdown })
+          transcript.append({ kind: "plan", path: compactPath(event.plan.path), text: event.plan.markdown })
           break
         }
-        scrollback.append({
+        transcript.append({
           kind: "info",
           text: `plan ${event.plan.status === "approved" ? "approved" : "saved for revision"} · ${compactPath(event.plan.path)}`,
         })
@@ -59,7 +59,7 @@ export class AgentEventController {
         break
       case "workspace_changed":
         this.screen.setWorkingDirectory(event.cwd)
-        scrollback.append({
+        transcript.append({
           kind: "info",
           text: `workspace: ${compactPath(event.previous)} → ${compactPath(event.cwd)}`,
         })
@@ -69,22 +69,21 @@ export class AgentEventController {
         if (event.state !== "idle") break
         this.screen.dismissApproval()
         this.screen.dismissElicitation()
-        scrollback.endStream()
+        transcript.endStream()
         live.clear()
-        this.screen.settleAgentActivity()
         break
       case "user_message":
-        scrollback.append({ kind: "user", text: event.text, imageCount: event.imageCount, sentAt: event.sentAt })
+        transcript.append({ kind: "user", text: event.text, imageCount: event.imageCount, sentAt: event.sentAt })
         break
       case "conversation_rewound":
-        scrollback.append({
+        transcript.append({
           kind: "info",
           text: historyMoveNotice("undo", event.prompt, event.fileCount),
         })
         statusBar.resetUsage()
         break
       case "conversation_redone":
-        scrollback.append({
+        transcript.append({
           kind: "info",
           text: historyMoveNotice("redo", event.prompt, event.fileCount),
         })
@@ -95,7 +94,7 @@ export class AgentEventController {
       case "hook_started":
         break
       case "hook_finished":
-        scrollback.append({
+        transcript.append({
           kind: "info",
           text: `hook: ${event.hook} · ${event.event} · ${event.action} · ${event.elapsedMs}ms`,
         })
@@ -108,7 +107,7 @@ export class AgentEventController {
         break
       case "background_results":
         for (const result of event.results) {
-          scrollback.append({
+          transcript.append({
             kind: "background",
             id: result.id,
             label: result.kind === "agent" ? result.task : result.command,
@@ -122,28 +121,28 @@ export class AgentEventController {
         break
       case "text_delta":
         this.assistantStreamed = true
-        scrollback.appendStream("text", event.text)
+        transcript.appendStream("text", event.text)
         break
       case "reasoning_summary_delta":
         this.reasoningStreamed = true
-        scrollback.appendStream("reasoning", event.text)
+        transcript.appendStream("reasoning", event.text)
         break
       case "reasoning_delta":
         break
       case "assistant_message":
-        scrollback.endStream()
-        if (!this.assistantStreamed) scrollback.append({ kind: "text", text: event.text })
+        transcript.endStream()
+        if (!this.assistantStreamed) transcript.append({ kind: "text", text: event.text })
         this.assistantStreamed = false
         break
       case "reasoning_summary":
-        scrollback.endStream()
-        if (!this.reasoningStreamed) scrollback.append({ kind: "reasoning", text: event.text })
+        transcript.endStream()
+        if (!this.reasoningStreamed) transcript.append({ kind: "reasoning", text: event.text })
         this.reasoningStreamed = false
         break
       case "retry_scheduled":
         this.assistantStreamed = false
         this.reasoningStreamed = false
-        scrollback.append({
+        transcript.append({
           kind: "info",
           text: `retrying in ${Math.ceil(event.delayMs / 1_000)}s · attempt ${event.attempt}/${event.maxAttempts} · ${event.message}`,
         })
@@ -154,7 +153,7 @@ export class AgentEventController {
       case "model_changed":
         statusBar.setModel(event.model)
         this.trackContextWindow()
-        scrollback.append({ kind: "info", text: `model: ${event.model} · ${event.provider}` })
+        transcript.append({ kind: "info", text: `model: ${event.model} · ${event.provider}` })
         break
       case "thinking_changed":
         statusBar.setThinking(event.thinking)
@@ -173,7 +172,7 @@ export class AgentEventController {
         break
       case "tool_started":
         this.screen.dismissApproval()
-        scrollback.endStream()
+        transcript.endStream()
         live.start(event.callId, event.tool, event.title, event.readOnly)
         break
       case "tool_updated":
@@ -181,7 +180,7 @@ export class AgentEventController {
         break
       case "shell_finished":
         this.screen.dismissApproval()
-        scrollback.append({
+        transcript.append({
           kind: "tool",
           tool: "bash",
           title: event.command,
@@ -196,7 +195,7 @@ export class AgentEventController {
       case "tool_finished":
         this.screen.dismissApproval()
         this.screen.dismissElicitation()
-        scrollback.append({
+        transcript.append({
           kind: "tool",
           tool: event.tool,
           title: event.title,
@@ -209,7 +208,7 @@ export class AgentEventController {
         })
         break
       case "compacted":
-        scrollback.append({
+        transcript.append({
           kind: "compaction",
           summary: event.summary,
           replaced: event.replaced,
@@ -219,7 +218,7 @@ export class AgentEventController {
         break
       case "turn_interrupted":
         statusBar.setTurnOutcome("interrupted")
-        scrollback.append({ kind: "info", text: "Interrupted" })
+        transcript.append({ kind: "info", text: "Interrupted" })
         break
       case "turn_ended":
         statusBar.setTurnOutcome("completed")
@@ -228,10 +227,10 @@ export class AgentEventController {
       case "turn_failed":
         statusBar.setTurnOutcome("failed")
         if (event.context) statusBar.setUsage(event.context)
-        scrollback.append({ kind: "error", text: event.message })
+        transcript.append({ kind: "error", text: event.message })
         break
       case "error":
-        scrollback.append({ kind: "error", text: event.message })
+        transcript.append({ kind: "error", text: event.message })
         break
     }
   }

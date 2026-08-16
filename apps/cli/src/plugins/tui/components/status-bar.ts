@@ -54,12 +54,13 @@ export class StatusBar {
   ) {
     this.model = redactText(model)
     this.view = row(ctx, { height: STATUS_ROWS, paddingLeft: 2, paddingRight: 2 })
-    this.activity = label(ctx, { content: "", flexGrow: 1, flexShrink: 1 })
-    this.backgroundLabel = label(ctx, { content: "", flexShrink: 0, marginLeft: 1 })
-    this.modeLabel = label(ctx, { content: "", flexShrink: 0, marginLeft: 1 })
+    this.activity = label(ctx, { content: "", flexGrow: 1, flexShrink: 1, minWidth: 0 })
+    this.backgroundLabel = label(ctx, { content: "", flexShrink: 1, minWidth: 0, marginLeft: 1 })
+    this.modeLabel = label(ctx, { content: "", flexShrink: 1, minWidth: 0, marginLeft: 1 })
     this.meta = label(ctx, {
       content: this.model,
-      flexShrink: 0,
+      flexShrink: 1,
+      minWidth: 0,
       marginLeft: 1,
       color: COLORS.faint,
     })

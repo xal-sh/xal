@@ -96,6 +96,11 @@ export function bindKeys(renderer: CliRenderer, deps: KeymapDeps): void {
       case "thinking.decrease":
       case "thinking.increase":
         return !key.repeated && !screen.overlayVisible
+      case "transcript.end":
+      case "transcript.page-down":
+      case "transcript.page-up":
+      case "transcript.start":
+        return !screen.overlayVisible && !screen.tasks.focused && !screen.jobViewer.visible
       case "history.open":
         if (screen.overlayVisible) return false
         if (first.name !== "escape") return true
@@ -112,10 +117,10 @@ export function bindKeys(renderer: CliRenderer, deps: KeymapDeps): void {
     thinkingChange = thinkingChange
       .then(() => stepThinking(session, direction))
       .then((message) => {
-        if (message) screen.scrollback.append({ kind: "info", text: message })
+        if (message) screen.transcript.append({ kind: "info", text: message })
       })
       .catch((error: unknown) => {
-        screen.scrollback.append({ kind: "error", text: `thinking shortcut failed: ${describeError(error)}` })
+        screen.transcript.append({ kind: "error", text: `thinking shortcut failed: ${describeError(error)}` })
       })
   }
 
@@ -137,7 +142,7 @@ export function bindKeys(renderer: CliRenderer, deps: KeymapDeps): void {
       case "app.cancel":
         if (screen.secret.visible) {
           screen.secret.hide()
-          screen.syncFooter()
+          screen.syncLayout()
           return
         }
         if (!screen.overlayVisible && screen.composer.clear()) return
@@ -148,7 +153,7 @@ export function bindKeys(renderer: CliRenderer, deps: KeymapDeps): void {
         return
       case "composer.external-editor":
         void edit().catch((error: unknown) => {
-          screen.scrollback.append({ kind: "error", text: describeError(error) })
+          screen.transcript.append({ kind: "error", text: describeError(error) })
         })
         return
       case "composer.newline":
@@ -162,10 +167,10 @@ export function bindKeys(renderer: CliRenderer, deps: KeymapDeps): void {
         })
         return
       case "display.clear":
-        screen.scrollback.clearTranscript()
+        screen.transcript.clearTranscript()
         return
       case "display.toggle-details":
-        screen.scrollback.toggleExpanded()
+        screen.transcript.toggleExpanded()
         return
       case "display.toggle-todos": {
         const visible = screen.taskList.toggleVisibility()
@@ -184,6 +189,18 @@ export function bindKeys(renderer: CliRenderer, deps: KeymapDeps): void {
         return
       case "thinking.increase":
         changeThinking(1)
+        return
+      case "transcript.end":
+        screen.transcript.scrollToEnd()
+        return
+      case "transcript.page-down":
+        screen.transcript.pageDown()
+        return
+      case "transcript.page-up":
+        screen.transcript.pageUp()
+        return
+      case "transcript.start":
+        screen.transcript.scrollToStart()
         return
     }
   }
@@ -246,44 +263,44 @@ export function bindKeys(renderer: CliRenderer, deps: KeymapDeps): void {
     ) {
       clearPending()
       key.preventDefault()
-      screen.syncFooter()
+      screen.syncLayout()
       return
     }
     if (handleShortcut(key)) return
     if (screen.config.handleKey(key.name)) {
       key.preventDefault()
-      screen.syncFooter()
+      screen.syncLayout()
       return
     }
     if (screen.permission.handleKey(key.name)) {
       key.preventDefault()
-      screen.syncFooter()
+      screen.syncLayout()
       return
     }
     if (screen.elicitation.handleKey(key.name)) {
       key.preventDefault()
-      screen.syncFooter()
+      screen.syncLayout()
       return
     }
     if (screen.secret.handleKey(key)) {
       key.preventDefault()
-      screen.syncFooter()
+      screen.syncLayout()
       return
     }
     if (screen.picker.handleKey(key.name)) {
       key.preventDefault()
-      screen.syncFooter()
+      screen.syncLayout()
       return
     }
     if (screen.jobViewer.handleInputKey(key)) {
       key.preventDefault()
-      screen.syncFooter()
+      screen.syncLayout()
       return
     }
     const unmodified = !key.ctrl && !key.meta && !key.shift
     if (!screen.overlayVisible && unmodified && screen.tasks.handleKey(key.name)) {
       key.preventDefault()
-      screen.syncFooter()
+      screen.syncLayout()
       return
     }
     if (
@@ -297,7 +314,7 @@ export function bindKeys(renderer: CliRenderer, deps: KeymapDeps): void {
       key.preventDefault()
       screen.composer.blur()
       screen.tasks.focus()
-      screen.syncFooter()
+      screen.syncLayout()
       return
     }
     if (screen.palette.handleKey(key.name)) {
@@ -315,7 +332,7 @@ export function bindKeys(renderer: CliRenderer, deps: KeymapDeps): void {
     }
     if (key.name === "escape" && !screen.overlayVisible && screen.tasks.closeViewer()) {
       key.preventDefault()
-      screen.syncFooter()
+      screen.syncLayout()
       return
     }
     if (key.name === "escape" && session.currentState !== "idle") session.interrupt("promote")
@@ -324,6 +341,6 @@ export function bindKeys(renderer: CliRenderer, deps: KeymapDeps): void {
   renderer.keyInput.on("paste", (event) => {
     if (!screen.secret.handlePaste(event)) return
     event.preventDefault()
-    screen.syncFooter()
+    screen.syncLayout()
   })
 }

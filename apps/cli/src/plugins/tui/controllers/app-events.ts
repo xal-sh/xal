@@ -32,18 +32,18 @@ export class AppEventController {
   ) {}
 
   handle(event: AppEvent): void {
-    const { scrollback, statusBar, composer } = this.screen
+    const { transcript, statusBar, composer } = this.screen
 
     switch (event.type) {
       case "plugin_registration_finished": {
         const { total, failures } = event.status
         const registered = total - failures.length
         if (failures.length === 0) {
-          scrollback.appendHeader({ kind: "info", text: `plugins: ${registered}/${total} registered` })
+          transcript.appendHeader({ kind: "info", text: `plugins: ${registered}/${total} registered` })
           break
         }
         const hint = this.detailsShortcut ? ` — ${this.detailsShortcut} to see failures` : ""
-        scrollback.appendHeader({
+        transcript.appendHeader({
           kind: "notice",
           summary: `plugins: ${registered}/${total} registered${hint}`,
           details: failureDetails(failures),
@@ -58,7 +58,7 @@ export class AppEventController {
         const failures = event.status.failures.filter((failure) => failure.phase === "bootstrap")
         if (failures.length > 0) {
           const hint = this.detailsShortcut ? ` — ${this.detailsShortcut} to see failures` : ""
-          scrollback.appendHeader({
+          transcript.appendHeader({
             kind: "notice",
             summary: `plugins: ${failures.length} failed to initialize${hint}`,
             details: failureDetails(failures),
