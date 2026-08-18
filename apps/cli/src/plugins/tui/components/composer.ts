@@ -6,6 +6,7 @@ import {
   SyntaxStyle,
   TextareaRenderable,
   TextAttributes,
+  type KeyEvent,
   type PasteEvent,
   type RenderContext,
   type TextRenderable,
@@ -40,6 +41,40 @@ interface PastedImage {
   kind: "pasted-image"
   number: number
   image: ImageInput
+}
+
+export class ImeCommitBarrier {
+  private actions: (() => void)[] = []
+  private firstTimer: ReturnType<typeof setTimeout> | undefined
+  private secondTimer: ReturnType<typeof setTimeout> | undefined
+
+  get pending(): boolean {
+    return this.actions.length > 0
+  }
+
+  enqueue(action: () => void): void {
+    this.actions.push(action)
+    if (this.firstTimer !== undefined || this.secondTimer !== undefined) return
+    this.firstTimer = setTimeout(() => {
+      this.firstTimer = undefined
+      this.secondTimer = setTimeout(() => {
+        this.secondTimer = undefined
+        for (const action of this.actions.splice(0)) action()
+      }, 0)
+    }, 0)
+  }
+
+  clear(): void {
+    if (this.firstTimer !== undefined) clearTimeout(this.firstTimer)
+    if (this.secondTimer !== undefined) clearTimeout(this.secondTimer)
+    this.firstTimer = undefined
+    this.secondTimer = undefined
+    this.actions = []
+  }
+}
+
+export function isImeCommit(key: Pick<KeyEvent, "sequence" | "ctrl" | "meta" | "super" | "hyper">): boolean {
+  return !key.ctrl && !key.meta && !key.super && !key.hyper && /[^\u0000-\u007f]/.test(key.sequence)
 }
 
 function sameInput(left: UserInput, right: UserInput): boolean {
@@ -104,6 +139,7 @@ export class Composer {
   private readonly imageStyleId: number
   private readonly skillStyleId: number
   private readonly fileStyleId: number
+  private readonly imeCommit = new ImeCommitBarrier()
   private currentRows = COMPOSER_ROWS
   private readingImage = false
 
@@ -151,7 +187,24 @@ export class Composer {
       ],
       onContentChange: () => this.change(),
       onCursorChange: () => this.notifyCompletion(),
-      onSubmit: () => this.submit(),
+      onKeyDown: (key) => {
+        if (key.name === "space" && !key.ctrl && !key.meta && !key.super && !key.hyper) {
+          key.preventDefault()
+          this.imeCommit.enqueue(() => {
+            if (!this.input.isDestroyed) this.input.insertText(" ")
+          })
+          return
+        }
+        if (!this.imeCommit.pending || isImeCommit(key)) return
+        key.preventDefault()
+        this.imeCommit.enqueue(() => {
+          if (!this.input.isDestroyed) this.input.handleKeyPress(key)
+        })
+      },
+      onSubmit: () =>
+        this.imeCommit.enqueue(() => {
+          if (!this.input.isDestroyed) this.submit()
+        }),
       onPaste: (event) => this.paste(event),
       syntaxStyle: this.syntaxStyle,
       ...inputColors(),
@@ -161,7 +214,10 @@ export class Composer {
     this.skillHighlightType = this.input.extmarks.registerType("composer-skill-highlight")
     this.fileHighlightType = this.input.extmarks.registerType("composer-file-highlight")
     this.view.add(this.input)
-    this.view.on(RenderableEvents.DESTROYED, () => this.syntaxStyle.destroy())
+    this.view.on(RenderableEvents.DESTROYED, () => {
+      this.imeCommit.clear()
+      this.syntaxStyle.destroy()
+    })
   }
 
   get rows(): number {
@@ -174,6 +230,7 @@ export class Composer {
 
   setValue(text: string): void {
     this.history.reset()
+    if (this.afterIme(() => this.replaceInput({ text, images: [] }))) return
     this.replaceInput({ text, images: [] })
   }
 
@@ -190,6 +247,7 @@ export class Composer {
   }
 
   completeSkill(query: SkillQuery, name: string, trailingSpace: boolean): void {
+    if (this.afterIme(() => this.completeSkill(query, name, trailingSpace))) return
     const text = this.input.plainText
     if (!text.slice(query.start, query.end).startsWith("$")) return
     const next = text.slice(query.end).match(/^./u)?.[0]
@@ -200,6 +258,7 @@ export class Composer {
   }
 
   completeFile(query: FileQuery, path: string): void {
+    if (this.afterIme(() => this.completeFile(query, path))) return
     const text = this.input.plainText
     if (!text.slice(query.start, query.end).startsWith("@")) return
     const mention = fileMention(path, query.quoted)
@@ -223,7 +282,7 @@ export class Composer {
   }
 
   clear(): boolean {
-    if (!this.input.plainText) return false
+    if (!this.input.plainText && !this.imeCommit.pending) return false
     this.setValue("")
     return true
   }
@@ -247,10 +306,16 @@ export class Composer {
   }
 
   newLine(): void {
-    this.input.newLine()
+    this.imeCommit.enqueue(() => {
+      if (!this.input.isDestroyed) this.input.newLine()
+    })
   }
 
   navigateHistory(direction: "older" | "newer"): boolean {
+    if (this.imeCommit.pending) {
+      this.imeCommit.enqueue(() => this.navigateHistory(direction))
+      return true
+    }
     const cursor = this.input.visualCursor
     const row = this.input.editorView.getViewport().offsetY + cursor.visualRow
     const boundary = direction === "older" ? row === 0 : row === this.input.editorView.getTotalVirtualLineCount() - 1
@@ -356,6 +421,11 @@ export class Composer {
     event.preventDefault()
     const text = stripAnsiSequences(decodePasteBytes(event.bytes))
     if (!text) return
+    if (this.afterIme(() => this.insertPastedText(text))) return
+    this.insertPastedText(text)
+  }
+
+  private insertPastedText(text: string): void {
     if (text.split(/\r\n|\r|\n/).length < 3) {
       this.input.insertText(text)
       return
@@ -370,6 +440,12 @@ export class Composer {
       typeId: this.pastedContentType,
       data: { kind: "pasted-content", text } satisfies PastedContent,
     })
+  }
+
+  private afterIme(action: () => void): boolean {
+    if (!this.imeCommit.pending) return false
+    this.imeCommit.enqueue(action)
+    return true
   }
 
   private value(): UserInput {
