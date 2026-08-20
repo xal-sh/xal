@@ -58,7 +58,7 @@ export const requestUserInputTool: InteractiveTool = {
       questions: {
         type: "array",
         minItems: 1,
-        description: "Questions to show the user. Prefer one focused question when possible",
+        description: "Questions to show the user",
         items: {
           type: "object",
           properties: {
@@ -77,8 +77,7 @@ export const requestUserInputTool: InteractiveTool = {
             },
             options: {
               type: "array",
-              description:
-                'Choices for the user. Prefer two or three mutually exclusive choices, put the recommended option first, and end its label with "(Recommended)"; never include a catch-all option, since a free-form answer is offered automatically',
+              description: "Choices shown for the question. The interface adds a free-form answer automatically",
               items: {
                 type: "object",
                 properties: {

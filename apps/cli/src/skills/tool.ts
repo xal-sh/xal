@@ -22,7 +22,7 @@ export async function renderSkill(skill: Skill): Promise<string> {
 export const skillTool: Tool = {
   name: "skill",
   description:
-    "Load a discovered skill's instructions and supporting-file list into the conversation, or read one supporting text file from its package. Call without path before using a skill.",
+    "Load a discovered skill's instructions and supporting-file list into the conversation, or read one supporting text file from its package. Omitting path loads the skill instructions.",
   parameters: {
     type: "object",
     properties: {
