@@ -3,25 +3,13 @@ import { appInfo } from "../app-info"
 import { listBackgroundTasks } from "../background/registry"
 import { createManagedWorktree, managedWorktreeAt, removeManagedWorktree, unmanageWorktree } from "./worktrees"
 import { asBoolean, asString } from "../lib/json"
+import { nativeFormatWorktreeTool, nativePrepareWorktreeTool } from "../native"
 import { compactPath, resolveFilePath } from "../lib/path"
 import { contributeRules } from "../permissions/rules"
 import { registerTool } from "../tools/registry"
 import type { SessionTool } from "../tools/types"
 
 const MAX_NAME_LENGTH = 80
-
-function nameFrom(args: Record<string, unknown>): string {
-  const name = asString(args.name)?.trim()
-  if (!name) throw new Error("name is required")
-  if (name.length > MAX_NAME_LENGTH) throw new Error(`name must be at most ${MAX_NAME_LENGTH} characters`)
-  return name
-}
-
-function actionFrom(args: Record<string, unknown>): "keep" | "remove" {
-  const action = asString(args.action)
-  if (action === "keep" || action === "remove") return action
-  throw new Error('action must be "keep" or "remove"')
-}
 
 function managedPath(path: string, cwd: string): boolean {
   const from = relative(path, resolve(cwd))
@@ -60,20 +48,18 @@ export const worktreeEnterTool: SessionTool = {
   },
   async execute(args, ctx) {
     if (ctx.session.kind !== "primary") throw new Error("worktree_enter is available only to primary sessions")
-    const name = nameFrom(args)
+    const prepared = nativePrepareWorktreeTool({ operation: "enter", name: asString(args.name) })
+    if (prepared.operation !== "enter") throw new Error("native worktree tool returned an invalid operation")
     if (await managedWorktreeAt(ctx.session.cwd, ctx.signal)) {
       throw new Error("this session is already inside a managed worktree")
     }
-    const worktree = await createManagedWorktree(ctx.session.cwd, name, ctx.signal)
+    const worktree = await createManagedWorktree(ctx.session.cwd, prepared.name, ctx.signal)
     ctx.session.changeWorkspace(worktree.cwd)
-    return {
-      output: [
-        `Entered isolated worktree ${compactPath(worktree.path)}.`,
-        `Branch: ${worktree.branch}`,
-        `Base: ${worktree.baseCommit}`,
-        "Task agents now inherit this worktree.",
-      ].join("\n"),
-    }
+    return nativeFormatWorktreeTool({
+      operation: "enter",
+      displayPath: compactPath(worktree.path),
+      worktree,
+    })
   },
 }
 
@@ -113,23 +99,27 @@ export const worktreeExitTool: SessionTool = {
   },
   async execute(args, ctx) {
     if (ctx.session.kind !== "primary") throw new Error("worktree_exit is available only to primary sessions")
-    const action = actionFrom(args)
-    if (action === "keep" && asBoolean(args.force)) throw new Error("force is valid only when removing a worktree")
+    const prepared = nativePrepareWorktreeTool({
+      operation: "exit",
+      action: asString(args.action),
+      force: asBoolean(args.force),
+    })
+    if (prepared.operation !== "exit") throw new Error("native worktree tool returned an invalid operation")
     const worktree = await managedWorktreeAt(ctx.session.cwd, ctx.signal)
     if (!worktree) throw new Error(`this session is not inside a managed ${appInfo.displayName} worktree`)
     const active = activeTaskAt(worktree.path)
-    if (action === "remove" && active) {
+    if (prepared.action === "remove" && active) {
       throw new Error(`cannot remove ${worktree.path} while ${active} is running`)
     }
-    if (action === "keep") await unmanageWorktree(worktree, ctx.signal)
-    else await removeManagedWorktree(worktree, asBoolean(args.force) ?? false, ctx.signal)
+    if (prepared.action === "keep") await unmanageWorktree(worktree, ctx.signal)
+    else await removeManagedWorktree(worktree, prepared.force, ctx.signal)
     ctx.session.changeWorkspace(worktree.originalCwd)
-    return {
-      output:
-        action === "keep"
-          ? `Left ${compactPath(worktree.path)} intact on branch ${worktree.branch}.`
-          : `Removed ${compactPath(worktree.path)}. Branch ${worktree.branch} remains available.`,
-    }
+    return nativeFormatWorktreeTool({
+      operation: "exit",
+      action: prepared.action,
+      displayPath: compactPath(worktree.path),
+      worktree,
+    })
   },
 }
 
@@ -167,19 +157,25 @@ export const worktreeRemoveTool: SessionTool = {
   },
   async execute(args, ctx) {
     if (ctx.session.kind !== "primary") throw new Error("worktree_remove is available only to primary sessions")
-    const path = asString(args.path)?.trim()
-    if (!path) throw new Error("path is required")
-    const worktree = await managedWorktreeAt(resolveFilePath(path, ctx.session.cwd), ctx.signal)
-    if (!worktree) throw new Error(`${path} is not a managed ${appInfo.displayName} worktree`)
+    const prepared = nativePrepareWorktreeTool({
+      operation: "remove",
+      path: asString(args.path),
+      force: asBoolean(args.force),
+    })
+    if (prepared.operation !== "remove") throw new Error("native worktree tool returned an invalid operation")
+    const worktree = await managedWorktreeAt(resolveFilePath(prepared.path, ctx.session.cwd), ctx.signal)
+    if (!worktree) throw new Error(`${prepared.path} is not a managed ${appInfo.displayName} worktree`)
     if (managedPath(worktree.path, ctx.session.cwd)) {
       throw new Error("cannot remove the current session worktree; use worktree_exit")
     }
     const active = activeTaskAt(worktree.path)
     if (active) throw new Error(`cannot remove ${worktree.path} while ${active} is running`)
-    await removeManagedWorktree(worktree, asBoolean(args.force) ?? false, ctx.signal)
-    return {
-      output: `Removed ${compactPath(worktree.path)}. Branch ${worktree.branch} remains available.`,
-    }
+    await removeManagedWorktree(worktree, prepared.force, ctx.signal)
+    return nativeFormatWorktreeTool({
+      operation: "remove",
+      displayPath: compactPath(worktree.path),
+      worktree,
+    })
   },
 }
 

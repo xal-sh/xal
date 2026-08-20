@@ -1,9 +1,13 @@
 mod diff;
 mod file_tools;
 mod fuzzy;
+mod git;
+mod process;
 mod redactor;
 mod search;
+mod shell;
 mod tool_contracts;
+mod worktree;
 
 use napi::bindgen_prelude::Utf16String;
 use napi::{Error, Status};
@@ -12,7 +16,7 @@ use redactor::SecretMatcher;
 
 #[napi(js_name = "apiVersion", catch_unwind)]
 pub fn api_version() -> u32 {
-    3
+    5
 }
 
 #[napi]

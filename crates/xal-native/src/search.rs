@@ -26,22 +26,25 @@ const SEARCH_TIMEOUT: Duration = Duration::from_secs(30);
 const GREP_LIMIT: usize = 250;
 const GLOB_LIMIT: usize = 100;
 const MAX_COLUMNS: usize = 500;
+const MAX_OUTPUT_CHARS: usize = 30_000;
 
 #[napi(object)]
 pub struct NativeGrepOptions {
     pub cwd: String,
     pub target: Option<String>,
     pub glob: Option<String>,
-    pub pattern: String,
-    pub content: bool,
-    pub case_insensitive: bool,
+    pub pattern: Option<String>,
+    pub output_mode: Option<String>,
+    pub case_insensitive: Option<bool>,
+    pub aborted: Option<bool>,
 }
 
 #[napi(object)]
 pub struct NativeGlobOptions {
     pub cwd: String,
     pub target: Option<String>,
-    pub pattern: String,
+    pub pattern: Option<String>,
+    pub aborted: Option<bool>,
 }
 
 #[napi(object)]
@@ -49,6 +52,7 @@ pub struct NativeSearchResult {
     pub kind: NativeToolOutcomeKind,
     pub total: u32,
     pub lines: Vec<String>,
+    pub output: Option<String>,
     pub error: Option<NativeToolError>,
 }
 
@@ -57,7 +61,20 @@ fn search_result(kind: NativeToolOutcomeKind) -> NativeSearchResult {
         kind,
         total: 0,
         lines: Vec::new(),
+        output: None,
         error: None,
+    }
+}
+
+fn request_error(message: &str) -> NativeSearchResult {
+    NativeSearchResult {
+        kind: NativeToolOutcomeKind::InvalidRequest,
+        total: 0,
+        lines: Vec::new(),
+        output: None,
+        error: Some(NativeToolError {
+            message: message.to_owned(),
+        }),
     }
 }
 
@@ -70,10 +87,70 @@ fn search_error(
         kind,
         total: 0,
         lines: Vec::new(),
+        output: None,
         error: Some(NativeToolError {
             message: first_line_message(prefix, error),
         }),
     }
+}
+
+fn format_results(
+    header: &str,
+    lines: &[String],
+    total: u32,
+    footer: impl FnOnce(usize) -> String,
+) -> String {
+    let mut shown = lines.to_vec();
+    let mut characters = shown
+        .iter()
+        .map(|line| line.encode_utf16().count() + 1)
+        .sum::<usize>();
+    while shown.len() > 1 && characters > MAX_OUTPUT_CHARS {
+        characters -= shown
+            .pop()
+            .map_or(0, |line| line.encode_utf16().count() + 1);
+    }
+    let mut output = Vec::with_capacity(shown.len() + 2);
+    output.push(header.to_owned());
+    output.extend(shown.iter().cloned());
+    if usize::try_from(total).is_ok_and(|total| total > shown.len()) {
+        output.push(footer(shown.len()));
+    }
+    output.join("\n")
+}
+
+fn complete_grep(mut result: NativeSearchResult, content: bool) -> NativeSearchResult {
+    result.output = Some(if result.total == 0 {
+        "No matches found".to_owned()
+    } else {
+        let header = if content {
+            format!("Found {} matching lines", result.total)
+        } else {
+            format!("Found {} files", result.total)
+        };
+        format_results(&header, &result.lines, result.total, |shown| {
+            format!(
+                "(Showing first {shown} of {}. Narrow your pattern or path.)",
+                result.total
+            )
+        })
+    });
+    result
+}
+
+fn complete_glob(mut result: NativeSearchResult) -> NativeSearchResult {
+    result.output = Some(if result.total == 0 {
+        "No files found".to_owned()
+    } else {
+        let header = format!("Found {} files", result.total);
+        format_results(&header, &result.lines, result.total, |shown| {
+            format!(
+                "(Showing first {shown} of {}. Narrow the pattern to see the rest.)",
+                result.total
+            )
+        })
+    });
+    result
 }
 
 fn absolute_target(cwd: &Path, target: Option<&str>) -> PathBuf {
@@ -230,12 +307,24 @@ impl Task for GrepTask {
     type JsValue = NativeSearchResult;
 
     fn compute(&mut self) -> napi::Result<Self::Output> {
+        if self.options.aborted.unwrap_or(false) {
+            return Ok(search_result(NativeToolOutcomeKind::Interrupted));
+        }
         let deadline = Instant::now() + SEARCH_TIMEOUT;
         let cwd = PathBuf::from(&self.options.cwd);
         let root = absolute_target(&cwd, self.options.target.as_deref());
+        let Some(pattern) = self
+            .options
+            .pattern
+            .as_deref()
+            .filter(|pattern| !pattern.is_empty())
+        else {
+            return Ok(request_error("pattern is required"));
+        };
+        let content = self.options.output_mode.as_deref() != Some("files");
         let mut regex = RegexMatcherBuilder::new();
-        regex.case_insensitive(self.options.case_insensitive);
-        let matcher = match regex.build(&self.options.pattern) {
+        regex.case_insensitive(self.options.case_insensitive.unwrap_or(false));
+        let matcher = match regex.build(pattern) {
             Ok(matcher) => matcher,
             Err(error) => {
                 return Ok(search_error(
@@ -318,7 +407,7 @@ impl Task for GrepTask {
                 },
                 sinks::Lossy(|line_number, line| {
                     file_matched = true;
-                    if !self.options.content {
+                    if !content {
                         return Ok(false);
                     }
                     result.total = result.total.saturating_add(1);
@@ -363,14 +452,14 @@ impl Task for GrepTask {
                 result.lines.clear();
                 return Ok(result);
             }
-            if file_matched && !self.options.content {
+            if file_matched && !content {
                 result.total = result.total.saturating_add(1);
                 if result.lines.len() < GREP_LIMIT {
                     result.lines.push(shown_path);
                 }
             }
         }
-        Ok(result)
+        Ok(complete_grep(result, content))
     }
 
     fn resolve(&mut self, _env: Env, output: Self::Output) -> napi::Result<Self::JsValue> {
@@ -408,10 +497,21 @@ impl Task for GlobTask {
     type JsValue = NativeSearchResult;
 
     fn compute(&mut self) -> napi::Result<Self::Output> {
+        if self.options.aborted.unwrap_or(false) {
+            return Ok(search_result(NativeToolOutcomeKind::Interrupted));
+        }
         let deadline = Instant::now() + SEARCH_TIMEOUT;
         let cwd = PathBuf::from(&self.options.cwd);
         let root = absolute_target(&cwd, self.options.target.as_deref());
-        let matcher = match compile_glob(&self.options.pattern) {
+        let Some(pattern) = self
+            .options
+            .pattern
+            .as_deref()
+            .filter(|pattern| !pattern.is_empty())
+        else {
+            return Ok(request_error("pattern is required"));
+        };
+        let matcher = match compile_glob(pattern) {
             Ok(matcher) => matcher,
             Err(error) => return Ok(error),
         };
@@ -473,12 +573,13 @@ impl Task for GlobTask {
             }
         }
         retained.sort_by(compare_glob);
-        Ok(NativeSearchResult {
+        Ok(complete_glob(NativeSearchResult {
             kind: NativeToolOutcomeKind::Completed,
             total,
             lines: retained.into_iter().map(|entry| entry.path).collect(),
+            output: None,
             error: None,
-        })
+        }))
     }
 
     fn resolve(&mut self, _env: Env, output: Self::Output) -> napi::Result<Self::JsValue> {

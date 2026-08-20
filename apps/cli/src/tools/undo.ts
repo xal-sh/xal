@@ -1,11 +1,12 @@
-import { Buffer } from "node:buffer"
-import { spawn } from "node:child_process"
 import { realpathSync } from "node:fs"
-import { lstat, mkdtemp, realpath, rm } from "node:fs/promises"
-import { tmpdir } from "node:os"
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
-import { appInfo } from "../app-info"
-import { describeError, isMissingPathError } from "../lib/error"
+import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path"
+import { describeError } from "../lib/error"
+import {
+  createNativeGitRepository,
+  type NativeGitRepository,
+  type NativeGitSnapshot,
+  type NativeGitlink,
+} from "../native"
 
 export interface UndoPreview {
   messageId: string
@@ -15,37 +16,7 @@ export interface UndoPreview {
   unavailable?: string
 }
 
-interface GitOutput {
-  stdout: Buffer
-  stderr: Buffer
-  exitCode: number
-  stdinError?: Error
-}
-
-interface GitCommandOptions {
-  indexFile?: string
-  input?: Uint8Array
-}
-
-interface Snapshot {
-  before: string
-  after: string
-  paths: string[]
-  index: Buffer
-  gitlinks: Gitlink[]
-  forced: string[]
-}
-
-interface Gitlink {
-  path: string
-  before: string
-  after: string
-}
-
-interface TreeEntry {
-  mode: string
-  object: string
-}
+type Snapshot = NativeGitSnapshot
 
 interface PromptCheckpoint {
   messageId: string
@@ -79,8 +50,6 @@ interface RedoTransaction {
 
 type RepositoryDiscovery = { status: "ready"; repository: Repository } | { status: "unavailable"; reason: string }
 
-const utf8 = new TextDecoder("utf-8", { fatal: true })
-
 function canonicalPath(path: string): string {
   try {
     return realpathSync(path)
@@ -113,105 +82,9 @@ function gitPath(path: string): string {
   return sep === "/" ? path : path.split(sep).join("/")
 }
 
-function decode(bytes: Uint8Array, message: string): string {
-  try {
-    return utf8.decode(bytes)
-  } catch (error) {
-    throw new Error(message, { cause: error })
-  }
-}
-
-function outputText(output: GitOutput): string {
-  return decode(output.stdout, "git returned a non-UTF-8 object ID").trimEnd()
-}
-
-function outputPath(output: GitOutput): string {
-  let end = output.stdout.length
-  if (end > 0 && output.stdout[end - 1] === 10) end--
-  if (end > 0 && output.stdout[end - 1] === 13) end--
-  return decode(output.stdout.subarray(0, end), "git returned a non-UTF-8 repository path")
-}
-
-function nulSeparatedPaths(bytes: Buffer): string[] {
-  if (bytes.length === 0) return []
-  if (bytes[bytes.length - 1] !== 0) throw new Error("git returned a malformed path list")
-  const paths: string[] = []
-  let start = 0
-  for (let index = 0; index < bytes.length; index++) {
-    if (bytes[index] !== 0) continue
-    if (index > start) paths.push(decode(bytes.subarray(start, index), "git returned a non-UTF-8 path"))
-    start = index + 1
-  }
-  return paths
-}
-
-function commandError(output: GitOutput, args: string[]): string {
-  const detail = output.stderr.toString("utf8").trim()
-  if (detail) return detail
-  return `git ${args[0] ?? "command"} exited with code ${output.exitCode}`
-}
-
-function runGit(cwd: string, args: string[], options: GitCommandOptions = {}): Promise<GitOutput> {
-  return new Promise((resolveOutput, rejectOutput) => {
-    const environment = options.indexFile ? { ...process.env, GIT_INDEX_FILE: options.indexFile } : process.env
-    const child = spawn(
-      "git",
-      [
-        "-C",
-        cwd,
-        "--literal-pathspecs",
-        "-c",
-        "core.autocrlf=false",
-        "-c",
-        "core.longpaths=true",
-        "-c",
-        "core.symlinks=true",
-        ...args,
-      ],
-      { env: environment },
-    )
-    const stdout: Uint8Array[] = []
-    const stderr: Uint8Array[] = []
-    let stdinError: Error | undefined
-    let settled = false
-
-    child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk))
-    child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk))
-    child.stdin.on("error", (error: Error) => {
-      stdinError = error
-    })
-    child.once("error", (error) => {
-      if (settled) return
-      settled = true
-      rejectOutput(new Error(`could not run git: ${error.message}`, { cause: error }))
-    })
-    child.once("close", (exitCode, signal) => {
-      if (settled) return
-      settled = true
-      if (exitCode === null) {
-        rejectOutput(new Error(`git ${args[0] ?? "command"} was terminated${signal ? ` by ${signal}` : ""}`))
-        return
-      }
-      resolveOutput({
-        stdout: Buffer.concat(stdout),
-        stderr: Buffer.concat(stderr),
-        exitCode,
-        ...(stdinError ? { stdinError } : {}),
-      })
-    })
-    child.stdin.end(options.input)
-  })
-}
-
-async function checkedGit(cwd: string, args: string[], options: GitCommandOptions = {}): Promise<GitOutput> {
-  const output = await runGit(cwd, args, options)
-  if (output.exitCode !== 0) throw new Error(commandError(output, args))
-  if (output.stdinError) {
-    throw new Error(`could not send input to git ${args[0] ?? "command"}: ${output.stdinError.message}`, {
-      cause: output.stdinError,
-    })
-  }
-  return output
+function bytesEqual(left: Uint8Array, right: Uint8Array): boolean {
+  if (left.length !== right.length) return false
+  return left.every((byte, index) => byte === right[index])
 }
 
 async function applyAtomically(
@@ -241,286 +114,49 @@ async function applyAtomically(
 }
 
 class Repository {
-  private constructor(
-    private readonly workspace: string,
-    private readonly top: string,
-  ) {}
+  private constructor(private readonly native: NativeGitRepository) {}
 
   static async discover(workspace: string): Promise<RepositoryDiscovery> {
-    let output: GitOutput
+    const native = createNativeGitRepository(workspace)
     try {
-      output = await runGit(workspace, ["rev-parse", "--show-toplevel"])
+      const discovery = await native.discover()
+      if (discovery.status === "unavailable") return discovery
+      return { status: "ready", repository: new Repository(native) }
     } catch (error) {
       return { status: "unavailable", reason: describeError(error) }
     }
-    if (output.exitCode !== 0) return { status: "unavailable", reason: "the workspace is not a Git repository" }
-    if (output.stdinError) {
-      return {
-        status: "unavailable",
-        reason: `could not discover the Git repository: ${output.stdinError.message}`,
-      }
-    }
-
-    try {
-      const top = await realpath(outputPath(output))
-      if (!pathIsInside(top, workspace)) {
-        return { status: "unavailable", reason: "Git reported a repository outside the workspace path" }
-      }
-      return { status: "ready", repository: new Repository(workspace, top) }
-    } catch (error) {
-      return { status: "unavailable", reason: `could not resolve the Git repository: ${describeError(error)}` }
-    }
   }
 
-  async captureTargeted(forced: string[]): Promise<string> {
-    return this.capture(forced, false)
+  captureTargeted(forced: string[]): Promise<string> {
+    return this.native.capture({ forced, full: false })
   }
 
-  async captureWorkspace(): Promise<string> {
-    return this.capture([], true)
+  captureWorkspace(): Promise<string> {
+    return this.native.capture({ forced: [], full: true })
   }
 
-  private async captureFull(forced: string[]): Promise<string> {
-    return this.capture(forced, true)
+  changedPaths(before: string, after: string): Promise<string[]> {
+    return this.native.changedPaths({ before, after })
   }
 
-  private async capture(forced: string[], full: boolean): Promise<string> {
-    const directory = await mkdtemp(join(tmpdir(), `${appInfo.name}-git-index-`))
-    const indexFile = join(directory, "index")
-    try {
-      const base = await runGit(this.workspace, ["rev-parse", "--verify", "HEAD^{tree}"])
-      if (base.stdinError) throw base.stdinError
-      if (base.exitCode === 0) {
-        await checkedGit(this.workspace, ["read-tree", outputText(base)], { indexFile })
-      } else {
-        await checkedGit(this.workspace, ["read-tree", "--empty"], { indexFile })
-      }
-
-      if (full) {
-        const untracked = nulSeparatedPaths(
-          (await checkedGit(this.workspace, ["ls-files", "--others", "--exclude-standard", "-z", "--", "."])).stdout,
-        )
-        const oversized: string[] = []
-        for (const path of untracked) {
-          try {
-            const stats = await lstat(join(this.workspace, path))
-            if (stats.isFile() && stats.size > 2 * 1024 * 1024) oversized.push(path)
-          } catch (error) {
-            if (!isMissingPathError(error)) {
-              throw new Error(`could not inspect untracked snapshot target ${path}: ${describeError(error)}`, {
-                cause: error,
-              })
-            }
-          }
-        }
-        await checkedGit(this.workspace, ["add", "-A", "--", "."], { indexFile })
-        for (const path of oversized) {
-          await checkedGit(this.workspace, ["update-index", "--force-remove", "--", path], { indexFile })
-        }
-      }
-      for (const path of forced) {
-        let exists: boolean
-        try {
-          await lstat(join(this.workspace, path))
-          exists = true
-        } catch (error) {
-          if (!isMissingPathError(error)) {
-            throw new Error(`could not inspect snapshot target ${path}: ${describeError(error)}`, { cause: error })
-          }
-          exists = false
-        }
-        if (exists) {
-          await checkedGit(this.workspace, ["add", "-f", "-A", "--", path], { indexFile })
-        } else if (!full) {
-          await checkedGit(this.workspace, ["update-index", "--force-remove", "--", path], { indexFile })
-        }
-      }
-      return outputText(await checkedGit(this.workspace, ["write-tree"], { indexFile }))
-    } finally {
-      await rm(directory, { recursive: true, force: true })
-    }
+  indexState(paths: string[]): Promise<Uint8Array> {
+    return this.native.indexState(paths)
   }
 
-  async changedPaths(before: string, after: string): Promise<string[]> {
-    const output = await checkedGit(this.top, [
-      "diff",
-      "--name-only",
-      "-z",
-      "--no-renames",
-      "--no-ext-diff",
-      "--no-textconv",
-      before,
-      after,
-      "--",
-    ])
-    return nulSeparatedPaths(output.stdout)
+  headState(): Promise<string> {
+    return this.native.headState()
   }
 
-  async indexState(paths: string[]): Promise<Buffer> {
-    const output = await checkedGit(this.top, ["ls-files", "--stage", "-z", "--", ...paths])
-    return output.stdout
+  gitlinks(before: string, after: string, paths: string[]): Promise<NativeGitlink[]> {
+    return this.native.gitlinks({ before, after, paths })
   }
 
-  async headState(): Promise<string> {
-    const revision = await runGit(this.top, ["rev-parse", "--verify", "-q", "HEAD"])
-    if (revision.stdinError) throw revision.stdinError
-    if (revision.exitCode !== 0 && revision.exitCode !== 1) {
-      throw new Error(commandError(revision, ["rev-parse"]))
-    }
-    const reference = await runGit(this.top, ["symbolic-ref", "-q", "HEAD"])
-    if (reference.stdinError) throw reference.stdinError
-    if (reference.exitCode !== 0 && reference.exitCode !== 1) {
-      throw new Error(commandError(reference, ["symbolic-ref"]))
-    }
-    return `${revision.exitCode === 0 ? outputText(revision) : ""}\0${reference.exitCode === 0 ? outputText(reference) : ""}`
+  restore(snapshot: Snapshot): Promise<void> {
+    return this.native.applySnapshot({ snapshot, reverse: true })
   }
 
-  async gitlinks(before: string, after: string, paths: string[]): Promise<Gitlink[]> {
-    const links: Gitlink[] = []
-    for (const path of paths) {
-      const beforeEntry = await this.treeEntry(before, path)
-      const afterEntry = await this.treeEntry(after, path)
-      if (beforeEntry?.mode === "160000" && afterEntry?.mode === "160000") {
-        links.push({ path, before: beforeEntry.object, after: afterEntry.object })
-        continue
-      }
-      if (beforeEntry?.mode === "160000" || afterEntry?.mode === "160000") {
-        if (!beforeEntry || !afterEntry) {
-          throw new Error(`added or removed submodule ${path} cannot be snapshotted safely`)
-        }
-        throw new Error(`replaced submodule ${path} cannot be snapshotted safely`)
-      }
-    }
-    return links
-  }
-
-  async restore(snapshot: Snapshot): Promise<void> {
-    await this.applySnapshot(snapshot, true)
-  }
-
-  async reapply(snapshot: Snapshot): Promise<void> {
-    await this.applySnapshot(snapshot, false)
-  }
-
-  private async treeEntry(tree: string, path: string): Promise<TreeEntry | undefined> {
-    const output = (await checkedGit(this.top, ["ls-tree", "-z", tree, "--", path])).stdout
-    if (output.length === 0) return undefined
-    if (output[output.length - 1] !== 0) throw new Error("git ls-tree returned a malformed entry")
-    const tab = output.indexOf(9)
-    if (tab < 0) throw new Error("git ls-tree returned a malformed entry")
-    const fields = decode(output.subarray(0, tab), "git ls-tree returned a malformed entry").trim().split(/\s+/)
-    if (fields.length !== 3 || !fields[0] || !fields[2]) throw new Error("git ls-tree returned a malformed entry")
-    return { mode: fields[0], object: fields[2] }
-  }
-
-  private async applySnapshot(snapshot: Snapshot, reverse: boolean): Promise<void> {
-    const currentIndex = await this.indexState(snapshot.paths)
-    if (!currentIndex.equals(snapshot.index)) {
-      if (reverse) {
-        throw new Error(
-          "Git index entries for the last agent change were staged afterward; the index and worktree were left intact.",
-        )
-      }
-      throw new Error(
-        `Git index entries were staged after undo for: ${snapshot.paths.join(", ")}. The index and worktree were left intact.`,
-      )
-    }
-
-    const current = await this.captureFull(snapshot.forced)
-    const expected = reverse ? snapshot.after : snapshot.before
-    const verification = await runGit(this.top, [
-      "diff",
-      "--quiet",
-      "--no-ext-diff",
-      "--no-textconv",
-      expected,
-      current,
-      "--",
-      ...snapshot.paths,
-    ])
-    if (verification.stdinError) throw verification.stdinError
-    if (verification.exitCode === 1) {
-      if (reverse) {
-        throw new Error("files from the last agent change were edited afterward; those edits were left intact.")
-      }
-      throw new Error(`files were edited after undo: ${snapshot.paths.join(", ")}. Those edits were left intact.`)
-    }
-    if (verification.exitCode !== 0) throw new Error(commandError(verification, ["diff"]))
-
-    for (const link of snapshot.gitlinks) {
-      await this.preflightGitlink(link, reverse ? link.before : link.after)
-    }
-
-    const gitlinkPaths = new Set(snapshot.gitlinks.map((link) => link.path))
-    const regular = snapshot.paths.filter((path) => !gitlinkPaths.has(path))
-    const patch =
-      regular.length === 0
-        ? Buffer.alloc(0)
-        : (
-            await checkedGit(this.top, [
-              "diff",
-              "--binary",
-              "--full-index",
-              "--no-renames",
-              "--no-ext-diff",
-              "--no-textconv",
-              snapshot.before,
-              snapshot.after,
-              "--",
-              ...regular,
-            ])
-          ).stdout
-
-    if (patch.length > 0) await this.applyPatch(patch, reverse)
-    const changedLinks: Gitlink[] = []
-    for (const link of snapshot.gitlinks) {
-      try {
-        await this.checkoutGitlink(link, reverse ? link.before : link.after)
-        changedLinks.push(link)
-      } catch (error) {
-        const rollbackFailures: string[] = []
-        for (const changed of [...changedLinks, link].toReversed()) {
-          try {
-            await this.checkoutGitlink(changed, reverse ? changed.after : changed.before)
-          } catch (rollbackError) {
-            rollbackFailures.push(describeError(rollbackError))
-          }
-        }
-        if (patch.length > 0) {
-          try {
-            await this.applyPatch(patch, !reverse)
-          } catch (rollbackError) {
-            rollbackFailures.push(describeError(rollbackError))
-          }
-        }
-        if (rollbackFailures.length > 0) {
-          throw new Error(
-            `${describeError(error)}; restoring the pre-apply worktree also failed: ${rollbackFailures.join("; ")}`,
-            { cause: error },
-          )
-        }
-        throw error
-      }
-    }
-  }
-
-  private async preflightGitlink(gitlink: Gitlink, revision: string): Promise<void> {
-    const path = join(this.top, gitlink.path)
-    const status = await checkedGit(path, ["status", "--porcelain", "--untracked-files=all"])
-    if (status.stdout.length > 0) {
-      throw new Error(`submodule ${gitlink.path} has later worktree changes; they were left intact.`)
-    }
-    await checkedGit(path, ["cat-file", "-e", `${revision}^{commit}`])
-  }
-
-  private async checkoutGitlink(gitlink: Gitlink, revision: string): Promise<void> {
-    await checkedGit(join(this.top, gitlink.path), ["checkout", "--detach", "--quiet", revision])
-  }
-
-  private async applyPatch(patch: Buffer, reverse: boolean): Promise<void> {
-    await checkedGit(this.top, ["apply", ...(reverse ? ["--reverse"] : []), "--binary", "--whitespace=nowarn"], {
-      input: patch,
-    })
+  reapply(snapshot: Snapshot): Promise<void> {
+    return this.native.applySnapshot({ snapshot, reverse: false })
   }
 }
 
@@ -666,7 +302,7 @@ class UndoCore {
       }
       const epoch = this.epoch
       let before: string
-      let beforeIndex: Buffer | undefined
+      let beforeIndex: Uint8Array | undefined
       let beforeHead: string | undefined
       try {
         before = await capture()
@@ -694,7 +330,7 @@ class UndoCore {
           const afterHead = watchIndex ? await repository.headState() : undefined
           if (beforeHead !== undefined && afterHead !== undefined && beforeHead !== afterHead) {
             this.invalidateCode("Git HEAD changed during a shell command, so full undo is unavailable")
-          } else if (beforeIndex && afterIndex && !beforeIndex.equals(afterIndex)) {
+          } else if (beforeIndex && afterIndex && !bytesEqual(beforeIndex, afterIndex)) {
             this.invalidateCode("the Git index changed during a shell command, so full undo is unavailable")
           } else {
             const changed = await repository.changedPaths(before, after)

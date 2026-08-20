@@ -6,35 +6,66 @@ import { isRecord } from "../lib/json"
 import { isStandalone } from "../lib/process"
 import {
   parseDiff,
-  parseFileOutcome,
+  parseGitRepository,
+  parseNativeProcess,
+  parseNativeShellManager,
+  parseWorktreeResult,
+  parseWorktreeToolPreparation,
   parsePathRanker,
-  parseReadOutcome,
   parseSearchOutcome,
+  parseToolOutput,
   parseWorkspaceIndex,
   type NativeDiff,
-  type NativeFileOutcome,
+  type NativeEditRequest,
   type NativeFuzzyCandidate,
+  type NativeGitRepository,
   type NativeGlobOptions,
   type NativeGrepOptions,
+  type NativeManagedWorktree,
   type NativePathRanker,
-  type NativeReadOutcome,
+  type NativeProcess,
+  type NativeProcessRequest,
+  type NativeShellManager,
+  type NativeReadRequest,
+  type NativeReviewDiffRequest,
   type NativeSearchOutcome,
+  type NativeToolOutput,
   type NativeWorkspaceIndex,
+  type NativeWorktreeRequest,
+  type NativeWorktreeToolPreparation,
+  type NativeWriteRequest,
 } from "./contracts"
 import { NATIVE_API_VERSION, readNativeManifest } from "./manifest"
 import { hostNativeTarget } from "./targets"
 
 export type {
   NativeDiff,
-  NativeFileOutcome,
+  NativeEditRequest,
   NativeFuzzyCandidate,
   NativeFuzzyField,
+  NativeGitCommandOutput,
+  NativeGitCommandRequest,
+  NativeGitRepository,
+  NativeGitSnapshot,
+  NativeGitlink,
   NativeGlobOptions,
   NativeGrepOptions,
+  NativeManagedWorktree,
   NativePathRanker,
-  NativeReadOutcome,
+  NativeProcess,
+  NativeProcessRequest,
+  NativeProcessTermination,
+  NativeShellExecution,
+  NativeShellManager,
+  NativeShellRequest,
+  NativeReadRequest,
+  NativeReviewDiffRequest,
   NativeSearchOutcome,
+  NativeToolOutput,
   NativeWorkspaceIndex,
+  NativeWorktreeRequest,
+  NativeWorktreeToolPreparation,
+  NativeWriteRequest,
 } from "./contracts"
 
 export interface NativeSecretMatcher {
@@ -43,6 +74,10 @@ export interface NativeSecretMatcher {
 
 interface NativeBinding {
   createSecretMatcher(values: string[], marker: string): NativeSecretMatcher
+  createGitRepository(cwd: string): NativeGitRepository
+  createProcess(request: NativeProcessRequest): NativeProcess
+  createShellManager(): NativeShellManager
+  normalizeProcessOutput(output: string): string
   batchScores(query: string, candidates: NativeFuzzyCandidate[]): number[]
   createPathRanker(paths: string[]): NativePathRanker
   createWorkspaceIndex(
@@ -53,9 +88,27 @@ interface NativeBinding {
   ): Promise<NativeWorkspaceIndex>
   grep(options: NativeGrepOptions, signal?: AbortSignal): Promise<NativeSearchOutcome>
   glob(options: NativeGlobOptions, signal?: AbortSignal): Promise<NativeSearchOutcome>
-  readFile(path: string, offset: number, limit: number): Promise<NativeReadOutcome>
-  editFile(path: string, oldString: string, newString: string, replaceAll: boolean): Promise<NativeFileOutcome>
-  writeFile(path: string, content: string): Promise<NativeFileOutcome>
+  reviewDiff(request: NativeReviewDiffRequest, signal?: AbortSignal): Promise<NativeToolOutput>
+  createManagedWorktree(request: NativeWorktreeRequest, signal?: AbortSignal): Promise<NativeManagedWorktree>
+  managedWorktreeAt(request: NativeWorktreeRequest, signal?: AbortSignal): Promise<NativeManagedWorktree | undefined>
+  removeManagedWorktree(request: NativeWorktreeRequest, signal?: AbortSignal): Promise<void>
+  unmanageWorktree(request: NativeWorktreeRequest, signal?: AbortSignal): Promise<void>
+  prepareWorktreeTool(request: {
+    operation: string
+    name?: string
+    action?: string
+    path?: string
+    force?: boolean
+  }): NativeWorktreeToolPreparation
+  formatWorktreeTool(request: {
+    operation: string
+    action?: string
+    displayPath: string
+    worktree: NativeManagedWorktree
+  }): NativeToolOutput
+  readFile(request: NativeReadRequest): Promise<NativeToolOutput>
+  editFile(request: NativeEditRequest): Promise<NativeToolOutput>
+  writeFile(request: NativeWriteRequest): Promise<NativeToolOutput>
   unifiedDiff(oldText: string, newText: string): NativeDiff
 }
 
@@ -102,11 +155,27 @@ function createBinding(value: unknown): NativeBinding {
   const Matcher = value.NativeSecretMatcher
   if (typeof Matcher !== "function") throw new Error("native addon NativeSecretMatcher export is invalid")
   const nativeBatchScores = requiredFunction(value, "nativeBatchScores")
+  const nativeNormalizeProcessOutput = requiredFunction(value, "nativeNormalizeProcessOutput")
+  const GitRepository = value.NativeGitRepository
+  if (typeof GitRepository !== "function") throw new Error("native addon NativeGitRepository export is invalid")
+  const Process = value.NativeProcess
+  if (typeof Process !== "function") throw new Error("native addon NativeProcess export is invalid")
+  const spawnProcess: unknown = Reflect.get(Process, "spawn")
+  if (typeof spawnProcess !== "function") throw new Error("native addon NativeProcess.spawn export is invalid")
+  const ShellManager = value.NativeShellManager
+  if (typeof ShellManager !== "function") throw new Error("native addon NativeShellManager export is invalid")
   const PathRanker = value.NativePathRanker
   if (typeof PathRanker !== "function") throw new Error("native addon NativePathRanker export is invalid")
   const createWorkspaceIndex = requiredFunction(value, "createWorkspaceIndex")
   const nativeGrep = requiredFunction(value, "nativeGrep")
   const nativeGlob = requiredFunction(value, "nativeGlob")
+  const nativeReviewDiff = requiredFunction(value, "nativeReviewDiff")
+  const nativeCreateManagedWorktree = requiredFunction(value, "nativeCreateManagedWorktree")
+  const nativeManagedWorktreeAt = requiredFunction(value, "nativeManagedWorktreeAt")
+  const nativeRemoveManagedWorktree = requiredFunction(value, "nativeRemoveManagedWorktree")
+  const nativeUnmanageWorktree = requiredFunction(value, "nativeUnmanageWorktree")
+  const nativePrepareWorktreeTool = requiredFunction(value, "nativePrepareWorktreeTool")
+  const nativeFormatWorktreeTool = requiredFunction(value, "nativeFormatWorktreeTool")
   const nativeReadFile = requiredFunction(value, "nativeReadFile")
   const nativeEditFile = requiredFunction(value, "nativeEditFile")
   const nativeWriteFile = requiredFunction(value, "nativeWriteFile")
@@ -125,6 +194,20 @@ function createBinding(value: unknown): NativeBinding {
           return output
         },
       }
+    },
+    createGitRepository(cwd) {
+      return parseGitRepository(Reflect.construct(GitRepository, [cwd]))
+    },
+    createProcess(request) {
+      return parseNativeProcess(Reflect.apply(spawnProcess, Process, [request]))
+    },
+    createShellManager() {
+      return parseNativeShellManager(Reflect.construct(ShellManager, []))
+    },
+    normalizeProcessOutput(output) {
+      const normalized: unknown = Reflect.apply(nativeNormalizeProcessOutput, value, [output])
+      if (typeof normalized !== "string") throw new Error("native process normalization returned an invalid value")
+      return normalized
     },
     batchScores(query, candidates) {
       const output: unknown = Reflect.apply(nativeBatchScores, value, [query, candidates])
@@ -150,16 +233,56 @@ function createBinding(value: unknown): NativeBinding {
     async glob(options, signal) {
       return parseSearchOutcome(await Promise.resolve(Reflect.apply(nativeGlob, value, [options, signal])))
     },
-    async readFile(path, offset, limit) {
-      return parseReadOutcome(await Promise.resolve(Reflect.apply(nativeReadFile, value, [path, offset, limit])))
-    },
-    async editFile(path, oldString, newString, replaceAll) {
-      return parseFileOutcome(
-        await Promise.resolve(Reflect.apply(nativeEditFile, value, [path, oldString, newString, replaceAll])),
+    async reviewDiff(request, signal) {
+      return parseToolOutput(
+        await Promise.resolve(Reflect.apply(nativeReviewDiff, value, [request, signal])),
+        "native review diff returned an invalid value",
       )
     },
-    async writeFile(path, content) {
-      return parseFileOutcome(await Promise.resolve(Reflect.apply(nativeWriteFile, value, [path, content])))
+    async createManagedWorktree(request, signal) {
+      const result = parseWorktreeResult(
+        await Promise.resolve(Reflect.apply(nativeCreateManagedWorktree, value, [request, signal])),
+      )
+      if (!result) throw new Error("native worktree creation returned no worktree")
+      return result
+    },
+    async managedWorktreeAt(request, signal) {
+      return parseWorktreeResult(
+        await Promise.resolve(Reflect.apply(nativeManagedWorktreeAt, value, [request, signal])),
+      )
+    },
+    async removeManagedWorktree(request, signal) {
+      parseWorktreeResult(await Promise.resolve(Reflect.apply(nativeRemoveManagedWorktree, value, [request, signal])))
+    },
+    async unmanageWorktree(request, signal) {
+      parseWorktreeResult(await Promise.resolve(Reflect.apply(nativeUnmanageWorktree, value, [request, signal])))
+    },
+    prepareWorktreeTool(request) {
+      return parseWorktreeToolPreparation(Reflect.apply(nativePrepareWorktreeTool, value, [request]))
+    },
+    formatWorktreeTool(request) {
+      return parseToolOutput(
+        Reflect.apply(nativeFormatWorktreeTool, value, [request]),
+        "native worktree tool returned an invalid output",
+      )
+    },
+    async readFile(request) {
+      return parseToolOutput(
+        await Promise.resolve(Reflect.apply(nativeReadFile, value, [request])),
+        "native read returned an invalid value",
+      )
+    },
+    async editFile(request) {
+      return parseToolOutput(
+        await Promise.resolve(Reflect.apply(nativeEditFile, value, [request])),
+        "native edit returned an invalid value",
+      )
+    },
+    async writeFile(request) {
+      return parseToolOutput(
+        await Promise.resolve(Reflect.apply(nativeWriteFile, value, [request])),
+        "native write returned an invalid value",
+      )
     },
     unifiedDiff(oldText, newText) {
       return parseDiff(Reflect.apply(nativeUnifiedDiff, value, [oldText, newText]))
@@ -168,6 +291,7 @@ function createBinding(value: unknown): NativeBinding {
 }
 
 let binding: NativeBinding | undefined
+let shellManager: NativeShellManager | undefined
 
 function nativeBinding(): NativeBinding {
   binding ??= createBinding(loadBindingValue())
@@ -176,6 +300,23 @@ function nativeBinding(): NativeBinding {
 
 export function createNativeSecretMatcher(values: string[], marker: string): NativeSecretMatcher {
   return nativeBinding().createSecretMatcher(values, marker)
+}
+
+export function createNativeGitRepository(cwd: string): NativeGitRepository {
+  return nativeBinding().createGitRepository(cwd)
+}
+
+export function createNativeProcess(request: NativeProcessRequest): NativeProcess {
+  return nativeBinding().createProcess(request)
+}
+
+export function nativeShellManager(): NativeShellManager {
+  shellManager ??= nativeBinding().createShellManager()
+  return shellManager
+}
+
+export function nativeNormalizeProcessOutput(output: string): string {
+  return nativeBinding().normalizeProcessOutput(output)
 }
 
 export function nativeFuzzyScores(query: string, candidates: NativeFuzzyCandidate[]): number[] {
@@ -203,21 +344,61 @@ export function nativeGlob(options: NativeGlobOptions, signal?: AbortSignal): Pr
   return nativeBinding().glob(options, signal)
 }
 
-export function nativeReadFile(path: string, offset: number, limit: number): Promise<NativeReadOutcome> {
-  return nativeBinding().readFile(path, offset, limit)
+export function nativeReviewDiff(request: NativeReviewDiffRequest, signal?: AbortSignal): Promise<NativeToolOutput> {
+  return nativeBinding().reviewDiff(request, signal)
 }
 
-export function nativeEditFile(
-  path: string,
-  oldString: string,
-  newString: string,
-  replaceAll: boolean,
-): Promise<NativeFileOutcome> {
-  return nativeBinding().editFile(path, oldString, newString, replaceAll)
+export function nativeCreateManagedWorktree(
+  request: NativeWorktreeRequest,
+  signal?: AbortSignal,
+): Promise<NativeManagedWorktree> {
+  return nativeBinding().createManagedWorktree(request, signal)
 }
 
-export function nativeWriteFile(path: string, content: string): Promise<NativeFileOutcome> {
-  return nativeBinding().writeFile(path, content)
+export function nativeManagedWorktreeAt(
+  request: NativeWorktreeRequest,
+  signal?: AbortSignal,
+): Promise<NativeManagedWorktree | undefined> {
+  return nativeBinding().managedWorktreeAt(request, signal)
+}
+
+export function nativeRemoveManagedWorktree(request: NativeWorktreeRequest, signal?: AbortSignal): Promise<void> {
+  return nativeBinding().removeManagedWorktree(request, signal)
+}
+
+export function nativeUnmanageWorktree(request: NativeWorktreeRequest, signal?: AbortSignal): Promise<void> {
+  return nativeBinding().unmanageWorktree(request, signal)
+}
+
+export function nativePrepareWorktreeTool(request: {
+  operation: string
+  name?: string
+  action?: string
+  path?: string
+  force?: boolean
+}): NativeWorktreeToolPreparation {
+  return nativeBinding().prepareWorktreeTool(request)
+}
+
+export function nativeFormatWorktreeTool(request: {
+  operation: string
+  action?: string
+  displayPath: string
+  worktree: NativeManagedWorktree
+}): NativeToolOutput {
+  return nativeBinding().formatWorktreeTool(request)
+}
+
+export function nativeReadFile(request: NativeReadRequest): Promise<NativeToolOutput> {
+  return nativeBinding().readFile(request)
+}
+
+export function nativeEditFile(request: NativeEditRequest): Promise<NativeToolOutput> {
+  return nativeBinding().editFile(request)
+}
+
+export function nativeWriteFile(request: NativeWriteRequest): Promise<NativeToolOutput> {
+  return nativeBinding().writeFile(request)
 }
 
 export function nativeUnifiedDiff(oldText: string, newText: string): NativeDiff {
@@ -244,7 +425,28 @@ export async function selfCheck(): Promise<void> {
     await writeFile(join(directory, "workspace-check.txt"), "native")
     const index = await createNativeWorkspaceIndex(directory, [], "[REDACTED]")
     const result = await index.search("workspace-check")
-    if (result.kind !== "completed" || result.paths[0] !== "workspace-check.txt") {
+    const repository = createNativeGitRepository(directory)
+    const discovery = await repository.discover()
+    const git = await repository.run({ args: ["--version"] })
+    const child = createNativeProcess({
+      launch: [process.execPath, "--version"],
+      cwd: directory,
+      environment: Object.entries(process.env).flatMap(([name, value]) =>
+        value === undefined ? [] : [{ name, value }],
+      ),
+      stdin: false,
+    })
+    const termination = await child.wait()
+    const manager = nativeShellManager()
+    manager.disposeSession("native-self-check")
+    if (
+      result.kind !== "completed" ||
+      result.paths[0] !== "workspace-check.txt" ||
+      discovery.status !== "unavailable" ||
+      git.exitCode !== 0 ||
+      termination.status !== "exited" ||
+      termination.exitCode !== 0
+    ) {
       throw new Error("native addon self-check failed")
     }
   } finally {

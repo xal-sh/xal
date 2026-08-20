@@ -2,7 +2,6 @@ import { asString } from "../../lib/json"
 import { displayPath, resolveFilePath } from "../../lib/path"
 import { nativeWriteFile } from "../../native"
 import type { Tool } from "../../tools/types"
-import { withDiff } from "./output"
 import { pathPermission } from "./permission"
 
 export const writeTool: Tool = {
@@ -36,20 +35,11 @@ export const writeTool: Tool = {
   },
   async execute(args, ctx) {
     const path = asString(args.file_path)
-    if (!path) throw new Error("file_path is required")
     const content = asString(args.content)
-    if (content === undefined) throw new Error("content is required")
-
-    const shown = displayPath(path, ctx.cwd)
-    const result = await nativeWriteFile(resolveFilePath(path, ctx.cwd), content)
-    if (result.kind === "directory") throw new Error(`Path is a directory, not a file: ${shown}`)
-    if (result.kind === "unchanged") return { output: `Unchanged ${shown}` }
-    if (result.kind === "created") {
-      return { output: withDiff(`Created ${shown} (${result.added} lines)`, result.hunks) }
-    }
-    if (result.kind === "updated") {
-      return { output: withDiff(`Updated ${shown} (+${result.added} -${result.removed})`, result.hunks) }
-    }
-    throw new Error(`native write returned unexpected ${result.kind} outcome`)
+    return nativeWriteFile({
+      ...(path ? { path: resolveFilePath(path, ctx.cwd) } : {}),
+      displayPath: displayPath(path ?? "", ctx.cwd),
+      ...(content === undefined ? {} : { content }),
+    })
   },
 }

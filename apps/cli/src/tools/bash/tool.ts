@@ -1,5 +1,6 @@
-import { stripVTControlCharacters } from "node:util"
 import type { BackgroundProcessJob } from "../../background/jobs"
+import { nativeNormalizeProcessOutput } from "../../native"
+import { createRedactedStream } from "../../secrets/redactor"
 import { asBoolean, asNumber, asString } from "../../lib/json"
 import type { ProcessExecution, Tool } from "../types"
 import { adoptJob, startJob } from "./jobs"
@@ -12,24 +13,6 @@ import { splitCommand } from "./split"
 const DEFAULT_TIMEOUT_S = 120
 const MAX_TIMEOUT_S = 600
 const MAX_RESULT_BYTES = 20 * 1024
-
-function normalizeLine(line: string): string {
-  const normalized: string[] = []
-  for (const character of line.slice(line.lastIndexOf("\r") + 1)) {
-    if (character === "\b") {
-      normalized.pop()
-      continue
-    }
-    const code = character.charCodeAt(0)
-    if ((code < 0x20 && character !== "\t") || code === 0x7f) continue
-    normalized.push(character)
-  }
-  return normalized.join("")
-}
-
-function normalizeCompletedOutput(output: string): string {
-  return stripVTControlCharacters(output).replaceAll("\r\n", "\n").split("\n").map(normalizeLine).join("\n")
-}
 
 export function commandOf(args: Record<string, unknown>): string {
   return asString(args.command)?.trim() ?? ""
@@ -140,29 +123,43 @@ export const bashTool: Tool = {
       output += text
       ctx.update(text)
     }
-    const execution = executeShellCommand(ctx.sessionId, command, ctx.cwd, sandbox, (text) => sink(text))
+    const redactor = createRedactedStream()
+    const emit = (text: string): void => {
+      const redacted = redactor.write(text)
+      if (redacted) sink(redacted)
+    }
+    const execution = executeShellCommand(ctx.sessionId, command, ctx.cwd, sandbox, emit)
+    const done = execution.done.then(
+      (termination) => {
+        const tail = redactor.end()
+        if (tail) sink(tail)
+        return termination
+      },
+      (error: unknown) => {
+        const tail = redactor.end()
+        if (tail) sink(tail)
+        throw error
+      },
+    )
+    const redactedExecution = { ...execution, done }
 
-    let timedOut = false
-    const timeout = setTimeout(() => {
-      timedOut = true
-      execution.kill()
-    }, timeoutSeconds * 1000)
+    execution.setTimeout(timeoutSeconds * 1000)
     const onAbort = (): void => execution.kill()
     ctx.signal.addEventListener("abort", onAbort)
     if (ctx.signal.aborted) onAbort()
 
     const promotion = Promise.withResolvers<BackgroundProcessJob>()
     const disarm = armPromotion(ctx.sessionId, () => {
-      clearTimeout(timeout)
+      execution.clearTimeout()
       ctx.signal.removeEventListener("abort", onAbort)
-      const adopted = adoptJob(command, execution, output, ctx.cwd, ctx.sessionId, ctx.directory)
+      const adopted = adoptJob(command, redactedExecution, output, ctx.cwd, ctx.sessionId, ctx.directory)
       sink = adopted.sink
       promotion.resolve(adopted.job)
     })
 
     try {
       const settled = await Promise.race([
-        execution.done.then((termination) => ({ kind: "done" as const, termination })),
+        done.then((termination) => ({ kind: "done" as const, termination })),
         promotion.promise.then((job) => ({ kind: "promoted" as const, job })),
       ])
       if (settled.kind === "promoted") {
@@ -171,11 +168,11 @@ export const bashTool: Tool = {
         }
       }
       const termination = settled.termination
-      const trimmed = normalizeCompletedOutput(output).trimEnd()
+      const trimmed = nativeNormalizeProcessOutput(output).trimEnd()
       const sandboxed = sandbox ? { sandbox } : {}
       let processExecution: ProcessExecution
       let footer: string
-      if (timedOut) {
+      if (execution.timedOut()) {
         processExecution = { status: "timed_out", timeoutSeconds, ...sandboxed }
         footer = `(timed out after ${timeoutSeconds}s and was killed)`
       } else if (ctx.signal.aborted) {
@@ -195,7 +192,7 @@ export const bashTool: Tool = {
       }
     } finally {
       disarm()
-      clearTimeout(timeout)
+      execution.clearTimeout()
       ctx.signal.removeEventListener("abort", onAbort)
     }
   },

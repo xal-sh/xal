@@ -1,6 +1,7 @@
 import type { Command } from "../../commands/types"
 import { runGit } from "../../git/command"
 import { asString } from "../../lib/json"
+import { nativeReviewDiff } from "../../native"
 import { findProjectRoot } from "../../project/root"
 import type { Tool } from "../../tools/types"
 import type { Plugin } from "../types"
@@ -78,48 +79,6 @@ async function branchScope(root: string, base: string): Promise<ReviewScope | un
   }
 }
 
-async function workingTreeDiff(root: string, signal?: AbortSignal): Promise<string> {
-  const [status, staged, unstaged] = await Promise.all([
-    gitStatus(root, signal),
-    runGit(root, ["diff", "--cached", "--no-ext-diff", "--find-renames", "--"], signal),
-    runGit(root, ["diff", "--no-ext-diff", "--find-renames", "--"], signal),
-  ])
-  if (!status) return "No working-tree changes."
-  return [
-    "Git status:",
-    status,
-    "",
-    "Staged diff:",
-    staged || "(none)",
-    "",
-    "Unstaged diff:",
-    unstaged || "(none)",
-    "",
-    "Untracked file contents are not included in Git diffs. Inspect every untracked path listed in the status.",
-  ].join("\n")
-}
-
-async function branchDiff(root: string, base: string, signal?: AbortSignal): Promise<string> {
-  const { baseCommit, mergeBase } = await branchPoint(root, base, signal)
-  const [status, diff] = await Promise.all([
-    gitStatus(root, signal),
-    runGit(root, ["diff", "--no-ext-diff", "--find-renames", mergeBase, "--"], signal),
-  ])
-  if (!diff && !hasUntracked(status)) return `No changes since the merge base with ${base}.`
-  return [
-    `Base: ${baseCommit}`,
-    `Merge base: ${mergeBase}`,
-    "",
-    "Git status:",
-    status || "(clean)",
-    "",
-    "Diff:",
-    diff || "(no tracked changes)",
-    "",
-    "Untracked file contents are not included in Git diffs. Inspect every untracked path listed in the status.",
-  ].join("\n")
-}
-
 const reviewDiffTool: Tool = {
   name: "review_diff",
   description:
@@ -142,10 +101,15 @@ const reviewDiffTool: Tool = {
     return true
   },
   async execute(args, ctx) {
-    const base = asString(args.base)?.trim()
-    if (args.base !== undefined && !base) throw new Error("base must be a non-empty Git revision")
-    const root = await findProjectRoot(ctx.cwd)
-    return { output: base ? await branchDiff(root, base, ctx.signal) : await workingTreeDiff(root, ctx.signal) }
+    const base = asString(args.base)
+    return nativeReviewDiff(
+      {
+        cwd: ctx.cwd,
+        ...(base === undefined ? {} : { base }),
+        aborted: ctx.signal.aborted,
+      },
+      ctx.signal,
+    )
   },
 }
 

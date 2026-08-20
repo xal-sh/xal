@@ -113,9 +113,15 @@ test("edit reports missing paths and exact no-match failures without mutation", 
 
 test("edit rejects empty matches and invalid UTF-8 without modifying the file", async () => {
   await withWorkspace(async (workspace) => {
-    await expect(nativeEditFile(join(workspace, "missing.txt"), "", "new", false)).rejects.toThrow(
-      "old string must be non-empty",
-    )
+    await expect(
+      nativeEditFile({
+        path: join(workspace, "missing.txt"),
+        displayPath: "missing.txt",
+        oldString: "",
+        newString: "new",
+        replaceAll: false,
+      }),
+    ).rejects.toThrow("old_string is required and must be non-empty")
     const path = join(workspace, "invalid-utf8.txt")
     const bytes = [0xff, 0xfe, 0xfd]
     await writeFile(path, Uint8Array.from(bytes))

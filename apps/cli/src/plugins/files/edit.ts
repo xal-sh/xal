@@ -2,7 +2,6 @@ import { asBoolean, asString } from "../../lib/json"
 import { displayPath, resolveFilePath } from "../../lib/path"
 import { nativeEditFile } from "../../native"
 import type { Tool } from "../../tools/types"
-import { withDiff } from "./output"
 import { pathPermission } from "./permission"
 
 export const editTool: Tool = {
@@ -45,31 +44,15 @@ export const editTool: Tool = {
   },
   async execute(args, ctx) {
     const path = asString(args.file_path)
-    if (!path) throw new Error("file_path is required")
     const oldString = asString(args.old_string)
-    if (!oldString) throw new Error("old_string is required and must be non-empty")
     const newString = asString(args.new_string)
-    if (newString === undefined) throw new Error("new_string is required")
-    if (oldString === newString) throw new Error("old_string and new_string are identical; nothing to change")
-    const replaceAll = asBoolean(args.replace_all) ?? false
-
-    const shown = displayPath(path, ctx.cwd)
-    const result = await nativeEditFile(resolveFilePath(path, ctx.cwd), oldString, newString, replaceAll)
-    if (result.kind === "notFound") throw new Error(`File not found: ${shown}`)
-    if (result.kind === "directory") throw new Error(`Path is a directory, not a file: ${shown}`)
-    if (result.kind === "noMatch") {
-      throw new Error(
-        `old_string not found in ${shown}. It must match the file text exactly, including whitespace and indentation.`,
-      )
-    }
-    if (result.kind === "ambiguous") {
-      throw new Error(
-        `old_string matches ${result.matches} locations in ${shown}. Add surrounding lines to make it unique, or set replace_all to true.`,
-      )
-    }
-    if (result.kind !== "updated") throw new Error(`native edit returned unexpected ${result.kind} outcome`)
-    return {
-      output: withDiff(`Updated ${shown} (+${result.added} -${result.removed})`, result.hunks),
-    }
+    const replaceAll = asBoolean(args.replace_all)
+    return nativeEditFile({
+      ...(path ? { path: resolveFilePath(path, ctx.cwd) } : {}),
+      displayPath: displayPath(path ?? "", ctx.cwd),
+      ...(oldString === undefined ? {} : { oldString }),
+      ...(newString === undefined ? {} : { newString }),
+      ...(replaceAll === undefined ? {} : { replaceAll }),
+    })
   },
 }

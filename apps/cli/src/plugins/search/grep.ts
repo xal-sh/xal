@@ -2,8 +2,6 @@ import { asBoolean, asString } from "../../lib/json"
 import { displayPath } from "../../lib/path"
 import { nativeGrep } from "../../native"
 import type { Tool } from "../../tools/types"
-import { formatResults } from "./rg"
-
 const LIMIT = 250
 
 export const grepTool: Tool = {
@@ -52,33 +50,21 @@ export const grepTool: Tool = {
   },
   async execute(args, ctx) {
     const pattern = asString(args.pattern)
-    if (!pattern) throw new Error("pattern is required")
-    const content = asString(args.output_mode) !== "files"
-
-    if (ctx.signal.aborted) return { output: "(interrupted by user)" }
-    const result = await nativeGrep(
+    const target = asString(args.path)
+    const glob = asString(args.glob)
+    const outputMode = asString(args.output_mode)
+    const caseInsensitive = asBoolean(args.case_insensitive)
+    return nativeGrep(
       {
         cwd: ctx.cwd,
-        target: asString(args.path),
-        glob: asString(args.glob),
-        pattern,
-        content,
-        caseInsensitive: asBoolean(args.case_insensitive) ?? false,
+        aborted: ctx.signal.aborted,
+        ...(target === undefined ? {} : { target }),
+        ...(glob === undefined ? {} : { glob }),
+        ...(pattern === undefined ? {} : { pattern }),
+        ...(outputMode === undefined ? {} : { outputMode }),
+        ...(caseInsensitive === undefined ? {} : { caseInsensitive }),
       },
       ctx.signal,
     )
-    if (result.kind === "interrupted") return { output: "(interrupted by user)" }
-    if (result.kind === "timedOut") throw new Error("Search timed out after 30s")
-    if (result.total === 0) return { output: "No matches found" }
-
-    const header = content ? `Found ${result.total} matching lines` : `Found ${result.total} files`
-    return {
-      output: formatResults(
-        header,
-        result.lines,
-        result.total,
-        (shown, total) => `(Showing first ${shown} of ${total}. Narrow your pattern or path.)`,
-      ),
-    }
   },
 }
