@@ -117,9 +117,7 @@ export function backgroundResultSection(result: BackgroundResult): string {
 function runningNote(agents: number, processes: number): string {
   if (agents === 0 && processes === 0) return "No background work remains running."
   const notes = [
-    agents > 0
-      ? `${agents} task ${agents === 1 ? "agent is" : "agents are"} still running; do not run shared final validation yet.`
-      : "",
+    agents > 0 ? `${agents} task ${agents === 1 ? "agent is" : "agents are"} still running.` : "",
     processes > 0 ? `${processes} background ${processes === 1 ? "job is" : "jobs are"} still running.` : "",
   ]
   return notes.filter(Boolean).join(" ")
@@ -130,16 +128,10 @@ export function backgroundResultsMessage(results: BackgroundResult[], ownerId: s
     results.length === 1
       ? `Background ${results[0]!.kind === "agent" ? "task" : "job"} ${results[0]!.id} has finished. Resume your work using its result.`
       : `${results.length} background jobs have finished. Resume your work using their results.`
-  const caution = results.some((result) => result.kind === "agent")
-    ? [
-        "Worker reports are evidence, not verification. Check important claims and shared-workspace changes before relying on them.",
-      ]
-    : []
   return [
     "<system-notice>",
     heading,
     runningNote(runningAgentJobs(ownerId).length, runningProcessJobs(ownerId).length),
-    ...caution,
     ...results.map(backgroundResultSection),
     "</system-notice>",
   ].join("\n\n")
