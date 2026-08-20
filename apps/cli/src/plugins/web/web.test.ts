@@ -98,6 +98,33 @@ test("webfetch fails on error statuses, binary content, and oversized responses"
   )
 })
 
+test("webfetch cancels while waiting for response headers", async () => {
+  let release: (() => void) | undefined
+  const waiting = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  const server = Bun.serve({
+    port: 0,
+    async fetch() {
+      await waiting
+      return new Response("late")
+    },
+  })
+  const controller = new AbortController()
+  try {
+    const execution = webfetchTool.execute(
+      { url: `${server.url.href.replace(/\/$/, "")}/slow` },
+      { ...context(), signal: controller.signal },
+    )
+    await Bun.sleep(30)
+    controller.abort()
+    expect((await execution).output).toBe("(interrupted by user)")
+  } finally {
+    release?.()
+    await server.stop(true)
+  }
+})
+
 test("webfetch rejects unsupported schemes and suggests a domain-wide permission", async () => {
   await expect(webfetchTool.execute({ url: "file:///etc/passwd" }, context())).rejects.toThrow(
     "Not a valid http or https URL",

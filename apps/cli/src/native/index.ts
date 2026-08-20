@@ -8,6 +8,8 @@ import {
   parseDiff,
   parseGitRepository,
   parseMemoryStore,
+  parseNativeLspManager,
+  parseNativeMcpManager,
   parseNativeProcess,
   parseNativeShellManager,
   parseOutputContract,
@@ -24,6 +26,8 @@ import {
   type NativeGlobOptions,
   type NativeGrepOptions,
   type NativeManagedWorktree,
+  type NativeLspManager,
+  type NativeMcpManager,
   type NativeMemoryStore,
   type NativeOutputContract,
   type NativePathRanker,
@@ -57,6 +61,9 @@ export type {
   NativeGlobOptions,
   NativeGrepOptions,
   NativeManagedWorktree,
+  NativeLspManager,
+  NativeMcpCall,
+  NativeMcpManager,
   NativeMemorySnapshot,
   NativeMemoryStore,
   NativeOutputContract,
@@ -86,6 +93,8 @@ export interface NativeSecretMatcher {
 interface NativeBinding {
   createSecretMatcher(values: string[], marker: string): NativeSecretMatcher
   createGitRepository(cwd: string): NativeGitRepository
+  createLspManager(definitions: unknown, appName: string, appVersion: string): NativeLspManager
+  createMcpManager(configs: unknown, appName: string, appVersion: string): NativeMcpManager
   createMemoryStore(path: string): NativeMemoryStore
   createOutputContract(schema: unknown): NativeOutputContract
   createProcess(request: NativeProcessRequest): NativeProcess
@@ -175,6 +184,10 @@ function createBinding(value: unknown): NativeBinding {
   const nativeNormalizeProcessOutput = requiredFunction(value, "nativeNormalizeProcessOutput")
   const GitRepository = value.NativeGitRepository
   if (typeof GitRepository !== "function") throw new Error("native addon NativeGitRepository export is invalid")
+  const LspManager = value.NativeLspManager
+  if (typeof LspManager !== "function") throw new Error("native addon NativeLspManager export is invalid")
+  const McpManager = value.NativeMcpManager
+  if (typeof McpManager !== "function") throw new Error("native addon NativeMcpManager export is invalid")
   const MemoryStore = value.NativeMemoryStore
   if (typeof MemoryStore !== "function") throw new Error("native addon NativeMemoryStore export is invalid")
   const ToolRuntime = value.NativeToolRuntime
@@ -271,6 +284,12 @@ function createBinding(value: unknown): NativeBinding {
     },
     createGitRepository(cwd) {
       return parseGitRepository(Reflect.construct(GitRepository, [cwd]))
+    },
+    createLspManager(definitions, appName, appVersion) {
+      return parseNativeLspManager(Reflect.construct(LspManager, [JSON.stringify(definitions), appName, appVersion]))
+    },
+    createMcpManager(configs, appName, appVersion) {
+      return parseNativeMcpManager(Reflect.construct(McpManager, [JSON.stringify(configs), appName, appVersion]))
     },
     createMemoryStore(path) {
       return parseMemoryStore(Reflect.construct(MemoryStore, [path]))
@@ -414,6 +433,14 @@ export function createNativeSecretMatcher(values: string[], marker: string): Nat
 
 export function createNativeGitRepository(cwd: string): NativeGitRepository {
   return nativeBinding().createGitRepository(cwd)
+}
+
+export function createNativeLspManager(definitions: unknown, appName: string, appVersion: string): NativeLspManager {
+  return nativeBinding().createLspManager(definitions, appName, appVersion)
+}
+
+export function createNativeMcpManager(configs: unknown, appName: string, appVersion: string): NativeMcpManager {
+  return nativeBinding().createMcpManager(configs, appName, appVersion)
 }
 
 export function createNativeMemoryStore(path: string): NativeMemoryStore {

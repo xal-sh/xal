@@ -69,6 +69,38 @@ export interface NativeWebFetchRequest {
   userAgent: string
 }
 
+export interface NativeLspManager {
+  hasAvailableServer(cwd: string): boolean
+  statusLines(cwd: string): string[]
+  query(request: string, cwd: string, signal?: AbortSignal): Promise<string>
+  restart(server?: string): Promise<void>
+  close(): Promise<void>
+}
+
+export interface NativeMcpCall {
+  nextProgress(signal?: AbortSignal): Promise<string | undefined>
+  result(signal?: AbortSignal): Promise<string>
+}
+
+export interface NativeMcpManager {
+  readonly hasResources: boolean
+  readonly hasPrompts: boolean
+  readonly prompt: string
+  connectAll(signal?: AbortSignal): Promise<void>
+  reconnect(server?: string): Promise<void>
+  remove(server: string): Promise<void>
+  refresh(): Promise<void>
+  close(): Promise<void>
+  servers(): string
+  statusLines(server?: string): string[]
+  resourceCatalog(server?: string): string
+  promptCatalog(server?: string): string
+  readResource(request: string, signal?: AbortSignal): Promise<string>
+  getPrompt(request: string, signal?: AbortSignal): Promise<string>
+  toolDescriptors(): string
+  startToolCall(request: string): NativeMcpCall
+}
+
 export interface NativeSkillRequest {
   name: string
   directory: string
@@ -644,6 +676,170 @@ function parseMemorySnapshot(value: unknown): NativeMemorySnapshot {
     throw new Error("native memory store returned an invalid value")
   }
   return { content, revision }
+}
+
+export function parseNativeLspManager(value: unknown): NativeLspManager {
+  if (!isRecord(value)) throw new Error("native LSP manager is invalid")
+  const hasAvailableServer = value.hasAvailableServer
+  const statusLines = value.statusLines
+  const query = value.query
+  const restart = value.restart
+  const close = value.close
+  if (
+    typeof hasAvailableServer !== "function" ||
+    typeof statusLines !== "function" ||
+    typeof query !== "function" ||
+    typeof restart !== "function" ||
+    typeof close !== "function"
+  ) {
+    throw new Error("native LSP manager is invalid")
+  }
+  return {
+    hasAvailableServer(cwd) {
+      const available: unknown = Reflect.apply(hasAvailableServer, value, [cwd])
+      if (typeof available !== "boolean") throw new Error("native LSP manager returned an invalid value")
+      return available
+    },
+    statusLines(cwd) {
+      const lines: unknown = Reflect.apply(statusLines, value, [cwd])
+      if (!Array.isArray(lines) || lines.some((line) => typeof line !== "string")) {
+        throw new Error("native LSP manager returned an invalid value")
+      }
+      return lines
+    },
+    async query(request, cwd, signal) {
+      if (signal?.aborted) throw signal.reason instanceof Error ? signal.reason : new Error("The operation was aborted")
+      const output: unknown = await Promise.resolve(Reflect.apply(query, value, [request, cwd, signal]))
+      if (typeof output !== "string") throw new Error("native LSP manager returned an invalid value")
+      return output
+    },
+    async restart(server) {
+      await Promise.resolve(Reflect.apply(restart, value, [server]))
+    },
+    async close() {
+      await Promise.resolve(Reflect.apply(close, value, []))
+    },
+  }
+}
+
+function parseNativeMcpCall(value: unknown): NativeMcpCall {
+  if (!isRecord(value)) throw new Error("native MCP call is invalid")
+  const nextProgress = value.nextProgress
+  const result = value.result
+  if (typeof nextProgress !== "function" || typeof result !== "function") throw new Error("native MCP call is invalid")
+  return {
+    async nextProgress(signal) {
+      if (signal?.aborted) throw signal.reason instanceof Error ? signal.reason : new Error("The operation was aborted")
+      const output: unknown = await Promise.resolve(Reflect.apply(nextProgress, value, [signal]))
+      if (output !== undefined && output !== null && typeof output !== "string") {
+        throw new Error("native MCP call returned invalid progress")
+      }
+      return output ?? undefined
+    },
+    async result(signal) {
+      if (signal?.aborted) throw signal.reason instanceof Error ? signal.reason : new Error("The operation was aborted")
+      const output: unknown = await Promise.resolve(Reflect.apply(result, value, [signal]))
+      if (typeof output !== "string") throw new Error("native MCP call returned an invalid result")
+      return output
+    },
+  }
+}
+
+export function parseNativeMcpManager(value: unknown): NativeMcpManager {
+  if (!isRecord(value)) throw new Error("native MCP manager is invalid")
+  const method = (name: string): ((...args: unknown[]) => unknown) => {
+    const output = value[name]
+    if (typeof output !== "function") throw new Error("native MCP manager is invalid")
+    return (...args) => Reflect.apply(output, value, args)
+  }
+  const connectAll = method("connectAll")
+  const reconnect = method("reconnect")
+  const remove = method("remove")
+  const refresh = method("refresh")
+  const close = method("close")
+  const servers = method("servers")
+  const statusLines = method("statusLines")
+  const resourceCatalog = method("resourceCatalog")
+  const promptCatalog = method("promptCatalog")
+  const readResource = method("readResource")
+  const getPrompt = method("getPrompt")
+  const toolDescriptors = method("toolDescriptors")
+  const startToolCall = method("startToolCall")
+  const voidCall = async (target: (...args: unknown[]) => unknown, args: unknown[]) => {
+    await Promise.resolve(Reflect.apply(target, value, args))
+  }
+  const stringCall = (target: (...args: unknown[]) => unknown, args: unknown[]) => {
+    const output: unknown = Reflect.apply(target, value, args)
+    if (typeof output !== "string") throw new Error("native MCP manager returned an invalid value")
+    return output
+  }
+  const asyncStringCall = async (target: (...args: unknown[]) => unknown, args: unknown[]) => {
+    const output: unknown = await Promise.resolve(Reflect.apply(target, value, args))
+    if (typeof output !== "string") throw new Error("native MCP manager returned an invalid value")
+    return output
+  }
+  return {
+    get hasResources() {
+      const output: unknown = value.hasResources
+      if (typeof output !== "boolean") throw new Error("native MCP manager returned an invalid value")
+      return output
+    },
+    get hasPrompts() {
+      const output: unknown = value.hasPrompts
+      if (typeof output !== "boolean") throw new Error("native MCP manager returned an invalid value")
+      return output
+    },
+    get prompt() {
+      const output: unknown = value.prompt
+      if (typeof output !== "string") throw new Error("native MCP manager returned an invalid value")
+      return output
+    },
+    async connectAll(signal) {
+      if (signal?.aborted) throw signal.reason instanceof Error ? signal.reason : new Error("The operation was aborted")
+      await voidCall(connectAll, [signal])
+    },
+    reconnect(server) {
+      return voidCall(reconnect, [server])
+    },
+    remove(server) {
+      return voidCall(remove, [server])
+    },
+    refresh() {
+      return voidCall(refresh, [])
+    },
+    close() {
+      return voidCall(close, [])
+    },
+    servers() {
+      return stringCall(servers, [])
+    },
+    statusLines(server) {
+      const output: unknown = Reflect.apply(statusLines, value, [server])
+      return stringArray(output, "native MCP manager returned an invalid value")
+    },
+    resourceCatalog(server) {
+      return stringCall(resourceCatalog, [server])
+    },
+    promptCatalog(server) {
+      return stringCall(promptCatalog, [server])
+    },
+    readResource(request, signal) {
+      if (signal?.aborted)
+        return Promise.reject(signal.reason instanceof Error ? signal.reason : new Error("The operation was aborted"))
+      return asyncStringCall(readResource, [request, signal])
+    },
+    getPrompt(request, signal) {
+      if (signal?.aborted)
+        return Promise.reject(signal.reason instanceof Error ? signal.reason : new Error("The operation was aborted"))
+      return asyncStringCall(getPrompt, [request, signal])
+    },
+    toolDescriptors() {
+      return stringCall(toolDescriptors, [])
+    },
+    startToolCall(request) {
+      return parseNativeMcpCall(Reflect.apply(startToolCall, value, [request]))
+    },
+  }
 }
 
 export function parseMemoryStore(value: unknown): NativeMemoryStore {
