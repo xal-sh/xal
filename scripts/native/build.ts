@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto"
-import { copyFile, mkdir, open, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises"
+import { copyFile, link, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises"
 import { dirname, join, relative, resolve, sep } from "node:path"
 import { hostNativeTarget, nativeTarget, type NativeRustTarget, type NativeTarget } from "./targets"
 import {
@@ -82,21 +82,32 @@ async function clearStaleCompileLock(): Promise<void> {
     if (isMissingPath(error)) return
     throw error
   }
+  if (!content.trim()) {
+    await rm(STAGING_LOCK, { force: true })
+    return
+  }
   const owner = parseCompileLockOwner(content)
   if (processIsAlive(owner.pid)) throw new Error(`native compile lock is held by process ${owner.pid}`)
-  await rm(STAGING_LOCK)
+  await rm(STAGING_LOCK, { force: true })
 }
 
-async function acquireCompileLock() {
-  for (let attempt = 0; attempt < 2; attempt++) {
-    try {
-      return await open(STAGING_LOCK, "wx")
-    } catch (error) {
-      if (!isExistingPath(error)) throw error
-      await clearStaleCompileLock()
+async function acquireCompileLock(): Promise<void> {
+  const candidate = `${STAGING_LOCK}.${process.pid}.${randomUUID()}.tmp`
+  try {
+    await writeFile(candidate, `${JSON.stringify({ pid: process.pid })}\n`, { flag: "wx" })
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        await link(candidate, STAGING_LOCK)
+        return
+      } catch (error) {
+        if (!isExistingPath(error)) throw error
+        await clearStaleCompileLock()
+      }
     }
+    throw new Error("failed to acquire native compile lock")
+  } finally {
+    await rm(candidate, { force: true })
   }
-  throw new Error("failed to acquire native compile lock")
 }
 
 async function pathExists(path: string): Promise<boolean> {
@@ -392,10 +403,8 @@ async function compile(target: NativeTarget, version: string, outfile: string): 
     throw new Error(`Bun ${BUN_VERSION} is required to compile releases, found ${Bun.version}`)
   const manifestPath = await ensureTarget(target, true)
   await mkdir(dirname(STAGING_LOCK), { recursive: true })
-  const lock = await acquireCompileLock()
+  await acquireCompileLock()
   try {
-    await lock.writeFile(`${JSON.stringify({ pid: process.pid })}\n`)
-    await lock.sync()
     await rm(STAGED_ADDON, { force: true })
     await verifyArtifactManifest(manifestPath, await nativeInputs(target, true))
     await stageArtifact(manifestPath)
@@ -414,11 +423,7 @@ async function compile(target: NativeTarget, version: string, outfile: string): 
     try {
       await rm(STAGED_ADDON, { force: true })
     } finally {
-      try {
-        await lock.close()
-      } finally {
-        await rm(STAGING_LOCK, { force: true })
-      }
+      await rm(STAGING_LOCK, { force: true })
     }
   }
 }
