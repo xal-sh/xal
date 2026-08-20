@@ -5,7 +5,7 @@ import type { Cli, CliContext } from "../cli/types"
 async function runNativeSelfCheck(args: string[], ctx: CliContext): Promise<void> {
   if (args.length > 0) throw new Error(`unknown native self-check option: ${args[0]}`)
   const { selfCheck } = await import("./index")
-  selfCheck()
+  await selfCheck()
   ctx.print(formatAppVersion())
 }
 

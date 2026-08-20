@@ -13,6 +13,7 @@ use napi_derive::napi;
 
 use crate::redactor::SecretMatcher;
 use crate::search::walk_files;
+use crate::tool_contracts::{NativeToolOutcomeKind, cancellation_flag};
 
 const CONTIGUOUS_BONUS: f64 = 8.0;
 const BOUNDARY_BONUS: f64 = 6.0;
@@ -202,7 +203,7 @@ pub fn native_batch_scores(query: String, candidates: Vec<NativeFuzzyCandidate>)
 
 #[napi(object)]
 pub struct NativeWorkspaceSearchResult {
-    pub kind: String,
+    pub kind: NativeToolOutcomeKind,
     pub paths: Vec<String>,
 }
 
@@ -386,16 +387,11 @@ pub fn create_workspace_index(
     marker: String,
     signal: Option<AbortSignal>,
 ) -> AsyncTask<WorkspaceIndexTask> {
-    let cancelled = Arc::new(AtomicBool::new(false));
-    if let Some(signal) = signal {
-        let task_cancelled = cancelled.clone();
-        signal.on_abort(move || task_cancelled.store(true, Ordering::Relaxed));
-    }
     AsyncTask::new(WorkspaceIndexTask {
         cwd: PathBuf::from(cwd),
         values,
         marker,
-        cancelled,
+        cancelled: cancellation_flag(signal),
     })
 }
 
@@ -417,12 +413,12 @@ impl Task for WorkspaceSearchTask {
             Some(&self.cancelled),
         ) else {
             return Ok(NativeWorkspaceSearchResult {
-                kind: "interrupted".to_owned(),
+                kind: NativeToolOutcomeKind::Interrupted,
                 paths: Vec::new(),
             });
         };
         Ok(NativeWorkspaceSearchResult {
-            kind: "completed".to_owned(),
+            kind: NativeToolOutcomeKind::Completed,
             paths,
         })
     }
@@ -440,15 +436,10 @@ impl NativeWorkspaceIndex {
         query: String,
         signal: Option<AbortSignal>,
     ) -> AsyncTask<WorkspaceSearchTask> {
-        let cancelled = Arc::new(AtomicBool::new(false));
-        if let Some(signal) = signal {
-            let task_cancelled = cancelled.clone();
-            signal.on_abort(move || task_cancelled.store(true, Ordering::Relaxed));
-        }
         AsyncTask::new(WorkspaceSearchTask {
             entries: self.entries.clone(),
             query,
-            cancelled,
+            cancelled: cancellation_flag(signal),
         })
     }
 }

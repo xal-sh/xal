@@ -9,6 +9,7 @@ use napi::{Env, Error, Status, Task};
 use napi_derive::napi;
 
 use crate::diff::{DiffOutput, unified_diff};
+use crate::tool_contracts::{checked_count, truncate_utf16, utf16_lossy};
 
 const MAX_OUTPUT_UNITS: usize = 50_000;
 const MAX_LINE_UNITS: usize = 2000;
@@ -78,18 +79,8 @@ fn io_error(error: impl std::fmt::Display) -> Error {
     Error::new(Status::GenericFailure, error.to_string())
 }
 
-fn units_to_string(units: &[u16]) -> String {
-    String::from_utf16_lossy(units)
-}
-
 fn truncate_line(line: &str) -> Vec<u16> {
-    let units = line.encode_utf16().collect::<Vec<_>>();
-    if units.len() <= MAX_LINE_UNITS {
-        return units;
-    }
-    let mut truncated = units[..MAX_LINE_UNITS].to_vec();
-    truncated.extend("… (line truncated)".encode_utf16());
-    truncated
+    truncate_utf16(line, MAX_LINE_UNITS, "… (line truncated)")
 }
 
 pub struct ReadTask {
@@ -146,7 +137,7 @@ impl Task for ReadTask {
             shown += 1;
             end = total;
         }
-        let total_output = u32::try_from(total).unwrap_or(u32::MAX);
+        let total_output = checked_count(total, "read line")?;
         if total == 0 {
             let mut result = read_kind("empty");
             result.total = total_output;
@@ -250,7 +241,7 @@ impl Task for EditTask {
             .map_err(|error| Error::new(Status::InvalidArg, error.to_string()))?;
         let previous = previous_text.encode_utf16().collect::<Vec<_>>();
         let positions = match_positions(&previous, &self.old);
-        let matches = u32::try_from(positions.len()).unwrap_or(u32::MAX);
+        let matches = checked_count(positions.len(), "edit match")?;
         if positions.is_empty() {
             let mut result = file_kind("noMatch");
             result.matches = matches;
@@ -269,7 +260,7 @@ impl Task for EditTask {
             self.replace_all,
         );
         let diff = unified_diff(&previous, &next);
-        let next_text = units_to_string(&next);
+        let next_text = utf16_lossy(&next);
         fs::write(&self.path, next_text.as_bytes()).map_err(io_error)?;
         let mut result = file_diff("updated", diff);
         result.matches = matches;
@@ -331,7 +322,7 @@ impl Task for WriteTask {
         if let Some(parent) = self.path.parent() {
             fs::create_dir_all(parent).map_err(io_error)?;
         }
-        let content = units_to_string(&self.content);
+        let content = utf16_lossy(&self.content);
         fs::write(&self.path, content.as_bytes()).map_err(io_error)?;
         Ok(file_diff(
             if previous.is_some() {
