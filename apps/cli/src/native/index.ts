@@ -7,8 +7,10 @@ import { isStandalone } from "../lib/process"
 import {
   parseDiff,
   parseGitRepository,
+  parseMemoryStore,
   parseNativeProcess,
   parseNativeShellManager,
+  parseOutputContract,
   parseWorktreeResult,
   parseWorktreeToolPreparation,
   parsePathRanker,
@@ -22,6 +24,8 @@ import {
   type NativeGlobOptions,
   type NativeGrepOptions,
   type NativeManagedWorktree,
+  type NativeMemoryStore,
+  type NativeOutputContract,
   type NativePathRanker,
   type NativeProcess,
   type NativeProcessRequest,
@@ -29,7 +33,9 @@ import {
   type NativeReadRequest,
   type NativeReviewDiffRequest,
   type NativeSearchOutcome,
+  type NativeSkillRequest,
   type NativeToolOutput,
+  type NativeWebFetchRequest,
   type NativeWorkspaceIndex,
   type NativeWorktreeRequest,
   type NativeWorktreeToolPreparation,
@@ -51,6 +57,9 @@ export type {
   NativeGlobOptions,
   NativeGrepOptions,
   NativeManagedWorktree,
+  NativeMemorySnapshot,
+  NativeMemoryStore,
+  NativeOutputContract,
   NativePathRanker,
   NativeProcess,
   NativeProcessRequest,
@@ -61,7 +70,9 @@ export type {
   NativeReadRequest,
   NativeReviewDiffRequest,
   NativeSearchOutcome,
+  NativeSkillRequest,
   NativeToolOutput,
+  NativeWebFetchRequest,
   NativeWorkspaceIndex,
   NativeWorktreeRequest,
   NativeWorktreeToolPreparation,
@@ -75,6 +86,8 @@ export interface NativeSecretMatcher {
 interface NativeBinding {
   createSecretMatcher(values: string[], marker: string): NativeSecretMatcher
   createGitRepository(cwd: string): NativeGitRepository
+  createMemoryStore(path: string): NativeMemoryStore
+  createOutputContract(schema: unknown): NativeOutputContract
   createProcess(request: NativeProcessRequest): NativeProcess
   createShellManager(): NativeShellManager
   normalizeProcessOutput(output: string): string
@@ -109,7 +122,11 @@ interface NativeBinding {
   readFile(request: NativeReadRequest): Promise<NativeToolOutput>
   editFile(request: NativeEditRequest): Promise<NativeToolOutput>
   writeFile(request: NativeWriteRequest): Promise<NativeToolOutput>
+  skill(request: NativeSkillRequest): Promise<NativeToolOutput>
+  webFetch(request: NativeWebFetchRequest, signal?: AbortSignal): Promise<NativeToolOutput>
+  htmlToMarkdown(html: string): string
   unifiedDiff(oldText: string, newText: string): NativeDiff
+  toolCall(operation: string, request: unknown): unknown
 }
 
 function digest(path: string): string {
@@ -158,6 +175,60 @@ function createBinding(value: unknown): NativeBinding {
   const nativeNormalizeProcessOutput = requiredFunction(value, "nativeNormalizeProcessOutput")
   const GitRepository = value.NativeGitRepository
   if (typeof GitRepository !== "function") throw new Error("native addon NativeGitRepository export is invalid")
+  const MemoryStore = value.NativeMemoryStore
+  if (typeof MemoryStore !== "function") throw new Error("native addon NativeMemoryStore export is invalid")
+  const ToolRuntime = value.NativeToolRuntime
+  if (typeof ToolRuntime !== "function") throw new Error("native addon NativeToolRuntime export is invalid")
+  const toolRuntime: unknown = Reflect.construct(ToolRuntime, [])
+  if (!isRecord(toolRuntime)) throw new Error("native addon NativeToolRuntime export is invalid")
+  const toolMethods = Object.fromEntries(
+    [
+      "jobPrepare",
+      "jobProcessOutput",
+      "jobAgentOutput",
+      "jobKill",
+      "jobStatus",
+      "jobExtendPrepare",
+      "jobExtendFinalize",
+      "jobSendPrepare",
+      "jobSendFinalize",
+      "taskPrepare",
+      "taskContext",
+      "taskItems",
+      "taskFinalize",
+      "updateTasks",
+      "requestInputPrepare",
+      "requestInputFinalize",
+      "memoryPrepare",
+      "submitPlanPrepare",
+      "submitPlanReview",
+      "submitPlanFinalize",
+    ].map((name) => [name, requiredFunction(toolRuntime, name)]),
+  )
+  const toolOperations: Record<string, string> = {
+    job_prepare: "jobPrepare",
+    job_process_output: "jobProcessOutput",
+    job_agent_output: "jobAgentOutput",
+    job_kill: "jobKill",
+    job_status: "jobStatus",
+    job_extend_prepare: "jobExtendPrepare",
+    job_extend_finalize: "jobExtendFinalize",
+    job_send_prepare: "jobSendPrepare",
+    job_send_finalize: "jobSendFinalize",
+    task_prepare: "taskPrepare",
+    task_context: "taskContext",
+    task_items: "taskItems",
+    task_finalize: "taskFinalize",
+    update_tasks: "updateTasks",
+    request_input_prepare: "requestInputPrepare",
+    request_input_finalize: "requestInputFinalize",
+    memory_prepare: "memoryPrepare",
+    submit_plan_prepare: "submitPlanPrepare",
+    submit_plan_review: "submitPlanReview",
+    submit_plan_finalize: "submitPlanFinalize",
+  }
+  const OutputContract = value.NativeOutputContract
+  if (typeof OutputContract !== "function") throw new Error("native addon NativeOutputContract export is invalid")
   const Process = value.NativeProcess
   if (typeof Process !== "function") throw new Error("native addon NativeProcess export is invalid")
   const spawnProcess: unknown = Reflect.get(Process, "spawn")
@@ -179,6 +250,9 @@ function createBinding(value: unknown): NativeBinding {
   const nativeReadFile = requiredFunction(value, "nativeReadFile")
   const nativeEditFile = requiredFunction(value, "nativeEditFile")
   const nativeWriteFile = requiredFunction(value, "nativeWriteFile")
+  const nativeSkill = requiredFunction(value, "nativeSkill")
+  const nativeWebFetch = requiredFunction(value, "nativeWebFetch")
+  const nativeHtmlToMarkdown = requiredFunction(value, "nativeHtmlToMarkdown")
   const nativeUnifiedDiff = requiredFunction(value, "nativeUnifiedDiff")
 
   return {
@@ -197,6 +271,12 @@ function createBinding(value: unknown): NativeBinding {
     },
     createGitRepository(cwd) {
       return parseGitRepository(Reflect.construct(GitRepository, [cwd]))
+    },
+    createMemoryStore(path) {
+      return parseMemoryStore(Reflect.construct(MemoryStore, [path]))
+    },
+    createOutputContract(schema) {
+      return parseOutputContract(Reflect.construct(OutputContract, [JSON.stringify(schema)]))
     },
     createProcess(request) {
       return parseNativeProcess(Reflect.apply(spawnProcess, Process, [request]))
@@ -284,8 +364,38 @@ function createBinding(value: unknown): NativeBinding {
         "native write returned an invalid value",
       )
     },
+    async skill(request) {
+      return parseToolOutput(
+        await Promise.resolve(Reflect.apply(nativeSkill, value, [request])),
+        "native skill returned an invalid value",
+      )
+    },
+    async webFetch(request, signal) {
+      if (signal?.aborted) return { output: "(interrupted by user)" }
+      return parseToolOutput(
+        await Promise.resolve(Reflect.apply(nativeWebFetch, value, [request, signal])),
+        "native webfetch returned an invalid value",
+      )
+    },
+    htmlToMarkdown(html) {
+      const output: unknown = Reflect.apply(nativeHtmlToMarkdown, value, [html])
+      if (typeof output !== "string") throw new Error("native HTML converter returned an invalid value")
+      return output
+    },
     unifiedDiff(oldText, newText) {
       return parseDiff(Reflect.apply(nativeUnifiedDiff, value, [oldText, newText]))
+    },
+    toolCall(operation, request) {
+      const name = toolOperations[operation]
+      const method = name === undefined ? undefined : toolMethods[name]
+      if (method === undefined) throw new Error(`unknown native tool operation: ${operation}`)
+      const output: unknown = Reflect.apply(method, toolRuntime, [JSON.stringify(request)])
+      if (typeof output !== "string") throw new Error("native tool runtime returned an invalid value")
+      try {
+        return JSON.parse(output)
+      } catch (error) {
+        throw new Error("native tool runtime returned invalid JSON", { cause: error })
+      }
     },
   }
 }
@@ -304,6 +414,14 @@ export function createNativeSecretMatcher(values: string[], marker: string): Nat
 
 export function createNativeGitRepository(cwd: string): NativeGitRepository {
   return nativeBinding().createGitRepository(cwd)
+}
+
+export function createNativeMemoryStore(path: string): NativeMemoryStore {
+  return nativeBinding().createMemoryStore(path)
+}
+
+export function createNativeOutputContract(schema: unknown): NativeOutputContract {
+  return nativeBinding().createOutputContract(schema)
 }
 
 export function createNativeProcess(request: NativeProcessRequest): NativeProcess {
@@ -401,8 +519,24 @@ export function nativeWriteFile(request: NativeWriteRequest): Promise<NativeTool
   return nativeBinding().writeFile(request)
 }
 
+export function nativeSkill(request: NativeSkillRequest): Promise<NativeToolOutput> {
+  return nativeBinding().skill(request)
+}
+
+export function nativeWebFetch(request: NativeWebFetchRequest, signal?: AbortSignal): Promise<NativeToolOutput> {
+  return nativeBinding().webFetch(request, signal)
+}
+
+export function nativeHtmlToMarkdown(html: string): string {
+  return nativeBinding().htmlToMarkdown(html)
+}
+
 export function nativeUnifiedDiff(oldText: string, newText: string): NativeDiff {
   return nativeBinding().unifiedDiff(oldText, newText)
+}
+
+export function nativeToolCall(operation: string, request: unknown): unknown {
+  return nativeBinding().toolCall(operation, request)
 }
 
 export async function selfCheck(): Promise<void> {

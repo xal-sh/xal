@@ -64,6 +64,44 @@ export interface NativeToolOutput {
   output: string
 }
 
+export interface NativeWebFetchRequest {
+  url?: string
+  userAgent: string
+}
+
+export interface NativeSkillRequest {
+  name: string
+  directory: string
+  skillPath: string
+  body: string
+  resource?: string
+}
+
+export interface NativeMemorySnapshot {
+  content: string
+  revision: string
+}
+
+export interface NativeMemoryStore {
+  readonly promptContent: string
+  load(secrets: string[], signal?: AbortSignal): Promise<NativeMemorySnapshot>
+  replace(
+    content: string,
+    expectedRevision: string,
+    secrets: string[],
+    signal?: AbortSignal,
+  ): Promise<NativeMemorySnapshot>
+}
+
+export interface NativeOutputContract {
+  readonly output?: string
+  readonly exhausted: boolean
+  reset(): void
+  missing(): string
+  failure(): string
+  submit(value: string | undefined): string
+}
+
 export interface NativeGitCommandRequest {
   args: string[]
   indexFile?: string
@@ -594,6 +632,88 @@ export function parseNativeShellManager(value: unknown): NativeShellManager {
     },
     disposeAll() {
       Reflect.apply(disposeAll, value, [])
+    },
+  }
+}
+
+function parseMemorySnapshot(value: unknown): NativeMemorySnapshot {
+  if (!isRecord(value)) throw new Error("native memory store returned an invalid value")
+  const content = asString(value.content)
+  const revision = asString(value.revision)
+  if (content === undefined || revision === undefined || !/^[a-f0-9]{64}$/.test(revision)) {
+    throw new Error("native memory store returned an invalid value")
+  }
+  return { content, revision }
+}
+
+export function parseMemoryStore(value: unknown): NativeMemoryStore {
+  if (!isRecord(value)) throw new Error("native memory store is invalid")
+  const load = value.load
+  const replace = value.replace
+  if (typeof load !== "function" || typeof replace !== "function") {
+    throw new Error("native memory store is invalid")
+  }
+  return {
+    get promptContent() {
+      const content = asString(value.promptContent)
+      if (content === undefined) throw new Error("native memory store returned an invalid value")
+      return content
+    },
+    async load(secrets, signal) {
+      if (signal?.aborted) throw signal.reason instanceof Error ? signal.reason : new Error("The operation was aborted")
+      return parseMemorySnapshot(await Promise.resolve(Reflect.apply(load, value, [secrets, signal])))
+    },
+    async replace(content, expectedRevision, secrets, signal) {
+      if (signal?.aborted) throw signal.reason instanceof Error ? signal.reason : new Error("The operation was aborted")
+      return parseMemorySnapshot(
+        await Promise.resolve(Reflect.apply(replace, value, [content, expectedRevision, secrets, signal])),
+      )
+    },
+  }
+}
+
+export function parseOutputContract(value: unknown): NativeOutputContract {
+  if (!isRecord(value)) throw new Error("native output contract is invalid")
+  const reset = value.reset
+  const missing = value.missing
+  const failure = value.failure
+  const submit = value.submit
+  if (
+    typeof reset !== "function" ||
+    typeof missing !== "function" ||
+    typeof failure !== "function" ||
+    typeof submit !== "function"
+  ) {
+    throw new Error("native output contract is invalid")
+  }
+  return {
+    get output() {
+      const output = value.output
+      if (output === undefined || output === null) return undefined
+      if (typeof output !== "string") throw new Error("native output contract returned an invalid value")
+      return output
+    },
+    get exhausted() {
+      if (typeof value.exhausted !== "boolean") throw new Error("native output contract returned an invalid value")
+      return value.exhausted
+    },
+    reset() {
+      Reflect.apply(reset, value, [])
+    },
+    missing() {
+      const output: unknown = Reflect.apply(missing, value, [])
+      if (typeof output !== "string") throw new Error("native output contract returned an invalid value")
+      return output
+    },
+    failure() {
+      const output: unknown = Reflect.apply(failure, value, [])
+      if (typeof output !== "string") throw new Error("native output contract returned an invalid value")
+      return output
+    },
+    submit(input) {
+      const output: unknown = Reflect.apply(submit, value, [input])
+      if (typeof output !== "string") throw new Error("native output contract returned an invalid value")
+      return output
     },
   }
 }

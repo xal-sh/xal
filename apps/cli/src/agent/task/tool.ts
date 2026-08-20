@@ -1,4 +1,5 @@
 import { asString, isRecord } from "../../lib/json"
+import { nativeToolRecord, nativeToolString } from "../../native/tool-runtime"
 import { modeDefinition } from "../../permissions/modes"
 import { registerPolicyRule } from "../../permissions/service"
 import { registerTool } from "../../tools/registry"
@@ -6,7 +7,7 @@ import type { SessionTool } from "../../tools/types"
 import { registerToolRenderer } from "../../ui/extension"
 import { registerPrompt } from "../prompt/registry"
 import { settings } from "../../config/settings"
-import { contextFrom, tasksFrom, MAX_BATCH_TASKS, MAX_CONTEXT_LENGTH, MAX_TASK_LENGTH } from "./parse"
+import { MAX_BATCH_TASKS, MAX_CONTEXT_LENGTH, MAX_TASK_LENGTH, prepareTaskBatch } from "./parse"
 import { spawnTask } from "./spawn"
 
 export function compactTaskToolTitle(title: string): string {
@@ -99,15 +100,21 @@ export const taskTool: SessionTool = {
   },
   async execute(args, ctx) {
     if (ctx.session.kind !== "primary") throw new Error("task is available only to primary sessions")
-    const context = contextFrom(args)
-    const tasks = tasksFrom(args)
+    const { context, tasks } = prepareTaskBatch(args)
     if (modeDefinition(ctx.session.mode).readOnly && tasks.some((task) => task.access === "write")) {
       throw new Error("write tasks are unavailable in a read-only mode")
     }
     const jobs = tasks.map((task) => ({ task, job: spawnTask(task, context, ctx) }))
-    const listing = jobs.map(({ task, job }) => `- ${job.id} (${task.access}, ${task.isolation})`).join("\n")
-    return {
-      output: `Spawned ${jobs.length} background ${jobs.length === 1 ? "agent" : "agents"}. Results will be delivered automatically; no polling is needed.\n${listing}`,
+    try {
+      const finalized = nativeToolRecord("task_finalize", {
+        jobs: jobs.map(({ task, job }) => ({ id: job.id, access: task.access, isolation: task.isolation })),
+      })
+      return { output: nativeToolString(finalized, "output", "task") }
+    } catch (error) {
+      throw new Error(
+        `Task dispatch committed for ${jobs.map(({ job }) => job.id).join(", ")}; inspect those jobs and do not retry the batch`,
+        { cause: error },
+      )
     }
   },
 }

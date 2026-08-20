@@ -579,12 +579,28 @@ export function unsettledJobs(ownerId: string): BackgroundJob[] {
   return [...jobs.values()].filter((job) => job.ownerId === ownerId && unsettled(job))
 }
 
-export function readProcessOutput(job: BackgroundProcessJob): { text: string; dropped: boolean } {
-  const { pending, dropped } = job
-  job.pending = ""
+export interface ProcessOutputSnapshot {
+  text: string
+  dropped: boolean
+}
+
+export function snapshotProcessOutput(job: BackgroundProcessJob): ProcessOutputSnapshot {
+  return { text: job.pending, dropped: job.dropped }
+}
+
+export function consumeProcessOutput(job: BackgroundProcessJob, snapshot: ProcessOutputSnapshot): void {
+  if (!job.pending.startsWith(snapshot.text)) {
+    throw new Error(`background job ${job.id} output changed before it could be consumed`)
+  }
+  job.pending = job.pending.slice(snapshot.text.length)
   job.dropped = false
   backgroundTasksChanged("progress")
-  return { text: pending, dropped }
+}
+
+export function readProcessOutput(job: BackgroundProcessJob): { text: string; dropped: boolean } {
+  const snapshot = snapshotProcessOutput(job)
+  consumeProcessOutput(job, snapshot)
+  return snapshot
 }
 
 export function collectAgentOutcome(job: BackgroundAgentJob, reservation?: symbol): CollectedAgentOutcome {

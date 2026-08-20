@@ -7,19 +7,22 @@ import {
   incompleteAgentTranscript,
   jobStatus,
   listJobs,
-  readProcessOutput,
+  consumeProcessOutput,
   releaseDelivery,
   reserveDelivery,
   sendAgentGuidance,
+  snapshotProcessOutput,
   stopJob,
   waitForAgentCompletion,
   waitForProcessOutput,
   type BackgroundAgentJob,
   type BackgroundJob,
+  type CollectedAgentOutcome,
   type BackgroundProcessJob,
 } from "./jobs"
 import { listBackgroundTasks, type BackgroundAgentSnapshot } from "./registry"
 import { asNumber, asString } from "../lib/json"
+import { nativeToolRecord, nativeToolString } from "../native/tool-runtime"
 import type { SessionTool } from "../tools/types"
 
 const MAX_WAIT_S = 600
@@ -38,29 +41,28 @@ function jobOf(args: Record<string, unknown>, ownerId: string): BackgroundJob {
 
 const idProperty = { type: "string", description: "Job id returned by bash background mode or task" }
 
-function waitSeconds(args: Record<string, unknown>): number {
-  return Math.min(Math.max(asNumber(args.wait) ?? 0, 0), MAX_WAIT_S)
-}
-
-function unreadProcessOutput(job: BackgroundProcessJob): string {
-  const { text, dropped } = readProcessOutput(job)
-  if (!text) return ""
-  return `${dropped ? "... older output dropped ...\n" : ""}${text.trimEnd()}`
-}
-
-function processRecordNotice(job: BackgroundProcessJob): string {
-  if (!job.record) return ""
-  return job.record.status === "saved"
-    ? `\nFull log: ${job.record.path}${job.record.complete ? "" : " (capped)"}`
-    : `\nFull log unavailable: ${job.record.message}`
+function nativeJobRequest(args: Record<string, unknown>): { id: string; wait: number } {
+  const prepared = nativeToolRecord("job_prepare", args)
+  const id = asString(prepared.id)
+  const wait = asNumber(prepared.wait)
+  if (id === undefined || wait === undefined) throw new Error("native background job request returned an invalid value")
+  return { id, wait }
 }
 
 async function processOutput(job: BackgroundProcessJob, wait: number, signal: AbortSignal): Promise<string> {
   await waitForProcessOutput(job, wait * 1_000, signal)
+  const snapshot = snapshotProcessOutput(job)
+  const result = nativeToolRecord("job_process_output", {
+    pending: snapshot.text,
+    dropped: snapshot.dropped,
+    done: job.done,
+    status: jobStatus(job),
+    ...(job.record ? { record: job.record } : {}),
+  })
+  const output = nativeToolString(result, "output", "job_output")
+  consumeProcessOutput(job, snapshot)
   if (job.done) acknowledgeDelivery(job)
-  const unread = unreadProcessOutput(job)
-  const record = job.done ? processRecordNotice(job) : ""
-  return `${unread || "(no new output)"}\n(${jobStatus(job)})${record}`
+  return output
 }
 
 export async function collectAgentOutput(job: BackgroundAgentJob, wait: number, signal: AbortSignal): Promise<string> {
@@ -71,44 +73,33 @@ export async function collectAgentOutput(job: BackgroundAgentJob, wait: number, 
   await waitForAgentCompletion(job, waitMs, signal)
   if (!job.done) {
     if (reservation !== undefined) releaseDelivery(job, reservation)
-    const checkpoint =
-      supervisionCheckpoint && !signal.aborted
-        ? "\nSupervision checkpoint reached before the task deadline. Use job_status, then job_extend to add time or job_kill to stop it before waiting again."
-        : ""
-    return `${agentStatus(job, Date.now())}${checkpoint}`
+    const result = nativeToolRecord("job_agent_output", {
+      ...nativeAgentSnapshot(job, Date.now()),
+      checkpoint: supervisionCheckpoint && !signal.aborted,
+    })
+    return nativeToolString(result, "output", "job_output")
   }
 
-  const outcome = collectAgentOutcome(job, reservation)
-  const record = agentRecord(job)
-  switch (outcome.status) {
-    case "completed":
-      return `${outcome.report}\n(${jobStatus(job)})${record}`
-    case "failed":
-    case "interrupted":
-      return `(${jobStatus(job)})${record}`
-    case "timed_out":
-      return `${agentStatus(job, Date.now())}${incompleteAgentTranscript(job)}${record}`
-    case "already_collected":
-      return `(report already collected; ${jobStatus(job)})${record}`
-  }
-}
-
-function agentRecord(job: BackgroundAgentJob): string {
-  const record = job.record
-  if (!record) return ""
-  if (record.status === "failed") return `\nTask record unavailable: ${record.message}`
-  if (record.complete) return `\nTask record: ${record.path}`
-  return record.reason === "capped"
-    ? `\nTask record: ${record.path} (transcript capped)`
-    : `\nTask record: ${record.path} (full transcript unavailable: ${record.message})`
-}
-
-function duration(ms: number): string {
-  const seconds = Math.max(0, Math.floor(ms / 1_000))
-  if (seconds < 60) return `${seconds}s`
-  const minutes = Math.floor(seconds / 60)
-  const remainder = seconds % 60
-  return remainder === 0 ? `${minutes}m` : `${minutes}m ${remainder}s`
+  const predicted: CollectedAgentOutcome | undefined =
+    reservation !== undefined
+      ? job.delivery === "reserved"
+        ? job.outcome
+        : { status: "already_collected" }
+      : job.delivery === "reserved" || job.delivery === "delivered" || job.delivery === "suppressed"
+        ? { status: "already_collected" }
+        : job.outcome
+  if (!predicted) throw new Error(`background agent ${job.id} has no outcome`)
+  const result = nativeToolRecord("job_agent_output", {
+    ...nativeAgentSnapshot(job, Date.now()),
+    outcome: predicted.status,
+    ...(predicted.status === "completed" ? { report: predicted.report } : {}),
+    ...(predicted.status === "timed_out" ? { incomplete: incompleteAgentTranscript(job) } : {}),
+    status: jobStatus(job),
+    ...(job.record ? { record: job.record } : {}),
+  })
+  const output = nativeToolString(result, "output", "job_output")
+  collectAgentOutcome(job, reservation)
+  return output
 }
 
 function agentSnapshot(job: BackgroundAgentJob): BackgroundAgentSnapshot | undefined {
@@ -116,40 +107,47 @@ function agentSnapshot(job: BackgroundAgentJob): BackgroundAgentSnapshot | undef
   return task?.kind === "agent" ? task.snapshot() : undefined
 }
 
-function agentStatus(job: BackgroundAgentJob, now: number): string {
-  const state = job.done ? job.detail : job.phase
-  const queuedMs = (job.runningAt ?? job.finishedAt ?? now) - job.startedAt
-  const queued = queuedMs >= 1_000 ? ` · queued ${duration(queuedMs)}` : ""
-  const timing =
-    job.runningAt === undefined
-      ? `queued ${duration(queuedMs)}`
-      : `${duration((job.finishedAt ?? now) - job.runningAt)}${queued}`
-  const activity = job.done ? "" : ` · activity: ${job.activity} · idle ${duration(now - job.lastActivityAt)}`
-  const snapshot = agentSnapshot(job)
-  const progress = snapshot
-    ? ` · provider requests ${snapshot.providerRequests} · tools ${snapshot.toolCount}${snapshot.contextTokens ? ` · context ${snapshot.contextTokens} tokens` : ""}`
-    : ""
-  const turns = ` · turn cycles ${job.completedTurns}/${job.turnBudget} (limit ${job.turnLimit})`
-  const deadline =
-    job.done || job.phase === "stopping"
-      ? ""
-      : job.deadlineAt === undefined
-        ? ` · runtime budget ${duration(job.timeoutMs)}`
-        : ` · deadline in ${duration(job.deadlineAt - now)}`
-  return `${job.id} [${state}] ${timing}${activity}${progress}${turns}${deadline}\n  ${job.task.split("\n", 1)[0]}`
+function nativeAgentSnapshot(job: BackgroundAgentJob, now: number): Record<string, unknown> {
+  const progress = agentSnapshot(job)
+  return {
+    kind: "agent",
+    id: job.id,
+    task: job.task,
+    done: job.done,
+    detail: job.detail,
+    phase: job.phase,
+    startedAt: job.startedAt,
+    now,
+    timeoutMs: job.timeoutMs,
+    completedTurns: job.completedTurns,
+    turnBudget: job.turnBudget,
+    turnLimit: job.turnLimit,
+    lastActivityAt: job.lastActivityAt,
+    activity: job.activity,
+    ...(job.runningAt === undefined ? {} : { runningAt: job.runningAt }),
+    ...(job.finishedAt === undefined ? {} : { finishedAt: job.finishedAt }),
+    ...(job.deadlineAt === undefined ? {} : { deadlineAt: job.deadlineAt }),
+    ...(progress === undefined ? {} : { progress }),
+  }
 }
 
-function statusOutput(id: string | undefined, ownerId: string): string {
+function nativeStatusOutput(id: string | undefined, ownerId: string): string {
   const selected = id ? [jobOf({ id }, ownerId)] : listJobs().filter((job) => job.ownerId === ownerId)
-  if (selected.length === 0) return "No background jobs."
   const now = Date.now()
-  return selected
-    .map((job) => {
-      if (job.kind === "agent") return agentStatus(job, now)
-      const state = jobStatus(job)
-      return `${job.id} [${state}] ${duration((job.finishedAt ?? now) - job.startedAt)}\n  ${job.command.split("\n", 1)[0]}`
-    })
-    .join("\n")
+  const jobs = selected.map((job) =>
+    job.kind === "agent"
+      ? nativeAgentSnapshot(job, now)
+      : {
+          kind: "process",
+          id: job.id,
+          status: jobStatus(job),
+          command: job.command,
+          startedAt: job.startedAt,
+          ...(job.finishedAt === undefined ? {} : { finishedAt: job.finishedAt }),
+        },
+  )
+  const result = nativeToolRecord("job_status", { now, jobs })
+  return nativeToolString(result, "output", "job_status")
 }
 
 export const jobOutputTool: SessionTool = {
@@ -176,13 +174,13 @@ export const jobOutputTool: SessionTool = {
     return true
   },
   async execute(args, ctx) {
-    const job = jobOf(args, ctx.session.id)
-    const wait = waitSeconds(args)
+    const request = nativeJobRequest(args)
+    const job = jobOf({ id: request.id }, ctx.session.id)
     switch (job.kind) {
       case "process":
-        return { output: await processOutput(job, wait, ctx.signal) }
+        return { output: await processOutput(job, request.wait, ctx.signal) }
       case "agent":
-        return { output: await collectAgentOutput(job, wait, ctx.signal) }
+        return { output: await collectAgentOutput(job, request.wait, ctx.signal) }
     }
   },
 }
@@ -205,26 +203,36 @@ export const jobKillTool: SessionTool = {
     return true
   },
   async execute(args, ctx) {
-    const job = jobOf(args, ctx.session.id)
+    const request = nativeJobRequest(args)
+    const job = jobOf({ id: request.id }, ctx.session.id)
     const alreadyDone = job.done
-    if (job.kind === "process") acknowledgeDelivery(job)
     if (!alreadyDone) await stopJob(job, "model")
-    const pendingCheck = job.kind === "agent" ? "check it with job_status" : "check it with job_output"
-    const headline = alreadyDone
-      ? `Job ${job.id} had already finished (${jobStatus(job)}).`
-      : job.done
-        ? `Job ${job.id} finished after stop was requested (${jobStatus(job)}).`
-        : `Requested stop for job ${job.id}, but it has not finished yet — ${pendingCheck}.`
     if (job.kind === "agent") {
-      const delivery =
-        job.delivery === "pending" || job.delivery === "in_flight"
-          ? " Its completed result will be delivered automatically."
-          : ""
-      return { output: `${headline}${delivery}` }
+      const result = nativeToolRecord("job_kill", {
+        id: job.id,
+        kind: job.kind,
+        alreadyDone,
+        done: job.done,
+        status: jobStatus(job),
+        delivery: job.delivery,
+      })
+      return { output: nativeToolString(result, "output", "job_kill") }
     }
-    const unread = unreadProcessOutput(job)
-    const output = unread ? `${headline}\nUnread output:\n${unread}` : headline
-    return { output: `${output}${job.done ? processRecordNotice(job) : ""}` }
+    const snapshot = snapshotProcessOutput(job)
+    const result = nativeToolRecord("job_kill", {
+      id: job.id,
+      kind: job.kind,
+      alreadyDone,
+      done: job.done,
+      status: jobStatus(job),
+      pending: snapshot.text,
+      dropped: snapshot.dropped,
+      ...(job.record ? { record: job.record } : {}),
+    })
+    const output = nativeToolString(result, "output", "job_kill")
+    consumeProcessOutput(job, snapshot)
+    acknowledgeDelivery(job)
+    return { output }
   },
 }
 
@@ -246,17 +254,8 @@ export const jobStatusTool: SessionTool = {
     return true
   },
   async execute(args, ctx) {
-    return { output: statusOutput(asString(args.id)?.trim() || undefined, ctx.session.id) }
+    return { output: nativeStatusOutput(asString(args.id)?.trim() || undefined, ctx.session.id) }
   },
-}
-
-function extensionValue(args: Record<string, unknown>, field: string, maximum: number): number {
-  if (args[field] === undefined) return 0
-  const value = asNumber(args[field])
-  if (value === undefined || !Number.isSafeInteger(value) || value < 1 || value > maximum) {
-    throw new Error(`${field} must be an integer between 1 and ${maximum}`)
-  }
-  return value
 }
 
 export const jobExtendTool: SessionTool = {
@@ -294,20 +293,34 @@ export const jobExtendTool: SessionTool = {
     return true
   },
   async execute(args, ctx) {
-    const job = jobOf(args, ctx.session.id)
+    const prepared = nativeToolRecord("job_extend_prepare", args)
+    const id = asString(prepared.id)
+    const minutes = asNumber(prepared.minutes)
+    const turns = asNumber(prepared.turns)
+    if (id === undefined || minutes === undefined || turns === undefined) {
+      throw new Error("native job_extend returned an invalid value")
+    }
+    const job = jobOf({ id }, ctx.session.id)
     if (job.kind !== "agent") throw new Error(`${job.id} is not a task agent`)
     if (job.done) throw new Error(`${job.id} has already finished (${jobStatus(job)})`)
-    const minutes = extensionValue(args, "minutes", MAX_EXTENSION_MINUTES)
-    const turns = extensionValue(args, "turns", MAX_EXTENSION_TURNS)
-    if (minutes === 0 && turns === 0) throw new Error("minutes or turns is required")
     extendAgentBudget(job, { minutes, turns }, "parent")
-    const added = [minutes > 0 ? `${minutes}m` : "", turns > 0 ? `${turns} turns` : ""].filter(Boolean).join(" and ")
-    const time =
-      job.deadlineAt === undefined
-        ? `${duration(job.timeoutMs)} runtime when it starts`
-        : `${duration(job.deadlineAt - Date.now())} until deadline`
-    return {
-      output: `Extended ${job.id} by ${added}. New budget: ${job.completedTurns}/${job.turnBudget} turns (limit ${job.turnLimit}); ${time}.`,
+    try {
+      const finalized = nativeToolRecord("job_extend_finalize", {
+        id: job.id,
+        minutes,
+        turns,
+        completedTurns: job.completedTurns,
+        turnBudget: job.turnBudget,
+        turnLimit: job.turnLimit,
+        timeoutMs: job.timeoutMs,
+        now: Date.now(),
+        ...(job.deadlineAt === undefined ? {} : { deadlineAt: job.deadlineAt }),
+      })
+      return { output: nativeToolString(finalized, "output", "job_extend") }
+    } catch (error) {
+      throw new Error(`Budget for ${job.id} changed; inspect it with job_status before taking another action`, {
+        cause: error,
+      })
     }
   },
 }
@@ -341,15 +354,21 @@ export const jobSendTool: SessionTool = {
     return true
   },
   async execute(args, ctx) {
-    const job = jobOf(args, ctx.session.id)
+    const prepared = nativeToolRecord("job_send_prepare", args)
+    const id = asString(prepared.id)
+    const message = asString(prepared.message)
+    if (id === undefined || message === undefined) throw new Error("native job_send returned an invalid value")
+    const job = jobOf({ id }, ctx.session.id)
     if (job.kind !== "agent") throw new Error(`${job.id} is not a task agent`)
     if (job.done) throw new Error(`${job.id} has already finished (${jobStatus(job)})`)
-    const message = asString(args.message)?.trim()
-    if (!message) throw new Error("message is required")
-    if (message.length > MAX_MESSAGE_LENGTH) {
-      throw new Error(`message must be at most ${MAX_MESSAGE_LENGTH} characters`)
-    }
     if (!sendAgentGuidance(job, message, "parent")) throw new Error(`${job.id} did not accept the message`)
-    return { output: `Queued guidance for ${job.id}.` }
+    try {
+      const finalized = nativeToolRecord("job_send_finalize", { id: job.id, accepted: true })
+      return { output: nativeToolString(finalized, "output", "job_send") }
+    } catch (error) {
+      throw new Error(`Guidance for ${job.id} may already be queued; inspect the job before sending it again`, {
+        cause: error,
+      })
+    }
   },
 }

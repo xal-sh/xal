@@ -2,7 +2,7 @@ import { asString } from "../lib/json"
 import { getSkill } from "./registry"
 import type { Skill } from "./types"
 import type { Tool } from "../tools/types"
-import { listSkillFiles, readSkillResource } from "./catalog"
+import { nativeSkill } from "../native"
 
 function requiredSkill(args: Record<string, unknown>): Skill {
   const name = asString(args.name)?.trim()
@@ -13,10 +13,13 @@ function requiredSkill(args: Record<string, unknown>): Skill {
 }
 
 export async function renderSkill(skill: Skill): Promise<string> {
-  const files = await listSkillFiles(skill)
-  const resources =
-    files.length === 0 ? "Supporting files: none" : `Supporting files:\n${files.map((path) => `- ${path}`).join("\n")}`
-  return [`Skill: ${skill.name}`, `Directory: ${skill.directory}`, resources, skill.body].join("\n\n")
+  const result = await nativeSkill({
+    name: skill.name,
+    directory: skill.directory,
+    skillPath: skill.path,
+    body: skill.body,
+  })
+  return result.output
 }
 
 export const skillTool: Tool = {
@@ -51,8 +54,14 @@ export const skillTool: Tool = {
   },
   async execute(args) {
     const skill = requiredSkill(args)
-    const path = asString(args.path)
-    if (path !== undefined) return { output: await readSkillResource(skill, path) }
-    return { output: await renderSkill(skill) }
+    const resource = asString(args.path)
+    if (resource === undefined) return { output: await renderSkill(skill) }
+    return nativeSkill({
+      name: skill.name,
+      directory: skill.directory,
+      skillPath: skill.path,
+      body: skill.body,
+      resource,
+    })
   },
 }

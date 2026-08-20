@@ -17,7 +17,6 @@
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@types/bun": "1.3.14",
-    "@types/turndown": "^5.0.6",
     "eslint": "^10.8.0",
     "eslint-config-prettier": "^10.1.8",
     "globals": "^17.9.0",
@@ -29,7 +28,6 @@
     "@opentui/core": "^0.5.1",
     "ajv": "^8.17.1",
     "ajv-formats": "^3.0.1",
-    "turndown": "^7.2.4",
     "zod": "^4.2.0"
   }
 }
