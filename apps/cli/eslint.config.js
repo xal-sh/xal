@@ -18,5 +18,11 @@ export default tseslint.config(
       "no-empty": ["error", { allowEmptyCatch: true }],
     },
   },
+  {
+    files: ["src/native/index.ts"],
+    rules: {
+      "@typescript-eslint/no-require-imports": "off",
+    },
+  },
   eslintConfigPrettier,
 )

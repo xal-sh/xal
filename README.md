@@ -73,10 +73,14 @@ Run with `--profile` to store anonymous session diagnostics and print the profil
 
 ## Development
 
+Local development requires Bun 1.3.14 and Rust 1.92.0. The first development or test run builds the native addon for the host and caches it under `apps/cli/.native`. Restart `bun dev` after changing Rust code.
+
 ```bash
 bun install
 bun dev
 ```
+
+Run `bun native:benchmark` to compare the Rust secret matcher with the previous TypeScript path on the host. Compare compiled startup with `bun native:benchmark:startup <baseline-executable> <current-executable>`.
 
 ## License
 

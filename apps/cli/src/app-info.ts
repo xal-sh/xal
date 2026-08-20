@@ -8,6 +8,10 @@ export const appInfo = {
   version: typeof XAL_VERSION === "string" ? XAL_VERSION : pkg.version,
 } as const
 
+export function formatAppVersion(version = appInfo.version): string {
+  return `${appInfo.name} ${version}`
+}
+
 export function appEnvVar(suffix: string): string {
   return `${appInfo.name.toUpperCase().replace(/[^A-Z0-9]/g, "_")}_${suffix}`
 }

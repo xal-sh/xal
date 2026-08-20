@@ -15,42 +15,60 @@ permissions:
 
 jobs:
   build:
-    name: Build ${{ matrix.asset }}
-    runs-on: ubuntu-latest
+    name: Build ${{ matrix.bun_target }} as ${{ matrix.asset }}
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - target: bun-darwin-x64-baseline
+          - rust_target: x86_64-apple-darwin
+            bun_target: bun-darwin-x64-baseline
             asset: xal-darwin-x64
+            runner: macos-15-intel
             os: darwin
             cpu: x64
-          - target: bun-darwin-arm64
+            deployment_target: "10.13"
+          - rust_target: aarch64-apple-darwin
+            bun_target: bun-darwin-arm64
             asset: xal-darwin-arm64
+            runner: macos-15
             os: darwin
             cpu: arm64
-          - target: bun-linux-x64-baseline
+            deployment_target: "11.0"
+          - rust_target: x86_64-unknown-linux-gnu
+            bun_target: bun-linux-x64-baseline
             asset: xal-linux-x64
+            runner: ubuntu-24.04
             os: linux
             cpu: x64
-          - target: bun-linux-arm64
+          - rust_target: aarch64-unknown-linux-gnu
+            bun_target: bun-linux-arm64
             asset: xal-linux-arm64
+            runner: ubuntu-24.04-arm
             os: linux
             cpu: arm64
-          - target: bun-linux-x64-baseline-musl
+          - rust_target: x86_64-unknown-linux-musl
+            bun_target: bun-linux-x64-baseline-musl
             asset: xal-linux-x64-musl
+            runner: ubuntu-24.04
             os: linux
             cpu: x64
-          - target: bun-linux-arm64-musl
+          - rust_target: aarch64-unknown-linux-musl
+            bun_target: bun-linux-arm64-musl
             asset: xal-linux-arm64-musl
+            runner: ubuntu-24.04-arm
             os: linux
             cpu: arm64
-          - target: bun-windows-x64-baseline
+          - rust_target: x86_64-pc-windows-msvc
+            bun_target: bun-windows-x64-baseline
             asset: xal-windows-x64.exe
+            runner: windows-2025
             os: win32
             cpu: x64
-          - target: bun-windows-arm64
+          - rust_target: aarch64-pc-windows-msvc
+            bun_target: bun-windows-arm64
             asset: xal-windows-arm64.exe
+            runner: windows-11-arm
             os: win32
             cpu: arm64
     steps:
@@ -62,28 +80,104 @@ jobs:
         with:
           bun-version: 1.3.14
 
-      - run: bun install --frozen-lockfile --os="${{ matrix.os }}" --cpu="${{ matrix.cpu }}"
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.92.0
+          targets: ${{ matrix.rust_target }}
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('bun.lock') }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release-${{ matrix.rust_target }}
+          cache-on-failure: true
+          workspaces: . -> target/native-build
+
+      - uses: mlugg/setup-zig@v2
+        if: runner.os == 'Linux'
+        with:
+          version: 0.14.1
+
+      - name: Install cargo-zigbuild
+        if: runner.os == 'Linux'
+        run: cargo install cargo-zigbuild --version 0.20.1 --locked
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile --os="${{ matrix.os }}" --cpu="${{ matrix.cpu }}"
 
       - name: Compile
         env:
-          ASSET: ${{ matrix.asset }}
-          TARGET: ${{ matrix.target }}
-          VERSION: ${{ inputs.version }}
-        run: |
-          mkdir -p dist
-          bun build --compile --minify \
-            --target="$TARGET" \
-            --define "XAL_VERSION=\"$VERSION\"" \
-            apps/cli/src/index.ts \
-            --outfile="dist/$ASSET"
+          MACOSX_DEPLOYMENT_TARGET: ${{ matrix.deployment_target || '' }}
+        run: bun scripts/native/build.ts compile "${{ matrix.rust_target }}" "${{ inputs.version }}" "dist/${{ matrix.asset }}"
 
-      - name: Verify executable
-        if: matrix.asset == 'xal-linux-x64'
+      - name: Set executable permissions
+        if: runner.os != 'Windows'
+        shell: bash
+        run: chmod 755 "dist/${{ matrix.asset }}"
+
+      - name: Inspect GNU addon GLIBC requirement
+        if: endsWith(matrix.rust_target, '-gnu')
+        shell: bash
+        run: |
+          mapfile -t addons < <(find "apps/cli/.native/${{ matrix.rust_target }}" -type f -name xal-native.node)
+          test "${#addons[@]}" -eq 1
+          required="$(readelf -W --version-info --dyn-syms "${addons[0]}" | sed -nE 's/.*Name: GLIBC_([0-9.]+).*/\1/p' | sort -V | tail -n 1)"
+          test -n "$required"
+          test "$(printf '%s\n' "$required" 2.17 | sort -V | tail -n 1)" = 2.17
+          printf 'GLIBC requirement: %s\n' "$required"
+
+      - name: Smoke test executable
+        if: ${{ !endsWith(matrix.rust_target, '-musl') }}
+        run: bun scripts/native/smoke.ts "dist/${{ matrix.asset }}" "${{ inputs.version }}"
+
+      - name: Smoke test musl executable in Alpine
+        if: endsWith(matrix.rust_target, '-musl')
+        shell: bash
         env:
+          ASSET: ${{ matrix.asset }}
           VERSION: ${{ inputs.version }}
         run: |
-          chmod 755 dist/xal-linux-x64
-          test "$(dist/xal-linux-x64 --version)" = "xal $VERSION"
+          mkdir -p dist/musl-smoke/home dist/musl-smoke/plugin dist/musl-smoke/project
+          cat > dist/musl-smoke/plugin/plugin.ts <<'EOF'
+          export default {
+            name: "native-plugin-smoke",
+            register(ctx) {
+              ctx.registerSecrets(["plugin-native-secret"])
+              ctx.registerCli({
+                name: "native-plugin-smoke",
+                describe: "exercise native redaction",
+                async run(_args, command) {
+                  command.print("plugin-native-secret")
+                },
+              })
+            },
+          }
+          EOF
+          printf '{"plugins":["/smoke/plugin"]}\n' > dist/musl-smoke/home/config.json
+          docker run --rm \
+            -e EXPECTED="xal $VERSION" \
+            -e XAL_HOME=/smoke/home \
+            -v "$PWD/dist/$ASSET:/xal:ro" \
+            -v "$PWD/dist/musl-smoke:/smoke:ro" \
+            -w /smoke/project \
+            alpine:3.21.3 \
+            /bin/sh -eu -c '
+              apk add --no-cache coreutils util-linux >/dev/null
+              test "$(/xal --version)" = "$EXPECTED"
+              test "$(/xal --native-self-check)" = "$EXPECTED"
+              test "$(/xal native-plugin-smoke)" = "[REDACTED]"
+              set +e
+              timeout 5 script -e -q -c /xal /tmp/xal-tui.log </dev/null >/tmp/xal-tui.out 2>&1
+              status="$?"
+              set -e
+              if test "$status" -ne 0 && test "$status" -ne 124; then
+                cat /tmp/xal-tui.out /tmp/xal-tui.log
+                exit "$status"
+              fi
+            '
 
       - uses: actions/upload-artifact@v4
         with:

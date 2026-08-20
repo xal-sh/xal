@@ -7,7 +7,7 @@
   ],
   "packageManager": "bun@1.3.14",
   "scripts": {
-    "dev": "bun run --watch apps/cli/src/index.ts",
+    "dev": "bun run --cwd apps/cli dev",
     "dev:website": "turbo run dev --filter=xal-website",
     "build": "turbo run build",
     "build:website": "bun run --cwd apps/website build",
@@ -19,8 +19,13 @@
     "lint:fix": "turbo run lint:fix",
     "format": "prettier --check .",
     "format:fix": "prettier --write .",
-    "checks": "bun run typecheck && bun run lint && bun run format && bun run test",
-    "checks:fix": "bun run lint:fix && bun run format:fix && bun run checks"
+    "native:ensure": "bun scripts/native/build.ts ensure",
+    "native:fix": "cargo fmt --all",
+    "native:check": "bun run native:ensure && cargo fmt --all -- --check && cargo check --workspace --locked && cargo test --workspace --locked && cargo clippy --workspace --all-targets --locked -- -D warnings",
+    "native:benchmark": "bun run native:ensure && bun scripts/native/benchmark.ts",
+    "native:benchmark:startup": "bun scripts/native/startup.ts",
+    "checks": "bun run native:check && bun run native:benchmark && bun run typecheck && bun run lint && bun run format && bun run test",
+    "checks:fix": "bun run lint:fix && bun run format:fix && bun run native:fix && bun run checks"
   },
   "devDependencies": {
     "prettier": "^3.9.6",

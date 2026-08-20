@@ -6,16 +6,17 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "dev": "bun run --watch src/index.ts",
-    "test": "bun test --isolate",
-    "release:local": "bun build --compile src/index.ts --outfile \"../../dist/$npm_package_name\" && install -d \"$HOME/.local/bin\" && install -m 755 \"../../dist/$npm_package_name\" \"$HOME/.local/bin/$npm_package_name\"",
+    "native:ensure": "bun ../../scripts/native/build.ts ensure",
+    "dev": "bun run native:ensure && bun run --watch src/index.ts",
+    "test": "bun run native:ensure && bun test --isolate",
+    "release:local": "bun ../../scripts/native/build.ts compile-host $npm_package_version ../../dist/$npm_package_name && install -d \"$HOME/.local/bin\" && install -m 755 \"../../dist/$npm_package_name\" \"$HOME/.local/bin/$npm_package_name\"",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "@types/bun": "latest",
+    "@types/bun": "1.3.14",
     "@types/turndown": "^5.0.6",
     "eslint": "^10.8.0",
     "eslint-config-prettier": "^10.1.8",

@@ -1,4 +1,5 @@
 import type { ChildProcess } from "node:child_process"
+import { isRecord } from "./json"
 
 export function isStandalone(): boolean {
   return Bun.main.startsWith("/$bunfs/")
@@ -7,6 +8,13 @@ export function isStandalone(): boolean {
 export function selfCommand(args: string[]): string[] {
   if (isStandalone()) return [process.execPath, ...args]
   return [process.execPath, Bun.main, ...args]
+}
+
+export function usesMusl(): boolean {
+  if (process.platform !== "linux") return false
+  const report: unknown = process.report?.getReport()
+  if (!isRecord(report) || !isRecord(report.header)) return true
+  return typeof report.header.glibcVersionRuntime !== "string"
 }
 
 export function killProcessTree(process: ChildProcess, signal: NodeJS.Signals = "SIGKILL"): void {

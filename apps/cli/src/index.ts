@@ -1,82 +1,28 @@
-import { registerBasePrompt } from "./agent/prompt/base"
-import { registerAgentClis } from "./agent/cli"
-import { registerAgentCommands } from "./agent/commands"
-import { registerTaskAgents } from "./agent/task/tool"
-import { registerJobTools } from "./background/register"
-import { registerBgClis } from "./bg/cli"
-import { chooseOption } from "./cli/choose"
-import { askLine } from "./cli/input"
 import { runCli } from "./cli/run"
 import type { CliContext } from "./cli/types"
-import { loadCredentialSecrets } from "./config/credentials"
-import { loadSettings, type Settings } from "./config/settings"
-import { registerWorktreeTools } from "./git/worktree-tools"
-import { registerGoals } from "./goals/register"
-import { registerHookCommands } from "./hooks/commands"
 import { describeError } from "./lib/error"
-import { registerPermissions } from "./permissions/register"
-import { registerPlans } from "./plans/register"
-import { bootstrapPlugins, registerBootstrapStep, registerPlugins, shutdownPlugins } from "./plugins/discover"
-import { startProfiler, stopProfiler } from "./profiler/profiler"
-import { registerTrustClis } from "./project/cli"
-import { findProjectRoot } from "./project/root"
-import { ensureWorkspaceTrust } from "./project/trust"
-import { prepareProjectMcp } from "./plugins/mcp/project"
-import { refreshModelCatalogs } from "./providers/catalog"
-import { registerProviderClis } from "./providers/cli"
-import { registerProviderCommands } from "./providers/commands"
-import { registerSessionClis } from "./sessions/cli"
-import { registerSessionCommands } from "./sessions/commands"
-import { protectSecretValue, redactText } from "./secrets/redactor"
-import { registerRedaction } from "./secrets/register"
-import { discoverSkills, registerSkills } from "./skills/register"
-import { registerTasks } from "./tasks/register"
-import { registerBash } from "./tools/bash/register"
-import { getUi } from "./ui/registry"
+import { registerNativeCli } from "./native/cli"
 import { registerUpdateCli } from "./update/cli"
 
-const ctx: CliContext = {
+type App = typeof import("./app")
+
+const lightweightContext: CliContext = {
   print(line) {
-    console.log(redactText(line))
+    console.log(line)
   },
   error(line) {
-    console.error(redactText(line))
+    console.error(line)
   },
-  ask(question) {
-    return askLine(redactText(question), false)
+  async ask() {
+    throw new Error("interactive input is unavailable for lightweight commands")
   },
-  async askSecret(question) {
-    const value = await askLine(redactText(question), true)
-    if (value !== undefined) protectSecretValue(value)
-    return value
+  async askSecret() {
+    throw new Error("secret input is unavailable for lightweight commands")
   },
 }
 
 let terminationRequested = false
-
-function registerCore(settings: Settings): void {
-  registerBasePrompt()
-  registerPermissions(settings)
-  registerRedaction(settings)
-  registerGoals()
-  registerPlans()
-  registerTasks()
-  registerSkills()
-  registerBootstrapStep("skills", discoverSkills)
-  registerBash()
-  registerJobTools()
-  registerWorktreeTools()
-  registerTaskAgents()
-  registerProviderCommands()
-  registerProviderClis()
-  registerAgentCommands()
-  registerAgentClis()
-  registerHookCommands()
-  registerSessionCommands()
-  registerSessionClis()
-  registerBgClis()
-  registerTrustClis()
-}
+let app: App | undefined
 
 function parseGlobalOptions(input: string[]): { profile: boolean; args: string[] } {
   let profile = false
@@ -97,74 +43,38 @@ function normalize(args: string[]): string[] {
   return args
 }
 
+function runsWithoutApp(args: string[]): boolean {
+  const first = args[0]
+  return (
+    first === "update" ||
+    first === "--version" ||
+    first === "-v" ||
+    first === "version" ||
+    first === "--native-self-check"
+  )
+}
+
 async function main(input: string[]): Promise<void> {
   const options = parseGlobalOptions(input)
-  startProfiler(options.profile)
   const args = normalize(options.args)
   registerUpdateCli()
-  if (args[0] === "update" || args[0] === "--version" || args[0] === "-v" || args[0] === "version") {
-    await runCli(args, ctx)
-    return
-  }
-  const trusted = await ensureWorkspaceTrust({
-    print: args.length === 0 ? ctx.print : ctx.error,
-    choose: args.length === 0 && process.stdin.isTTY ? chooseOption : undefined,
-  })
-  if (!trusted) return
-  const root = await findProjectRoot(process.cwd())
-  let settings = await loadSettings()
-  settings = await prepareProjectMcp(root, settings, {
-    print: args.length === 0 ? ctx.print : ctx.error,
-    choose: args.length === 0 && process.stdin.isTTY && process.stdout.isTTY ? chooseOption : undefined,
-  })
-  await loadCredentialSecrets()
-  registerCore(settings)
-  const plugins = await registerPlugins(settings)
-  if (terminationRequested) return
-
-  if (args.length === 0) {
-    const uiId = settings.ui ?? "tui"
-    const ui = getUi(uiId)
-    if (!ui) {
-      for (const failure of plugins.failures) {
-        ctx.error(`plugin failed: ${failure.plugin}: ${failure.reason}`)
-      }
-      ctx.error(`unknown ui: ${uiId}`)
-      process.exitCode = 1
-      return
-    }
-    void bootstrapPlugins()
-    void refreshModelCatalogs().catch((error) => ctx.error(describeError(error)))
-    await ui.start()
+  registerNativeCli()
+  if (runsWithoutApp(args)) {
+    await runCli(args, lightweightContext)
     return
   }
 
-  for (const failure of plugins.failures) {
-    ctx.error(`plugin failed: ${failure.plugin}: ${failure.reason}`)
-  }
-
-  const bootstrapped = await bootstrapPlugins()
+  const loaded = await import("./app")
+  app = loaded
   if (terminationRequested) return
-  for (const failure of bootstrapped.failures) {
-    if (failure.phase !== "bootstrap") continue
-    ctx.error(`plugin bootstrap failed: ${failure.plugin}: ${failure.reason}`)
-  }
-
-  await runCli(args, ctx)
+  await loaded.runApp(args, options.profile, () => terminationRequested)
 }
 
 let exitRun: Promise<never> | undefined
 
 function finish(): Promise<never> {
   exitRun ??= (async () => {
-    const stopped = await shutdownPlugins()
-    for (const failure of stopped.failures) {
-      if (failure.phase !== "shutdown") continue
-      console.error(redactText(`plugin shutdown failed: ${failure.plugin}: ${failure.reason}`))
-      if (process.exitCode === undefined || process.exitCode === 0) process.exitCode = 1
-    }
-    const profile = await stopProfiler()
-    if (profile) console.error(`profile: ${profile}`)
+    await app?.finishApp()
     await Promise.all([
       new Promise<void>((resolve) => process.stdout.write("", () => resolve())),
       new Promise<void>((resolve) => process.stderr.write("", () => resolve())),
@@ -191,7 +101,7 @@ process.on("SIGINT", () => {
 try {
   await main(process.argv.slice(2))
 } catch (error) {
-  console.error(redactText(describeError(error)))
+  console.error(app ? app.describeAppError(error) : describeError(error))
   process.exitCode = 1
 }
 await finish()

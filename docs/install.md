@@ -46,7 +46,7 @@ A beta version has the form `X.Y.Z-beta.N`.
 
 ## Beta release process
 
-Every push to `main` runs `.github/workflows/release-beta.yml`. The workflow runs all repository checks, derives the beta version from `apps/cli/package.json` and the commit count, and builds every supported target.
+Every push to `main` runs `.github/workflows/release-beta.yml`. The workflow runs all repository checks, derives the beta version from `apps/cli/package.json` and the commit count, and builds every supported target on its matching architecture. Each release executable contains its target-specific Rust addon and verifies the lightweight version path, native-backed self-check, external plugin redaction, and musl TUI initialization before publication.
 
 Each successful run publishes:
 

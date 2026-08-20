@@ -1,122 +1,147 @@
 import type { JsonObject, JsonValue } from "../lib/json"
 import { isRecord } from "../lib/json"
+import { createNativeSecretMatcher, type NativeSecretMatcher } from "../native"
 
 export const REDACTION_MARKER = "[REDACTED]"
 
+function resolveMarker(values: string[]): string {
+  const marker = [REDACTION_MARKER, "<hidden>", "***", "•••", "_"].find((candidate) =>
+    values.every((value) => !candidate.includes(value) && !value.includes(candidate)),
+  )
+  if (marker !== undefined) return marker
+
+  for (let codePoint = 0xe000; codePoint <= 0xf8ff; codePoint++) {
+    const alternate = String.fromCodePoint(codePoint)
+    if (values.every((value) => !value.includes(alternate))) return alternate
+  }
+  throw new Error("secret redaction marker resolution failed")
+}
+
+interface RedactorGeneration {
+  values: string[]
+  marker: string
+  matcher?: NativeSecretMatcher
+}
+
+function redactGeneration(generation: RedactorGeneration, text: string): string {
+  if (generation.values.length === 0) return text
+  if (!generation.matcher) throw new Error("secret redaction matcher is unavailable")
+  return generation.matcher.redact(text)
+}
+
+function splitBoundary(generation: RedactorGeneration, text: string): number {
+  let retained = 0
+  const protectedValues = [generation.marker, ...generation.values]
+
+  for (const value of protectedValues) {
+    const limit = Math.min(text.length, value.length - 1)
+    for (let length = limit; length > retained; length--) {
+      if (!text.endsWith(value.slice(0, length))) continue
+      retained = length
+      break
+    }
+  }
+
+  let boundary = text.length - retained
+  let changed = true
+  while (changed) {
+    changed = false
+    for (const value of protectedValues) {
+      let start = text.indexOf(value)
+      while (start >= 0 && start < boundary) {
+        if (start + value.length > boundary) {
+          boundary = start
+          changed = true
+          break
+        }
+        start = text.indexOf(value, start + 1)
+      }
+    }
+  }
+  return boundary
+}
+
+function includeGeneration(generations: RedactorGeneration[], generation: RedactorGeneration): RedactorGeneration[] {
+  return generations.includes(generation) ? generations : [...generations, generation]
+}
+
+function redactGenerations(generations: RedactorGeneration[], text: string): string {
+  if (generations.length === 1) return redactGeneration(generations[0]!, text)
+  const values = [...new Set(generations.flatMap((generation) => generation.values))]
+  if (values.length === 0) return text
+  const marker = resolveMarker(values)
+  return createNativeSecretMatcher(values, marker).redact(text)
+}
+
 class SecretRedactor {
-  private readonly sources = new Map<string, string[]>()
-  private values: string[] = []
-  private marker = REDACTION_MARKER
+  private sources = new Map<string, string[]>()
+  private current: RedactorGeneration = { values: [], marker: REDACTION_MARKER }
 
   replace(source: string, values: string[]): void {
-    this.sources.set(
+    const sources = new Map(this.sources)
+    sources.set(
       source,
       values.filter((value) => value.length > 0),
     )
-    this.values = [...new Set([...this.sources.values()].flat())].sort(
+    const nextValues = [...new Set([...sources.values()].flat())].sort(
       (left, right) => right.length - left.length || left.localeCompare(right),
     )
-    const marker = [REDACTION_MARKER, "<hidden>", "***", "•••", "_"].find((marker) =>
-      this.values.every((value) => !marker.includes(value) && !value.includes(marker)),
-    )
-    if (marker !== undefined) {
-      this.marker = marker
-      return
-    }
-    for (let codePoint = 0xe000; codePoint <= 0xf8ff; codePoint++) {
-      const alternate = String.fromCodePoint(codePoint)
-      if (this.values.every((value) => !value.includes(alternate))) {
-        this.marker = alternate
-        return
-      }
-    }
-    throw new Error("secret redaction marker resolution failed")
+    const marker = resolveMarker(nextValues)
+    const matcher = nextValues.length === 0 ? undefined : createNativeSecretMatcher(nextValues, marker)
+    this.sources = sources
+    this.current = { values: nextValues, marker, matcher }
+  }
+
+  generation(): RedactorGeneration {
+    return this.current
   }
 
   text(text: string): string {
-    if (this.values.length === 0) return text
-    let redacted = ""
-    let cursor = 0
-    while (cursor < text.length) {
-      if (this.marker && text.startsWith(this.marker, cursor)) {
-        redacted += this.marker
-        cursor += this.marker.length
-        continue
-      }
-      const matched = this.values.find((value) => text.startsWith(value, cursor))
-      if (matched) {
-        redacted += this.marker
-        cursor += matched.length
-        continue
-      }
-      redacted += text.slice(cursor, cursor + 1)
-      cursor++
-    }
-    return redacted
-  }
-
-  split(text: string): { safe: string; pending: string } {
-    let retained = 0
-    const protectedValues = this.marker ? [this.marker, ...this.values] : this.values
-
-    for (const value of protectedValues) {
-      const limit = Math.min(text.length, value.length - 1)
-      for (let length = limit; length > retained; length--) {
-        if (!text.endsWith(value.slice(0, length))) continue
-        retained = length
-        break
-      }
-    }
-
-    let boundary = text.length - retained
-    let changed = true
-    while (changed) {
-      changed = false
-      for (const value of protectedValues) {
-        let start = text.indexOf(value)
-        while (start >= 0 && start < boundary) {
-          if (start + value.length > boundary) {
-            boundary = start
-            changed = true
-            break
-          }
-          start = text.indexOf(value, start + 1)
-        }
-      }
-    }
-
-    if (boundary === text.length) return { safe: this.text(text), pending: "" }
-    return {
-      safe: this.text(text.slice(0, boundary)),
-      pending: text.slice(boundary),
-    }
+    return redactGeneration(this.current, text)
   }
 }
 
 export class RedactedStream {
   private pending = ""
+  private generations: RedactorGeneration[] = []
 
   write(text: string): string {
-    const split = redactor.split(this.pending + text)
-    this.pending = split.pending
-    return split.safe
+    const input = this.pending + text
+    const generations = includeGeneration(this.generations, redactor.generation())
+    const boundary = generations.reduce(
+      (earliest, generation) => Math.min(earliest, splitBoundary(generation, input)),
+      input.length,
+    )
+    this.pending = input.slice(boundary)
+    this.generations = this.pending
+      ? generations.filter(
+          (generation) =>
+            splitBoundary(generation, this.pending) < this.pending.length ||
+            redactGeneration(generation, this.pending) !== this.pending,
+        )
+      : []
+    return redactGenerations(generations, input.slice(0, boundary))
   }
 
   end(): string {
-    const tail = redactor.text(this.pending)
+    const generations = includeGeneration(this.generations, redactor.generation())
+    const tail = redactGenerations(generations, this.pending)
     this.pending = ""
+    this.generations = []
     return tail
   }
 }
 
 const redactor = new SecretRedactor()
-const enteredSecrets = new Set<string>()
+let enteredSecrets = new Set<string>()
 let version = 0
 
 export function protectSecretValue(value: string): void {
-  enteredSecrets.add(value)
-  enteredSecrets.add(value.trim())
-  replaceSecretValues("entered", [...enteredSecrets])
+  const next = new Set(enteredSecrets)
+  next.add(value)
+  next.add(value.trim())
+  replaceSecretValues("entered", [...next])
+  enteredSecrets = next
 }
 
 export function replaceSecretValues(source: string, values: string[]): void {

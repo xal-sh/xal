@@ -1,4 +1,4 @@
-import { appInfo } from "../app-info"
+import { formatAppVersion } from "../app-info"
 import { describeError } from "../lib/error"
 import { printCliHelp, printHelp } from "./help"
 import { resolveCli } from "./registry"
@@ -11,7 +11,7 @@ export async function runCli(args: string[], ctx: CliContext): Promise<void> {
     return
   }
   if (first === "--version" || first === "-v" || first === "version") {
-    ctx.print(`${appInfo.name} ${appInfo.version}`)
+    ctx.print(formatAppVersion())
     return
   }
 

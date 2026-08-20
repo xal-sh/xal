@@ -1,0 +1,16 @@
+[package]
+name = "xal-native"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version = "1.92"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+napi = { version = "=3.12.1", default-features = false, features = ["napi4"] }
+napi-derive = "=3.6.3"
+
+[build-dependencies]
+napi-build = "=2.4.1"
