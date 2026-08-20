@@ -2,9 +2,8 @@ import { readFileSync } from "node:fs"
 import { relative, resolve, sep } from "node:path"
 import { isRecord } from "../lib/json"
 import { isStandalone } from "../lib/process"
-import { readNativeManifest } from "./manifest"
-
-const NATIVE_API_VERSION = 1
+import { NATIVE_API_VERSION, readNativeManifest } from "./manifest"
+import { hostNativeTarget } from "./targets"
 
 export interface NativeSecretMatcher {
   redact(text: string): string
@@ -18,27 +17,10 @@ function digest(path: string): string {
   return new Bun.CryptoHasher("sha256").update(readFileSync(path)).digest("hex")
 }
 
-function hostTarget(): string {
-  if (process.arch !== "x64" && process.arch !== "arm64") {
-    throw new Error(`unsupported native architecture: ${process.arch}`)
-  }
-  if (process.platform === "darwin") {
-    return process.arch === "x64" ? "x86_64-apple-darwin" : "aarch64-apple-darwin"
-  }
-  if (process.platform === "win32") {
-    return process.arch === "x64" ? "x86_64-pc-windows-msvc" : "aarch64-pc-windows-msvc"
-  }
-  if (process.platform !== "linux") throw new Error(`unsupported native platform: ${process.platform}`)
-  const report: unknown = process.report?.getReport()
-  if (!isRecord(report) || !isRecord(report.header)) throw new Error("could not detect the Linux C library")
-  const libc = typeof report.header.glibcVersionRuntime === "string" ? "gnu" : "musl"
-  return `${process.arch === "x64" ? "x86_64" : "aarch64"}-unknown-linux-${libc}`
-}
-
 function loadSourceBinding(): unknown {
   const nativeRoot = resolve(import.meta.dir, "../../.native")
   const manifest = readNativeManifest(resolve(nativeRoot, "host.json"))
-  if (manifest.target !== hostTarget()) throw new Error("native addon target does not match this host")
+  if (manifest.target !== hostNativeTarget().rustTarget) throw new Error("native addon target does not match this host")
   if (manifest.path !== `${manifest.target}/${manifest.inputHash}/xal-native.node`) {
     throw new Error("native addon manifest path does not match its generation")
   }

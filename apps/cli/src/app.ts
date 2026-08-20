@@ -124,7 +124,7 @@ export async function runApp(args: string[], profile: boolean, terminationReques
       process.exitCode = 1
       return
     }
-    void bootstrapPlugins()
+    void bootstrapPlugins().catch((error) => ctx.error(describeError(error)))
     void refreshModelCatalogs().catch((error) => ctx.error(describeError(error)))
     await ui.start()
     return

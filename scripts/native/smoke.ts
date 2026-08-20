@@ -3,6 +3,7 @@ import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 
 async function execute(executable: string, args: string[], cwd: string, env?: Record<string, string>): Promise<string> {
+  const timeoutMs = 30_000
   const child = Bun.spawn([executable, ...args], {
     cwd,
     env: { ...process.env, ...env },
@@ -10,11 +11,17 @@ async function execute(executable: string, args: string[], cwd: string, env?: Re
     stdout: "pipe",
     stderr: "pipe",
   })
+  let timedOut = false
+  const timeout = setTimeout(() => {
+    timedOut = true
+    child.kill("SIGKILL")
+  }, timeoutMs)
   const [exitCode, stdout, stderr] = await Promise.all([
     child.exited,
     new Response(child.stdout).text(),
     new Response(child.stderr).text(),
-  ])
+  ]).finally(() => clearTimeout(timeout))
+  if (timedOut) throw new Error(`${args.join(" ")} timed out after ${timeoutMs / 1_000} seconds`)
   if (exitCode === 0) return stdout.trim()
   throw new Error(`${args.join(" ")} failed: ${stderr.trim() || stdout.trim() || `exit code ${exitCode}`}`)
 }

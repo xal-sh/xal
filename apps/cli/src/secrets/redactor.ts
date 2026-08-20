@@ -77,7 +77,7 @@ class SecretRedactor {
   private sources = new Map<string, string[]>()
   private current: RedactorGeneration = { values: [], marker: REDACTION_MARKER }
 
-  replace(source: string, values: string[]): void {
+  prepare(source: string, values: string[]): () => void {
     const sources = new Map(this.sources)
     sources.set(
       source,
@@ -88,8 +88,10 @@ class SecretRedactor {
     )
     const marker = resolveMarker(nextValues)
     const matcher = nextValues.length === 0 ? undefined : createNativeSecretMatcher(nextValues, marker)
-    this.sources = sources
-    this.current = { values: nextValues, marker, matcher }
+    return () => {
+      this.sources = sources
+      this.current = { values: nextValues, marker, matcher }
+    }
   }
 
   generation(): RedactorGeneration {
@@ -144,9 +146,16 @@ export function protectSecretValue(value: string): void {
   enteredSecrets = next
 }
 
+export function prepareSecretValues(source: string, values: string[]): () => void {
+  const apply = redactor.prepare(source, values)
+  return () => {
+    apply()
+    version += 1
+  }
+}
+
 export function replaceSecretValues(source: string, values: string[]): void {
-  redactor.replace(source, values)
-  version += 1
+  prepareSecretValues(source, values)()
 }
 
 export function secretsVersion(): number {

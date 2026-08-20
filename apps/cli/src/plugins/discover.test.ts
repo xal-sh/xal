@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test"
+import { resolveCli } from "../cli/registry"
 import type { Settings } from "../config/settings"
 import { events, type AppEvent } from "../events"
 import { listHooks } from "../hooks/registry"
@@ -90,6 +91,28 @@ describe("plugin orchestration", () => {
     } finally {
       unsubscribe()
     }
+  })
+
+  test("preflights secrets before committing plugin contributions", async () => {
+    importedPlugins.set("invalid-secrets", {
+      name: "invalid-secrets",
+      register(ctx) {
+        ctx.registerCli({ name: "invalid-secrets-cli", describe: "must not survive failed registration" })
+        ctx.registerSecrets([
+          `[REDACTED]<hidden>***•••_${String.fromCharCode(
+            ...Array.from({ length: 0xf8ff - 0xe000 + 1 }, (_, index) => 0xe000 + index),
+          )}`,
+        ])
+      },
+    })
+
+    const status = await registerPlugins(settings(["invalid-secrets"]))
+
+    expect(status).toEqual({
+      total: 1,
+      failures: [{ plugin: "invalid-secrets", phase: "register", reason: "secret redaction marker resolution failed" }],
+    })
+    expect(resolveCli(["invalid-secrets-cli"])).toBeUndefined()
   })
 
   test("runs bootstrap once for concurrent callers and accumulates lifecycle failures", async () => {

@@ -1,5 +1,5 @@
 import type { ChildProcess } from "node:child_process"
-import { isRecord } from "./json"
+import { linuxLibc } from "../native/targets"
 
 export function isStandalone(): boolean {
   return Bun.main.startsWith("/$bunfs/")
@@ -12,9 +12,7 @@ export function selfCommand(args: string[]): string[] {
 
 export function usesMusl(): boolean {
   if (process.platform !== "linux") return false
-  const report: unknown = process.report?.getReport()
-  if (!isRecord(report) || !isRecord(report.header)) return true
-  return typeof report.header.glibcVersionRuntime !== "string"
+  return linuxLibc() === "musl"
 }
 
 export function killProcessTree(process: ChildProcess, signal: NodeJS.Signals = "SIGKILL"): void {

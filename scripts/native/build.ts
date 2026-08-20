@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto"
 import { copyFile, mkdir, open, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises"
 import { dirname, join, relative, resolve, sep } from "node:path"
-import { hostNativeTarget, nativeTarget, type NativeTarget } from "./targets"
+import { hostNativeTarget, nativeTarget, type NativeRustTarget, type NativeTarget } from "./targets"
 import {
   ARTIFACT_SCHEMA_VERSION,
   NATIVE_API_VERSION,
@@ -20,7 +20,7 @@ const BUN_VERSION = "1.3.14"
 const CARGO_ZIGBUILD_VERSION = "0.20.1"
 
 interface NativeInputs extends ExpectedArtifactMetadata {
-  target: string
+  target: NativeRustTarget
   inputHash: string
   sourceHash: string
   lockHash: string
@@ -51,25 +51,40 @@ function processIsAlive(pid: number): boolean {
   }
 }
 
-async function clearStaleCompileLock(): Promise<void> {
-  let owner: unknown
+interface CompileLockOwner {
+  pid: number
+}
+
+function parseCompileLockOwner(content: string): CompileLockOwner {
+  let value: unknown
   try {
-    owner = JSON.parse(await readFile(STAGING_LOCK, "utf8"))
+    value = JSON.parse(content)
+  } catch (error) {
+    throw new Error("native compile lock contains invalid JSON", { cause: error })
+  }
+  if (
+    !isRecord(value) ||
+    Object.keys(value).length !== 1 ||
+    typeof value.pid !== "number" ||
+    !Number.isSafeInteger(value.pid) ||
+    value.pid <= 0
+  ) {
+    throw new Error("native compile lock contains an invalid owner")
+  }
+  return { pid: value.pid }
+}
+
+async function clearStaleCompileLock(): Promise<void> {
+  let content: string
+  try {
+    content = await readFile(STAGING_LOCK, "utf8")
   } catch (error) {
     if (isMissingPath(error)) return
-    let lock
-    try {
-      lock = await stat(STAGING_LOCK)
-    } catch (statError) {
-      if (isMissingPath(statError)) return
-      throw statError
-    }
-    if (Date.now() - lock.mtimeMs < 5_000) throw new Error("native compile lock is being initialized")
+    throw error
   }
-  if (isRecord(owner) && typeof owner.pid === "number" && Number.isSafeInteger(owner.pid) && owner.pid > 0) {
-    if (processIsAlive(owner.pid)) throw new Error(`native compile lock is held by process ${owner.pid}`)
-  }
-  await rm(STAGING_LOCK, { force: true })
+  const owner = parseCompileLockOwner(content)
+  if (processIsAlive(owner.pid)) throw new Error(`native compile lock is held by process ${owner.pid}`)
+  await rm(STAGING_LOCK)
 }
 
 async function acquireCompileLock() {
@@ -163,6 +178,7 @@ async function nativeInputs(target: NativeTarget, portable: boolean): Promise<Na
   const toolchain = await toolchainInput()
   const sourcePaths = [
     join(ROOT, "Cargo.toml"),
+    join(ROOT, "apps/cli/src/native/targets.ts"),
     join(ROOT, "scripts/native/build.ts"),
     join(ROOT, "scripts/native/targets.ts"),
     ...(await cargoManifests(join(ROOT, "crates"))),
@@ -180,6 +196,8 @@ async function nativeInputs(target: NativeTarget, portable: boolean): Promise<Na
       JSON.stringify({
         sourceHash,
         lockHash,
+        schemaVersion: ARTIFACT_SCHEMA_VERSION,
+        apiVersion: NATIVE_API_VERSION,
         toolchain: toolchain.toolchain,
         target: target.rustTarget,
         buildMode: BUILD_MODE,
@@ -302,7 +320,9 @@ async function buildArtifact(target: NativeTarget, inputs: NativeInputs, portabl
   const cargo = await cargoCommand(target, portable)
   const musl = target.rustTarget.endsWith("-musl")
   const env: Record<string, string | undefined> = Object.fromEntries(
-    Object.entries(process.env).filter(([name]) => !musl || !name.toUpperCase().includes("RUSTFLAGS")),
+    Object.entries(process.env).filter(
+      ([name]) => !["RUSTFLAGS", "CARGO_ENCODED_RUSTFLAGS"].includes(name.toUpperCase()),
+    ),
   )
   const buildDirectory = join(ROOT, "target/native-build", portable ? "portable" : "host")
   env.CARGO_TARGET_DIR = buildDirectory
@@ -374,7 +394,7 @@ async function compile(target: NativeTarget, version: string, outfile: string): 
   await mkdir(dirname(STAGING_LOCK), { recursive: true })
   const lock = await acquireCompileLock()
   try {
-    await lock.writeFile(`${JSON.stringify({ pid: process.pid, target: target.rustTarget })}\n`)
+    await lock.writeFile(`${JSON.stringify({ pid: process.pid })}\n`)
     await lock.sync()
     await rm(STAGED_ADDON, { force: true })
     await verifyArtifactManifest(manifestPath, await nativeInputs(target, true))

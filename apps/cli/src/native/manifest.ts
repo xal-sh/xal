@@ -1,17 +1,10 @@
 import { readFileSync } from "node:fs"
 import { isAbsolute, posix } from "node:path"
 import { asNumber, asString, isRecord } from "../lib/json"
+import { isNativeRustTarget, type NativeRustTarget } from "./targets"
 
-const NATIVE_TARGETS = new Set([
-  "x86_64-apple-darwin",
-  "aarch64-apple-darwin",
-  "x86_64-unknown-linux-gnu",
-  "aarch64-unknown-linux-gnu",
-  "x86_64-unknown-linux-musl",
-  "aarch64-unknown-linux-musl",
-  "x86_64-pc-windows-msvc",
-  "aarch64-pc-windows-msvc",
-])
+export const NATIVE_MANIFEST_SCHEMA_VERSION = 1
+export const NATIVE_API_VERSION = 1
 
 const MANIFEST_KEYS = [
   "apiVersion",
@@ -33,7 +26,7 @@ export interface NativeManifest {
   schemaVersion: number
   sha256: string
   sourceHash: string
-  target: string
+  target: NativeRustTarget
   toolchain: string
 }
 
@@ -51,11 +44,11 @@ export function parseNativeManifest(value: unknown): NativeManifest {
   }
 
   const schemaVersion = asNumber(value.schemaVersion)
-  if (schemaVersion !== 1) throw new Error("unsupported native manifest schema")
+  if (schemaVersion !== NATIVE_MANIFEST_SCHEMA_VERSION) throw new Error("unsupported native manifest schema")
   const apiVersion = asNumber(value.apiVersion)
-  if (apiVersion !== 1) throw new Error("unsupported native API version")
-  const target = asString(value.target)
-  if (!target || !NATIVE_TARGETS.has(target)) throw new Error("invalid native manifest target")
+  if (apiVersion !== NATIVE_API_VERSION) throw new Error("unsupported native API version")
+  const target = value.target
+  if (!isNativeRustTarget(target)) throw new Error("invalid native manifest target")
   const toolchain = asString(value.toolchain)
   if (!toolchain) throw new Error("invalid native manifest toolchain")
   const path = asString(value.path)

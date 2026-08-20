@@ -1,87 +1,23 @@
 import { createHash } from "node:crypto"
 import { readFile } from "node:fs/promises"
-import { basename, dirname, isAbsolute, join, resolve } from "node:path"
-import { nativeTargets } from "./targets"
+import { basename, dirname, join, resolve } from "node:path"
+import { parseNativeManifest, type NativeManifest } from "../../apps/cli/src/native/manifest"
+import type { NativeRustTarget } from "../../apps/cli/src/native/targets"
 
-export const ARTIFACT_SCHEMA_VERSION = 1
-export const NATIVE_API_VERSION = 1
+export {
+  NATIVE_API_VERSION,
+  NATIVE_MANIFEST_SCHEMA_VERSION as ARTIFACT_SCHEMA_VERSION,
+} from "../../apps/cli/src/native/manifest"
 
-export interface ArtifactManifest {
-  schemaVersion: number
-  target: string
-  inputHash: string
-  sourceHash: string
-  lockHash: string
-  toolchain: string
-  apiVersion: number
-  path: string
-  sha256: string
-}
+export type ArtifactManifest = NativeManifest
 
 export interface ExpectedArtifactMetadata {
-  target?: string
+  target?: NativeRustTarget
   inputHash?: string
   sourceHash?: string
   lockHash?: string
   toolchain?: string
   apiVersion?: number
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-}
-
-function isSha256(value: unknown): value is string {
-  return typeof value === "string" && /^[0-9a-f]{64}$/.test(value)
-}
-
-function isArtifactPath(value: unknown): value is string {
-  if (typeof value !== "string" || value.length === 0 || isAbsolute(value)) return false
-  const parts = value.split("/")
-  return parts.every((part) => part.length > 0 && part !== "." && part !== ".." && !part.includes("\\"))
-}
-
-function parseManifest(value: unknown, path: string): ArtifactManifest {
-  if (!isRecord(value)) throw new Error(`${path} must contain a JSON object`)
-  const keys = new Set([
-    "schemaVersion",
-    "target",
-    "inputHash",
-    "sourceHash",
-    "lockHash",
-    "toolchain",
-    "apiVersion",
-    "path",
-    "sha256",
-  ])
-  const unexpected = Object.keys(value).filter((key) => !keys.has(key))
-  if (unexpected.length > 0) throw new Error(`${path} has unexpected fields: ${unexpected.join(", ")}`)
-  if (value.schemaVersion !== ARTIFACT_SCHEMA_VERSION) {
-    throw new Error(`${path} has unsupported schemaVersion`)
-  }
-  if (typeof value.target !== "string" || !nativeTargets.some((target) => target.rustTarget === value.target)) {
-    throw new Error(`${path} has an unsupported target`)
-  }
-  if (!isSha256(value.inputHash)) throw new Error(`${path} has an invalid inputHash`)
-  if (!isSha256(value.sourceHash)) throw new Error(`${path} has an invalid sourceHash`)
-  if (!isSha256(value.lockHash)) throw new Error(`${path} has an invalid lockHash`)
-  if (typeof value.toolchain !== "string" || value.toolchain.length === 0) {
-    throw new Error(`${path} has an invalid toolchain`)
-  }
-  if (value.apiVersion !== NATIVE_API_VERSION) throw new Error(`${path} has an unsupported apiVersion`)
-  if (!isArtifactPath(value.path)) throw new Error(`${path} has an invalid artifact path`)
-  if (!isSha256(value.sha256)) throw new Error(`${path} has an invalid sha256`)
-  return {
-    schemaVersion: value.schemaVersion,
-    target: value.target,
-    inputHash: value.inputHash,
-    sourceHash: value.sourceHash,
-    lockHash: value.lockHash,
-    toolchain: value.toolchain,
-    apiVersion: value.apiVersion,
-    path: value.path,
-    sha256: value.sha256,
-  }
 }
 
 export async function sha256File(path: string): Promise<string> {
@@ -97,7 +33,7 @@ export async function readArtifactManifest(path: string): Promise<ArtifactManife
   } catch (error) {
     throw new Error(`Unable to read artifact manifest ${path}`, { cause: error })
   }
-  return parseManifest(value, path)
+  return parseNativeManifest(value)
 }
 
 function assertExpected(manifest: ArtifactManifest, expected: ExpectedArtifactMetadata, path: string): void {

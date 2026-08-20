@@ -79,8 +79,9 @@ export function loadStandaloneBinding(): unknown {
       writeFileSync(temporary, bytes, { flag: "wx", mode: 0o600 })
       try {
         renameSync(temporary, extracted)
-      } catch {
+      } catch (error) {
         if (matchesDigest(extracted, hash)) return import.meta.require(extracted)
+        if (!isRecord(error) || error.code !== "EEXIST") throw error
         rmSync(extracted, { force: true })
         try {
           renameSync(temporary, extracted)

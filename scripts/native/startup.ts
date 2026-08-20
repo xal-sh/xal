@@ -16,12 +16,35 @@ async function sample(executable: string, home: string, project: string): Promis
   return performance.now() - start
 }
 
-async function median(executable: string, home: string, project: string): Promise<number> {
-  for (let index = 0; index < 5; index++) await sample(executable, home, project)
-  const samples: number[] = []
-  for (let index = 0; index < 31; index++) samples.push(await sample(executable, home, project))
+function median(samples: number[]): number {
   samples.sort((left, right) => left - right)
   return samples[Math.floor(samples.length / 2)]!
+}
+
+async function samples(
+  baseline: string,
+  baselineHome: string,
+  current: string,
+  currentHome: string,
+  project: string,
+): Promise<{ baseline: number[]; current: number[] }> {
+  const baselineSamples: number[] = []
+  const currentSamples: number[] = []
+  for (let index = 0; index < 36; index++) {
+    let baselineMs: number
+    let currentMs: number
+    if (index % 2 === 0) {
+      baselineMs = await sample(baseline, baselineHome, project)
+      currentMs = await sample(current, currentHome, project)
+    } else {
+      currentMs = await sample(current, currentHome, project)
+      baselineMs = await sample(baseline, baselineHome, project)
+    }
+    if (index < 5) continue
+    baselineSamples.push(baselineMs)
+    currentSamples.push(currentMs)
+  }
+  return { baseline: baselineSamples, current: currentSamples }
 }
 
 async function main(): Promise<void> {
@@ -33,11 +56,13 @@ async function main(): Promise<void> {
   const current = resolve(currentInput)
   const directory = await mkdtemp(join(tmpdir(), "xal-native-startup-"))
   try {
-    const home = join(directory, "home")
+    const baselineHome = join(directory, "baseline-home")
+    const currentHome = join(directory, "current-home")
     const project = join(directory, "project")
-    await Promise.all([mkdir(home), mkdir(project)])
-    const baselineMs = await median(baseline, home, project)
-    const currentMs = await median(current, home, project)
+    await Promise.all([mkdir(baselineHome), mkdir(currentHome), mkdir(project)])
+    const measured = await samples(baseline, baselineHome, current, currentHome, project)
+    const baselineMs = median(measured.baseline)
+    const currentMs = median(measured.current)
     const regressionMs = currentMs - baselineMs
     const regressionPercent = (currentMs / baselineMs - 1) * 100
     console.log(JSON.stringify({ baselineMs, currentMs, regressionMs, regressionPercent }, null, 2))

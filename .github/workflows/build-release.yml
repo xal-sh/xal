@@ -157,6 +157,7 @@ jobs:
           }
           EOF
           printf '{"plugins":["/smoke/plugin"]}\n' > dist/musl-smoke/home/config.json
+          printf '["/smoke/project"]\n' > dist/musl-smoke/home/trust.json
           docker run --rm \
             -e EXPECTED="xal $VERSION" \
             -e XAL_HOME=/smoke/home \
@@ -173,9 +174,9 @@ jobs:
               timeout 5 script -e -q -c /xal /tmp/xal-tui.log </dev/null >/tmp/xal-tui.out 2>&1
               status="$?"
               set -e
-              if test "$status" -ne 0 && test "$status" -ne 124; then
+              if test "$status" -ne 124 || ! grep -aF "xal — /smoke/project" /tmp/xal-tui.log >/dev/null; then
                 cat /tmp/xal-tui.out /tmp/xal-tui.log
-                exit "$status"
+                exit 1
               fi
             '
 

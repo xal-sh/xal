@@ -11,7 +11,7 @@ import { clearHooks, registerHook, removeHooks } from "../hooks/registry"
 import { contributeRules } from "../permissions/rules"
 import { registerPolicyRule } from "../permissions/service"
 import { registerProvider } from "../providers/registry"
-import { protectSecretValue, replaceSecretValues } from "../secrets/redactor"
+import { prepareSecretValues, protectSecretValue } from "../secrets/redactor"
 import { registerTool, unregisterTool } from "../tools/registry"
 import { registerToolRenderer } from "../ui/extension"
 import { registerUi } from "../ui/registry"
@@ -75,7 +75,7 @@ function contextFor(plugin: Plugin, settings: Settings, pluginOrder: number, sig
     registerPrompt: (section) => apply(() => registerPrompt(section)),
     registerPolicyRule: (rule) => apply(() => registerPolicyRule(rule)),
     registerPermissionRules: (rules) => apply(() => contributeRules(rules)),
-    registerSecrets: (values) => apply(() => replaceSecretValues(`plugin:${plugin.name}`, values)),
+    registerSecrets: (values) => apply(prepareSecretValues(`plugin:${plugin.name}`, values)),
     registerUi: (ui) => apply(() => registerUi(ui)),
     registerToolRenderer: (renderer) => apply(() => registerToolRenderer(renderer)),
   }

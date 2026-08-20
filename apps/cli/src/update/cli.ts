@@ -5,8 +5,8 @@ import { appInfo, formatAppVersion } from "../app-info"
 import { registerCli } from "../cli/registry"
 import type { Cli, CliContext } from "../cli/types"
 import { describeError, isMissingPathError } from "../lib/error"
-import { asString, isRecord } from "../lib/json"
 import { isStandalone } from "../lib/process"
+import { linuxLibc } from "../native/targets"
 import { downloadArtifact } from "./download"
 
 function parseArgs(args: string[]): { help: boolean } {
@@ -53,12 +53,6 @@ async function resolveRelease(): Promise<{ base: string; version: string }> {
   return { base, version }
 }
 
-function linuxLibc(): "" | "-musl" {
-  const report: unknown = process.report?.getReport()
-  if (!isRecord(report) || !isRecord(report.header)) throw new Error("could not detect the Linux C library")
-  return asString(report.header.glibcVersionRuntime) ? "" : "-musl"
-}
-
 function artifactName(): string {
   if (process.arch !== "x64" && process.arch !== "arm64") {
     throw new Error(`unsupported architecture: ${process.arch}`)
@@ -68,7 +62,7 @@ function artifactName(): string {
     case "darwin":
       return `${appInfo.name}-darwin-${process.arch}`
     case "linux":
-      return `${appInfo.name}-linux-${process.arch}${linuxLibc()}`
+      return `${appInfo.name}-linux-${process.arch}${linuxLibc() === "musl" ? "-musl" : ""}`
     case "win32":
       return `${appInfo.name}-windows-${process.arch}.exe`
     default:
