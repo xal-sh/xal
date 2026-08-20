@@ -22,6 +22,12 @@ The referenced directory must contain a `plugin.ts` whose default export has a `
 
 Plugin registration is transactional. If importing, validating, or registering a plugin fails, Xal records a plugin registration failure and keeps none of that plugin's contributions.
 
+## Model-facing context
+
+Xal keeps its built-in system prompt small: identity, current environment, permission state, and stateful workflows that the user explicitly entered, such as plan mode. Tool definitions reach the model through the provider's native tool schema. A tool description should explain capability, inputs, effects, limits, and failure conditions; it should not tell the model to prefer that tool or impose a general workflow.
+
+Plugins may contribute system-prompt sections with `ctx.registerPrompt`. Reserve these for runtime state, an explicitly enabled mode, or instructions intrinsic to the plugin as a whole. Project `AGENTS.md` files, the skill catalog, configured MCP server instructions, and global memory are intentional prompt contributions because the user enabled those context sources. Prompt hooks can replace individual user messages and therefore remain a separate, explicitly trusted extension point.
+
 ## Lifecycle
 
 `ctx.runtime` exposes the app name and version, app home and cache paths, profile-aware credential loading, saving, and compare-and-swap replacement, plus transient secret protection. Credential operations require both the provider ID and immutable profile ID. Provider plugins should use this runtime instead of reading or rewriting Xal's shared credential file directly. Provider model discovery and streaming also receive the profile ID, while `connect` returns a credential for the core to store under the user-provided profile name.

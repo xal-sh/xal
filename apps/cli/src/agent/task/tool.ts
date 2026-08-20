@@ -84,8 +84,6 @@ export const taskTool: SessionTool = {
     required: ["context", "tasks"],
     additionalProperties: false,
   },
-  prompt:
-    "When delegation is authorized, use task only for concrete, bounded work that can proceed independently alongside useful local work; otherwise continue locally. Use the smallest useful batch and dispatch multiple tasks only when they are genuinely independent. Put shared background and cross-task contracts in context. Give every task exact targets, explicit non-goals, and observable acceptance criteria. Give concurrent shared write tasks disjoint files; use worktree isolation when edits may overlap. Isolated changes stay in the reported checkout and branch until you integrate them, then remove the checkout with worktree_remove. Agents start blank, so do not rely on conversation history. Results auto-deliver into your session; do not poll them. Continue useful non-overlapping work or end the current response while they run. Use job_status to inspect a task's activity and remaining time or turn budget when a supervision decision is needed, job_send to redirect it, job_extend to add time or turns before its budget expires, and job_kill when it is no longer useful. Explicit job_output waits return before an agent deadline; inspect its status and extend or stop it at that checkpoint instead of immediately waiting again. Never work on a dispatched task's files or duplicate its work while it runs.",
   sessionAware: true,
   available(ctx) {
     return ctx.kind === "primary" && ctx.interactive

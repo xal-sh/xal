@@ -88,23 +88,15 @@ function parameters(): Record<string, unknown> {
 }
 
 function description(): string {
-  const base = `Execute a command with the user's shell in a persistent session: cd, exported variables, and aliases or functions defined by earlier commands stay in effect for later ones. Returns combined stdout and stderr followed by the exit code. Commands run without a TTY and are killed after ${DEFAULT_TIMEOUT_S} seconds unless timeout says otherwise.`
+  const base = `Execute a command with the user's shell in a persistent session: cd, exported variables, and aliases or functions defined by earlier commands stay in effect for later ones. Returns combined stdout and stderr followed by the exit code. Commands run without a TTY and are killed after ${DEFAULT_TIMEOUT_S} seconds unless timeout says otherwise. Managed background execution is selected with background:true; processes detached inside the shell are not tracked.`
   if (!sandboxAvailable()) return `${base} Each command requires the user's approval before it runs.`
   return `${base} Sandboxed commands run immediately with OS-enforced filesystem and network restrictions; other commands require the user's approval before they run.`
-}
-
-function guidance(): string {
-  const base =
-    "Use bash for shell work: builds, tests, git, and composed read-only inspection. For exploration, combine related metadata queries, searches, and targeted file ranges in one command when each step is safe and this avoids provider round trips; keep output focused and stop dependent chains on failure with &&. Use dedicated tools for simple standalone operations and parallel calls for known independent work. Quote paths that contain spaces. Prefer non-interactive flags; anything that waits for input hangs until the timeout kills it. Start long-lived processes like dev servers and watchers with background:true, follow them with job_output (pass wait to block until new output or exit instead of sleeping between polls), and stop them with job_kill; never background quick commands. Never detach processes with nohup, setsid, or a trailing &; only managed background:true jobs are tracked, delivered, and cleaned up. Only commit, amend, or push with git when the user asks for it."
-  if (!sandboxAvailable()) return base
-  return `${base} Use sandbox:"read" for inspection commands because the OS blocks filesystem state changes. Use sandbox:"workspace" for builds and commands that may write only in the workspace or temporary directories. Omit sandbox when the command needs network or writes elsewhere.`
 }
 
 export const bashTool: Tool = {
   name: "bash",
   description: description(),
   parameters: parameters(),
-  prompt: guidance(),
   title(args) {
     return asString(args.command) ?? ""
   },

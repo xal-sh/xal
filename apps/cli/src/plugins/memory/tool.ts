@@ -46,8 +46,6 @@ export function createMemoryTool(store: GlobalMemoryStore): Tool {
       required: ["operation"],
       additionalProperties: false,
     },
-    prompt:
-      "Global memory is user-controlled and may be stale. Read it before a requested change, preserve unrelated entries, and use replace or clear only after the user explicitly asks. Current repository state and newer user instructions always take precedence.",
     available(ctx) {
       return ctx.kind === "primary"
     },

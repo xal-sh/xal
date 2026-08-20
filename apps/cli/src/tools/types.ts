@@ -67,7 +67,6 @@ export interface ToolCallContext {
 }
 
 interface ToolContract extends ToolDefinition {
-  prompt?: string
   available?(ctx: ToolAvailabilityContext): boolean
   title(args: Record<string, unknown>, ctx: ToolCallContext): string
   readOnly?(args: Record<string, unknown>, ctx: ToolCallContext): boolean

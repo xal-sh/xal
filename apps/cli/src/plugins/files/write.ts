@@ -8,7 +8,7 @@ import { pathPermission } from "./permission"
 export const writeTool: Tool = {
   name: "write",
   description:
-    "Write a file with the given content, creating it and any missing parent directories or replacing the existing file entirely. Returns a diff of the change. Paths are absolute or relative to the working directory.",
+    "Write a file with the given raw content, creating it and any missing parent directories or replacing the existing file entirely. Returns a diff of the change. Paths are absolute or relative to the working directory.",
   parameters: {
     type: "object",
     properties: {
@@ -24,8 +24,6 @@ export const writeTool: Tool = {
     required: ["file_path", "content"],
     additionalProperties: false,
   },
-  prompt:
-    "Use write for new files and complete rewrites; prefer edit for changing part of an existing file. Read an existing file before overwriting it, and pass raw file text without read's line-number prefixes. Do not create documentation or README files unless the user asks for them.",
   title(args, ctx) {
     return displayPath(asString(args.file_path) ?? "", ctx.cwd)
   },

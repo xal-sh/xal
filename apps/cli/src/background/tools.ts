@@ -155,7 +155,7 @@ function statusOutput(id: string | undefined, ownerId: string): string {
 export const jobOutputTool: SessionTool = {
   name: "job_output",
   description:
-    "Collect a background job explicitly. For a process, returns new output and waits for output or exit; prefer one long wait over repeated short polls. Task-agent results normally deliver automatically. An explicit task-agent wait returns before its deadline with a supervision checkpoint so you can inspect, extend, steer, or stop it, and collecting a finished report suppresses duplicate automatic delivery.",
+    "Collect a background job explicitly. For a process, returns new output and optionally waits for output or exit. Task-agent results normally deliver automatically. An explicit task-agent wait returns before its deadline with a supervision checkpoint, and collecting a finished report suppresses duplicate automatic delivery.",
   parameters: {
     type: "object",
     properties: {
@@ -262,7 +262,7 @@ function extensionValue(args: Record<string, unknown>, field: string, maximum: n
 export const jobExtendTool: SessionTool = {
   name: "job_extend",
   description:
-    "Extend a running or queued task agent's execution budget. Adds wall-clock minutes, turns, or both without restarting the agent. Use job_status first to inspect its remaining budget.",
+    "Extend a running or queued task agent's execution budget by wall-clock minutes, turns, or both without restarting it. job_status reports the current remaining budget.",
   parameters: {
     type: "object",
     properties: {

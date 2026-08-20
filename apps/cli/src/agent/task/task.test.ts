@@ -38,23 +38,20 @@ function modelCatalog(): ModelCatalog {
   }
 }
 
-test("requires explicit delegation after describing the task tool", async () => {
+test("keeps task mechanics in the tool contract and delegation policy in instructions", async () => {
   const provider = new ScriptedProvider([completedRound("Done.")])
   const session = harness.createSession(provider, { interactive: true })
 
   const outcome = await runSettledTurn(session, { text: "Inspect the project.", images: [] })
   const request = provider.requests[0]
   if (!request) throw new Error("provider request was not recorded")
-  const operationalGuidance = "When delegation is authorized, use task only for concrete, bounded work"
   const delegationPolicy = "Task agents are an available capability, not the default workflow."
 
   expect(outcome.status).toBe("completed")
-  expect(request.tools.some((tool) => tool.name === "task")).toBe(true)
-  expect(request.instructions).toContain(operationalGuidance)
+  const task = request.tools.find((tool) => tool.name === "task")
+  expect(task?.description).toContain("concrete, bounded assignments")
   expect(request.instructions).toContain(delegationPolicy)
-  expect(request.instructions.indexOf(delegationPolicy)).toBeGreaterThan(
-    request.instructions.indexOf(operationalGuidance),
-  )
+  expect(request.instructions).not.toContain("Use the smallest useful batch")
 })
 
 test("inherits deny rules and durably delivers a bounded task report", async () => {

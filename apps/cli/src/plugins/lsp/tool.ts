@@ -74,8 +74,6 @@ export function lspTool(manager: LspManager): Tool {
       required: ["operation", "file_path"],
       additionalProperties: false,
     },
-    prompt:
-      "Prefer lsp over text search when navigating definitions, references, implementations, symbols, hover types, or call relationships. Use diagnostics after a file changes when a configured server can provide compiler-style feedback. Read returned locations when you need surrounding source.",
     available: () => manager.hasAvailableServer(),
     title(args, ctx) {
       const operation = asString(args.operation) ?? "query"

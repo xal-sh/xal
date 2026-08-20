@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { MAX_STALE_REMINDERS, MISSING_LIST_CALLS, STALE_LIST_CALLS, TaskReminders } from "./reminders"
+import { MAX_STALE_REMINDERS, STALE_LIST_CALLS, TaskReminders } from "./reminders"
 import type { TrackedTask } from "./types"
 
 const open: TrackedTask[] = [
@@ -11,22 +11,15 @@ function record(reminders: TaskReminders, calls: number): void {
   for (let index = 0; index < calls; index++) reminders.recordToolCall()
 }
 
-test("nudges once per turn to create a missing list after enough tool calls", () => {
+test("does not direct the model to create a task list", () => {
   const reminders = new TaskReminders()
-  record(reminders, MISSING_LIST_CALLS - 1)
+  record(reminders, STALE_LIST_CALLS * 2)
   expect(reminders.take([])).toBeUndefined()
-  reminders.recordToolCall()
-  expect(reminders.take([])).toContain("without an active task list")
-  record(reminders, MISSING_LIST_CALLS)
-  expect(reminders.take([])).toBeUndefined()
-  reminders.startTurn()
-  record(reminders, MISSING_LIST_CALLS)
-  expect(reminders.take([])).toContain("without an active task list")
 })
 
 test("leaves a fully completed list alone", () => {
   const reminders = new TaskReminders()
-  record(reminders, MISSING_LIST_CALLS)
+  record(reminders, STALE_LIST_CALLS)
   expect(reminders.take([{ step: "Done", status: "completed" }])).toBeUndefined()
 })
 

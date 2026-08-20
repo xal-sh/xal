@@ -51,7 +51,7 @@ function parseQuestions(args: Record<string, unknown>): ElicitationQuestion[] {
 export const requestUserInputTool: InteractiveTool = {
   name: "request_user_input",
   description:
-    "Ask the user structured questions and wait for the answers. Prefer one question with two or three exclusive choices; the interface adds a free-form alternative automatically.",
+    "Ask the user structured questions and wait for the answers when a decision requires user input. This does not request approval for another tool. The interface adds a free-form alternative automatically.",
   parameters: {
     type: "object",
     properties: {
@@ -104,8 +104,6 @@ export const requestUserInputTool: InteractiveTool = {
     required: ["questions"],
     additionalProperties: false,
   },
-  prompt:
-    "Use request_user_input only when a decision blocks progress and you cannot resolve it from the request, the code, or sensible defaults. Prefer a single question with distinct, concrete options, and ask related questions together rather than one at a time. Do not use it to ask permission for tool actions.",
   interactive: true,
   title(args) {
     const count = Array.isArray(args.questions) ? args.questions.length : 0

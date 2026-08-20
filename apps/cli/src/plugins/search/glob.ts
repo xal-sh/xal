@@ -24,8 +24,6 @@ export const globTool: Tool = {
     required: ["pattern"],
     additionalProperties: false,
   },
-  prompt:
-    "Use glob to find files by name instead of find or ls in bash. Patterns are gitignore-style globs like src/**/*.ts, and results come newest first so recently changed files surface at the top. Run several speculative patterns as parallel calls when exploring.",
   title(args, ctx) {
     const pattern = asString(args.pattern) ?? ""
     const path = asString(args.path)

@@ -38,8 +38,6 @@ export const skillTool: Tool = {
     required: ["name"],
     additionalProperties: false,
   },
-  prompt:
-    "Use skill when a task implicitly matches one from the catalog, then follow its instructions over your defaults and read only the supporting files it requires. A skill selected with an explicit $name invocation is already present in that user message; do not load it again. Use path to read a listed supporting file when the loaded instructions require it.",
   title(args) {
     const name = asString(args.name) ?? ""
     const path = asString(args.path)

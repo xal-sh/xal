@@ -39,7 +39,7 @@ function restartDescription(usage: ContextUsage | undefined): string {
 export const submitPlanTool: InteractiveTool = {
   name: "submit_plan",
   description:
-    "Save the implementation plan for this session and ask the user to approve it or request revisions. Available only in interactive plan mode.",
+    "Save the complete implementation plan for this session and ask the user to approve it or request revisions. Each call replaces the proposal. Available only in interactive plan mode after material questions are resolved.",
   parameters: {
     type: "object",
     properties: {
@@ -53,8 +53,6 @@ export const submitPlanTool: InteractiveTool = {
     required: ["plan"],
     additionalProperties: false,
   },
-  prompt:
-    "Call submit_plan only after material questions are resolved. Submit a self-contained, decision-complete Markdown plan with the intended outcome, behavior-grouped implementation steps, exact targets where needed, concrete verification, and any chosen assumptions. Each call replaces the complete proposal. The tool renders it for approval or revision feedback.",
   interactive: true,
   available(ctx) {
     return ctx.interactive && ctx.mode === "plan"

@@ -30,8 +30,6 @@ export const readTool: Tool = {
     required: ["file_path"],
     additionalProperties: false,
   },
-  prompt:
-    "Use read for a standalone file view. Read several known files in parallel and request the useful enclosing range instead of tiny repeated slices. Use read-only bash when related searches and ranges from several files can be inspected coherently in one call.",
   title(args, ctx) {
     return displayPath(asString(args.file_path) ?? "", ctx.cwd)
   },

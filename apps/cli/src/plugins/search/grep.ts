@@ -37,8 +37,6 @@ export const grepTool: Tool = {
     required: ["pattern"],
     additionalProperties: false,
   },
-  prompt:
-    'Use grep for a standalone repository search. Start with the default content mode so one search identifies both locations and matching lines; use output_mode "files" only when you need paths without context. Scope with path and glob, combine related patterns when practical, and run independent searches as parallel calls. Use read-only bash when several related searches and targeted reads can be combined into one coherent inspection.',
   title(args, ctx) {
     const pattern = asString(args.pattern) ?? ""
     const glob = asString(args.glob)

@@ -26,10 +26,9 @@ export class OutputContract {
 
     this.tool = {
       name: "submit_output",
-      description: "Submit the final response as an object matching the caller-provided JSON Schema.",
+      description:
+        "Submit the final response exactly once as an object matching the caller-provided JSON Schema. Text responses do not satisfy this output contract; correct and resubmit values rejected by the schema.",
       parameters: schema,
-      prompt:
-        "When the task is complete, call this tool exactly once with the final answer. Do not finish with a text response. If the value is rejected, correct it and call this tool again.",
       title: () => "Submit structured output",
       readOnly: () => true,
       concurrency: () => "exclusive",

@@ -33,8 +33,6 @@ export const updateTasksTool: Tool = {
     required: ["tasks"],
     additionalProperties: false,
   },
-  prompt:
-    "Create a task list with update_tasks before starting work that needs several distinct steps, when the user gives multiple requests, or when new instructions arrive mid-task; skip it for single-step or conversational work. Keep steps short and concrete. Replace the whole list on every call and keep it truthful: set a step to in_progress before working on it, and mark it completed immediately after it is actually done — never batch completions and never complete a step ahead of the work. When the plan changes, rewrite the list before continuing; removing a step is how a step is cancelled. A call whose only purpose is updating the list is fine. Do not repeat the list in your prose; the interface already displays it.",
   title(args) {
     const count = Array.isArray(args.tasks) ? args.tasks.length : 0
     if (count === 0) return "Clear task list"

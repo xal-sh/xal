@@ -33,8 +33,6 @@ export const editTool: Tool = {
     required: ["file_path", "old_string", "new_string"],
     additionalProperties: false,
   },
-  prompt:
-    "Use edit for targeted changes to existing files; use write only for new files or full rewrites. Read the file first and copy old_string exactly as it appears after read's line-number prefix, never including the prefix itself. When old_string matches several places, add surrounding lines to make it unique, or set replace_all to change every occurrence — also the way to rename a symbol across a file.",
   title(args, ctx) {
     return displayPath(asString(args.file_path) ?? "", ctx.cwd)
   },

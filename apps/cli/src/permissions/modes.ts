@@ -9,7 +9,7 @@ const builtins: ModeDefinition[] = [
     readOnly: false,
     skipAsk: false,
     guidance:
-      "Routine actions run without confirmation, so act instead of narrating what you are about to do. Actions that reach outside the workspace, privileged or destructive system commands, and actions the user marked as sensitive ask for approval first. A denied action means the user declined it; adjust instead of retrying.",
+      "Routine actions run without confirmation. Actions that reach outside the workspace, privileged or destructive system commands, and actions the user marked as sensitive ask for approval first. A denied action means the user declined it; adjust instead of retrying.",
     subagentGuidance:
       "This delegation may modify the workspace. Routine actions run automatically, but any action that still requires separate approval will be denied.",
   },

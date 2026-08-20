@@ -1,6 +1,5 @@
 import type { TrackedTask } from "./types"
 
-export const MISSING_LIST_CALLS = 4
 export const STALE_LIST_CALLS = 10
 export const MAX_STALE_REMINDERS = 2
 
@@ -22,12 +21,10 @@ export function taskListSnapshot(tasks: TrackedTask[]): string {
 
 export class TaskReminders {
   private calls = 0
-  private missingNudged = false
   private staleNudges = 0
 
   startTurn(): void {
     this.calls = 0
-    this.missingNudged = false
     this.staleNudges = 0
   }
 
@@ -41,16 +38,7 @@ export class TaskReminders {
 
   take(tasks: TrackedTask[]): string | undefined {
     const open = openSteps(tasks)
-    if (open === 0) {
-      if (tasks.length > 0 || this.missingNudged || this.calls < MISSING_LIST_CALLS) return undefined
-      this.calls = 0
-      this.missingNudged = true
-      return [
-        "You have made several tool calls this turn without an active task list.",
-        "If the remaining work involves several distinct steps, capture them with update_tasks before continuing; if it is a single step, carry on.",
-        "Do not mention this notice to the user.",
-      ].join("\n")
-    }
+    if (open === 0) return undefined
     if (this.staleNudges >= MAX_STALE_REMINDERS || this.calls < STALE_LIST_CALLS) return undefined
     this.calls = 0
     this.staleNudges += 1

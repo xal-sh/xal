@@ -80,8 +80,6 @@ export const webfetchTool: Tool = {
     required: ["url"],
     additionalProperties: false,
   },
-  prompt:
-    "Use webfetch to read web pages, documentation, and API references instead of curl in bash. Fetch the specific page you need rather than crawling from a landing page, and fetch independent pages in parallel calls.",
   title(args) {
     return asString(args.url) ?? ""
   },
