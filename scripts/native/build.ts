@@ -227,9 +227,9 @@ async function nativeInputs(target: NativeTarget, portable: boolean): Promise<Na
   }
 }
 
-async function run(command: string[], env?: Record<string, string | undefined>): Promise<void> {
+async function run(command: string[], env?: Record<string, string | undefined>, cwd = ROOT): Promise<void> {
   const process = Bun.spawn(command, {
-    cwd: ROOT,
+    cwd,
     env,
     stdin: "ignore",
     stdout: "inherit",
@@ -408,17 +408,21 @@ async function compile(target: NativeTarget, version: string, outfile: string): 
     await rm(STAGED_ADDON, { force: true })
     await verifyArtifactManifest(manifestPath, await nativeInputs(target, true))
     await stageArtifact(manifestPath)
-    await run([
-      process.env.XAL_BUN ?? "bun",
-      "build",
-      "--compile",
-      "--minify",
-      `--target=${target.bunTarget}`,
-      "--define",
-      `XAL_VERSION=${JSON.stringify(version)}`,
-      join(ROOT, "apps/cli/src/index.ts"),
-      `--outfile=${resolve(outfile)}`,
-    ])
+    await run(
+      [
+        process.env.XAL_BUN ?? "bun",
+        "build",
+        "--compile",
+        "--minify",
+        `--target=${target.bunTarget}`,
+        "--define",
+        `XAL_VERSION=${JSON.stringify(version)}`,
+        join(ROOT, "apps/cli/src/index.ts"),
+        `--outfile=${resolve(outfile)}`,
+      ],
+      undefined,
+      process.platform === "win32" ? dirname(process.execPath) : ROOT,
+    )
   } finally {
     try {
       await rm(STAGED_ADDON, { force: true })

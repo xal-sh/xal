@@ -24,6 +24,8 @@ The supported targets are:
 | Linux            | x64, arm64    | glibc, musl   |
 | Windows          | x64, arm64    | Native `.exe` |
 
+The musl builds require the `libgcc` and `libstdc++` runtime packages. On Alpine Linux, install them with `apk add libgcc libstdc++`.
+
 Windows installation requires a POSIX shell such as Git Bash, MSYS2, or Cygwin. Running the command in WSL installs the Linux build inside WSL.
 
 Set `XAL_INSTALL_DIR` on the shell that runs the installer to choose another destination:

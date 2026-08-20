@@ -86,7 +86,7 @@ async function main(): Promise<void> {
       throw new Error("standalone plugin redaction smoke output mismatch")
     }
   } finally {
-    await rm(directory, { recursive: true, force: true })
+    await rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
   }
 }
 

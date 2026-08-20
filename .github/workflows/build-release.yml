@@ -166,7 +166,7 @@ jobs:
             -w /smoke/project \
             alpine:3.21.3 \
             /bin/sh -eu -c '
-              apk add --no-cache coreutils util-linux >/dev/null
+              apk add --no-cache coreutils libgcc libstdc++ util-linux >/dev/null
               test "$(/xal --version)" = "$EXPECTED"
               test "$(/xal --native-self-check)" = "$EXPECTED"
               test "$(/xal native-plugin-smoke)" = "[REDACTED]"
