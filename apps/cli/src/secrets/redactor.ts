@@ -162,6 +162,11 @@ export function secretsVersion(): number {
   return version
 }
 
+export function secretMatchSnapshot(): { values: string[]; marker: string } {
+  const generation = redactor.generation()
+  return { values: [...generation.values], marker: generation.marker }
+}
+
 export function redactText(text: string): string {
   return redactor.text(text)
 }

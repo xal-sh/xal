@@ -1,8 +1,8 @@
-import { stat } from "node:fs/promises"
 import { asBoolean, asString } from "../../lib/json"
-import type { Tool } from "../../tools/types"
-import { unifiedDiff, withDiff } from "./diff"
 import { displayPath, resolveFilePath } from "../../lib/path"
+import { nativeEditFile } from "../../native"
+import type { Tool } from "../../tools/types"
+import { withDiff } from "./output"
 import { pathPermission } from "./permission"
 
 export const editTool: Tool = {
@@ -53,35 +53,23 @@ export const editTool: Tool = {
     if (oldString === newString) throw new Error("old_string and new_string are identical; nothing to change")
     const replaceAll = asBoolean(args.replace_all) ?? false
 
-    const absolute = resolveFilePath(path, ctx.cwd)
-    const stats = await stat(absolute).catch(() => undefined)
-    if (!stats) throw new Error(`File not found: ${displayPath(path, ctx.cwd)}`)
-    if (stats.isDirectory()) throw new Error(`Path is a directory, not a file: ${displayPath(path, ctx.cwd)}`)
-
-    const previous = await Bun.file(absolute).text()
-    const parts = previous.split(oldString)
-    const matches = parts.length - 1
-    if (matches === 0) {
+    const shown = displayPath(path, ctx.cwd)
+    const result = await nativeEditFile(resolveFilePath(path, ctx.cwd), oldString, newString, replaceAll)
+    if (result.kind === "notFound") throw new Error(`File not found: ${shown}`)
+    if (result.kind === "directory") throw new Error(`Path is a directory, not a file: ${shown}`)
+    if (result.kind === "noMatch") {
       throw new Error(
-        `old_string not found in ${displayPath(path, ctx.cwd)}. It must match the file text exactly, including whitespace and indentation.`,
+        `old_string not found in ${shown}. It must match the file text exactly, including whitespace and indentation.`,
       )
     }
-    if (matches > 1 && !replaceAll) {
+    if (result.kind === "ambiguous") {
       throw new Error(
-        `old_string matches ${matches} locations in ${displayPath(path, ctx.cwd)}. Add surrounding lines to make it unique, or set replace_all to true.`,
+        `old_string matches ${result.matches} locations in ${shown}. Add surrounding lines to make it unique, or set replace_all to true.`,
       )
     }
-
-    const index = previous.indexOf(oldString)
-    const next = replaceAll
-      ? parts.join(newString)
-      : previous.slice(0, index) + newString + previous.slice(index + oldString.length)
-
-    await Bun.write(absolute, next)
-
-    const diff = unifiedDiff(previous, next)
+    if (result.kind !== "updated") throw new Error(`native edit returned unexpected ${result.kind} outcome`)
     return {
-      output: withDiff(`Updated ${displayPath(path, ctx.cwd)} (+${diff.added} -${diff.removed})`, diff.hunks),
+      output: withDiff(`Updated ${shown} (+${result.added} -${result.removed})`, result.hunks),
     }
   },
 }

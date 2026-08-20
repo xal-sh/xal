@@ -9,7 +9,7 @@
     "native:ensure": "bun ../../scripts/native/build.ts ensure",
     "dev": "bun run native:ensure && bun run --watch src/index.ts",
     "test": "bun run native:ensure && bun test --isolate",
-    "release:local": "bun ../../scripts/native/build.ts compile-host $npm_package_version ../../dist/$npm_package_name && install -d \"$HOME/.local/bin\" && install -m 755 \"../../dist/$npm_package_name\" \"$HOME/.local/bin/$npm_package_name\"",
+    "release:dev": "bun ../../scripts/native/build.ts compile-host $npm_package_version ../../dist/${npm_package_name}-dev && install -d \"$HOME/.local/bin\" && install -m 755 \"../../dist/${npm_package_name}-dev\" \"$HOME/.local/bin/${npm_package_name}-dev\"",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix"

@@ -1,5 +1,5 @@
-import { dirname, sep } from "node:path"
-import { runRg } from "../../lib/rg"
+import { createNativeWorkspaceIndex, type NativeWorkspaceIndex } from "../../native"
+import { secretMatchSnapshot, secretsVersion } from "../../secrets/redactor"
 
 export interface FileQuery {
   start: number
@@ -47,50 +47,57 @@ export function fileMention(path: string, quoted: boolean): string {
   return quoted || /\s/.test(path) ? `@"${path}"` : `@${path}`
 }
 
-function workspacePaths(files: string[]): string[] {
-  const directories = new Set<string>()
-  for (const file of files) {
-    let directory = dirname(file)
-    while (directory !== ".") {
-      directories.add(`${directory}${sep}`)
-      const parent = dirname(directory)
-      if (parent === directory) break
-      directory = parent
-    }
-  }
-  return [...directories, ...files]
-}
-
 export class WorkspaceFileIndex {
   private cwd: string | undefined
-  private files: string[] | undefined
-  private pending: Promise<string[]> | undefined
-  private abort: AbortController | undefined
+  private secretVersion: number | undefined
+  private index: NativeWorkspaceIndex | undefined
+  private pending: Promise<NativeWorkspaceIndex | undefined> | undefined
+  private loadAbort: AbortController | undefined
+  private queryAbort: AbortController | undefined
   private generation = 0
 
-  load(cwd: string): Promise<string[]> {
-    if (cwd !== this.cwd) {
+  async search(cwd: string, query: string): Promise<string[] | undefined> {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const index = await this.load(cwd)
+      if (!index || cwd !== this.cwd || this.secretVersion !== secretsVersion()) continue
+      this.queryAbort?.abort()
+      const abort = new AbortController()
+      this.queryAbort = abort
+      try {
+        const result = await index.search(query, abort.signal)
+        if (this.queryAbort !== abort || result.kind === "interrupted") return undefined
+        return result.paths
+      } finally {
+        if (this.queryAbort === abort) this.queryAbort = undefined
+      }
+    }
+  }
+
+  private load(cwd: string): Promise<NativeWorkspaceIndex | undefined> {
+    const version = secretsVersion()
+    if (cwd !== this.cwd || version !== this.secretVersion) {
       this.clear()
       this.cwd = cwd
+      this.secretVersion = version
     }
-    if (this.files) return Promise.resolve(this.files)
+    if (this.index) return Promise.resolve(this.index)
     if (this.pending) return this.pending
 
     const generation = this.generation
     const abort = new AbortController()
-    this.abort = abort
-    const pending = runRg(["--files", "--hidden", "--null", "--glob", "!**/.git/**"], cwd, abort.signal, "\0").then(
-      (result) => {
-        if (result.aborted || generation !== this.generation) return []
-        this.files = workspacePaths(result.lines.filter((path) => !/[\r\n"]/.test(path)))
-        return this.files
-      },
-    )
+    const snapshot = secretMatchSnapshot()
+    this.loadAbort = abort
+    const pending = createNativeWorkspaceIndex(cwd, snapshot.values, snapshot.marker, abort.signal).then((index) => {
+      if (generation !== this.generation || version !== secretsVersion()) return undefined
+      this.index = index
+      return index
+    })
     this.pending = pending
     const settled = () => {
       if (generation !== this.generation) return
       this.pending = undefined
-      this.abort = undefined
+      this.loadAbort = undefined
+      if (version !== secretsVersion()) this.clear()
     }
     void pending.then(settled, settled)
     return pending
@@ -98,10 +105,13 @@ export class WorkspaceFileIndex {
 
   clear(): void {
     this.generation++
-    this.abort?.abort()
+    this.loadAbort?.abort()
+    this.queryAbort?.abort()
     this.cwd = undefined
-    this.files = undefined
+    this.secretVersion = undefined
+    this.index = undefined
     this.pending = undefined
-    this.abort = undefined
+    this.loadAbort = undefined
+    this.queryAbort = undefined
   }
 }

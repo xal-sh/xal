@@ -13,7 +13,7 @@
     "build:website": "bun run --cwd apps/website build",
     "deploy:website": "bun run build:website && wrangler deploy --config apps/website/wrangler.jsonc",
     "test": "turbo run test --",
-    "release:local": "turbo run release:local --filter=xal",
+    "release:dev": "turbo run release:dev --filter=xal",
     "typecheck": "turbo run typecheck",
     "lint": "turbo run lint",
     "lint:fix": "turbo run lint:fix",

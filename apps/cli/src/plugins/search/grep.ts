@@ -1,7 +1,8 @@
 import { asBoolean, asString } from "../../lib/json"
 import { displayPath } from "../../lib/path"
+import { nativeGrep } from "../../native"
 import type { Tool } from "../../tools/types"
-import { formatResults, runRg, targetArgs } from "./rg"
+import { formatResults } from "./rg"
 
 const LIMIT = 250
 
@@ -54,24 +55,28 @@ export const grepTool: Tool = {
     if (!pattern) throw new Error("pattern is required")
     const content = asString(args.output_mode) !== "files"
 
-    const argv = ["--hidden", "--glob", "!**/.git/**", "--max-columns", "500"]
-    argv.push(...(content ? ["--line-number", "--with-filename"] : ["--files-with-matches"]))
-    if (asBoolean(args.case_insensitive)) argv.push("--ignore-case")
-    const glob = asString(args.glob)
-    if (glob) argv.push("--glob", glob)
-    argv.push("-e", pattern)
-    argv.push(...targetArgs(asString(args.path), ctx.cwd))
+    if (ctx.signal.aborted) return { output: "(interrupted by user)" }
+    const result = await nativeGrep(
+      {
+        cwd: ctx.cwd,
+        target: asString(args.path),
+        glob: asString(args.glob),
+        pattern,
+        content,
+        caseInsensitive: asBoolean(args.case_insensitive) ?? false,
+      },
+      ctx.signal,
+    )
+    if (result.kind === "interrupted") return { output: "(interrupted by user)" }
+    if (result.kind === "timedOut") throw new Error("Search timed out after 30s")
+    if (result.total === 0) return { output: "No matches found" }
 
-    const { lines, aborted } = await runRg(argv, ctx.cwd, ctx.signal)
-    if (aborted) return { output: "(interrupted by user)" }
-    if (lines.length === 0) return { output: "No matches found" }
-
-    const header = content ? `Found ${lines.length} matching lines` : `Found ${lines.length} files`
+    const header = content ? `Found ${result.total} matching lines` : `Found ${result.total} files`
     return {
       output: formatResults(
         header,
-        lines,
-        LIMIT,
+        result.lines,
+        result.total,
         (shown, total) => `(Showing first ${shown} of ${total}. Narrow your pattern or path.)`,
       ),
     }

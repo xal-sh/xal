@@ -14,7 +14,7 @@ import { skillQuery, type SkillQuery } from "../../../skills/references"
 import { listSkills } from "../../../skills/registry"
 import type { Skill } from "../../../skills/types"
 import { fileQuery, type FileQuery, WorkspaceFileIndex } from "../file-search"
-import { fuzzyScore } from "../lib/fuzzy"
+import { fuzzyScores } from "../lib/fuzzy"
 import { column, label, row } from "../lib/renderables"
 import { displayWidth, truncateToWidth } from "../lib/text"
 import { COLORS } from "../theme/colors"
@@ -25,7 +25,6 @@ export const PALETTE_CHROME_ROWS = 3
 const MAX_ROWS = 6
 const MAX_FILE_RESULTS = 20
 const NAME_WIDTH = 22
-const BASENAME_WEIGHT = 1.5
 const TICKER_INTERVAL_MS = 120
 const TICKER_PAUSE_FRAMES = 8
 
@@ -49,10 +48,14 @@ interface CompletionPaletteActions {
 }
 
 function skillCompletions(query: string): Completion[] {
-  return listSkills()
-    .filter((skill) => redactText(skill.name) === skill.name)
-    .flatMap((skill) => {
-      const rank = fuzzyScore(query, [{ text: skill.name, weight: 1 }])
+  const skills = listSkills().filter((skill) => redactText(skill.name) === skill.name)
+  const scores = fuzzyScores(
+    query,
+    skills.map((skill) => [{ text: skill.name, weight: 1 }]),
+  )
+  return skills
+    .flatMap((skill, index) => {
+      const rank = scores[index]
       return rank === undefined ? [] : [{ skill, rank }]
     })
     .sort((left, right) => right.rank - left.rank || left.skill.name.localeCompare(right.skill.name))
@@ -72,48 +75,6 @@ function commandCompletions(value: string, cursor: number): Completion[] | undef
         [command.name, ...(command.aliases ?? [])].some((name) => name.toLowerCase().includes(needle)),
     )
     .map((command) => ({ kind: "command", command }))
-}
-
-interface RankedFile {
-  path: string
-  rank: number
-}
-
-function rankFile(query: string, path: string): RankedFile | undefined {
-  if (redactText(path) !== path) return undefined
-  const rank = fuzzyScore(query, [
-    { text: path, weight: 1 },
-    { text: basename(path), weight: BASENAME_WEIGHT },
-  ])
-  return rank === undefined ? undefined : { path, rank }
-}
-
-function compareFiles(left: RankedFile, right: RankedFile): number {
-  return right.rank - left.rank || left.path.localeCompare(right.path)
-}
-
-async function fileCompletions(
-  query: string,
-  files: string[],
-  current: () => boolean,
-): Promise<Completion[] | undefined> {
-  const matches: RankedFile[] = []
-
-  for (const [position, path] of files.entries()) {
-    const match = rankFile(query, path)
-    const worst = matches.at(-1)
-    if (match && (!worst || matches.length < MAX_FILE_RESULTS || compareFiles(match, worst) < 0)) {
-      const index = matches.findIndex((existing) => compareFiles(match, existing) < 0)
-      if (index < 0) matches.push(match)
-      else matches.splice(index, 0, match)
-      if (matches.length > MAX_FILE_RESULTS) matches.pop()
-    }
-    if ((position + 1) % 2_000 !== 0) continue
-    await new Promise<void>((resolve) => setImmediate(resolve))
-    if (!current()) return undefined
-  }
-
-  return matches.map(({ path }) => ({ kind: "file", path }))
 }
 
 function completionText(entry: Completion): { name: string; description: string } {
@@ -274,12 +235,11 @@ export class CompletionPalette {
     const request = ++this.fileRequest
 
     void this.fileIndex
-      .load(this.workingDirectory)
-      .then(async (files) => {
-        const current = () => request === this.fileRequest && this.activeFileQuery === query
-        if (!current()) return
-        const entries = await fileCompletions(query.query, files, current)
-        if (!entries || !current()) return
+      .search(this.workingDirectory, query.query)
+      .then((paths) => {
+        const current = request === this.fileRequest && this.activeFileQuery === query
+        if (!paths || !current) return
+        const entries: Completion[] = paths.slice(0, MAX_FILE_RESULTS).map((path) => ({ kind: "file", path }))
         if (entries.length === 0) {
           this.hide()
           return

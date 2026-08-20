@@ -13,7 +13,7 @@
       "cache": false,
       "outputs": []
     },
-    "release:local": {
+    "release:dev": {
       "cache": false
     },
     "typecheck": {

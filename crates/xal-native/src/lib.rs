@@ -1,4 +1,8 @@
+mod diff;
+mod file_tools;
+mod fuzzy;
 mod redactor;
+mod search;
 
 use napi::bindgen_prelude::Utf16String;
 use napi::{Error, Status};
@@ -7,7 +11,7 @@ use redactor::SecretMatcher;
 
 #[napi(js_name = "apiVersion", catch_unwind)]
 pub fn api_version() -> u32 {
-    1
+    2
 }
 
 #[napi]

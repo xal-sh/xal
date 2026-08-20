@@ -8,7 +8,7 @@ import {
   type TextRenderable,
 } from "@opentui/core"
 import type { SelectOption } from "../../../commands/types"
-import { fuzzyScore } from "../lib/fuzzy"
+import { fuzzyScores } from "../lib/fuzzy"
 import { column, label, row } from "../lib/renderables"
 import { displayWidth, terminalGlyph, truncateToWidth } from "../lib/text"
 import { COLORS } from "../theme/colors"
@@ -19,17 +19,17 @@ const MAX_ROWS = 8
 const MAX_LABEL_WIDTH = 44
 const DETAIL_WEIGHT = 0.4
 
-function score(option: SelectOption<unknown>, query: string): number | undefined {
-  return fuzzyScore(query, [
-    { text: option.label, weight: 1 },
-    { text: `${option.detail} ${option.note ?? ""}`, weight: DETAIL_WEIGHT },
-  ])
-}
-
 function rank(options: SelectOption<unknown>[], query: string): number[] {
+  const scores = fuzzyScores(
+    query,
+    options.map((option) => [
+      { text: option.label, weight: 1 },
+      { text: `${option.detail} ${option.note ?? ""}`, weight: DETAIL_WEIGHT },
+    ]),
+  )
   return options
-    .flatMap((option, index) => {
-      const value = score(option, query)
+    .flatMap((_, index) => {
+      const value = scores[index]
       return value === undefined ? [] : [{ index, value }]
     })
     .sort((left, right) => right.value - left.value || left.index - right.index)

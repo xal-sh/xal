@@ -1,4 +1,13 @@
-import { createNativeSecretMatcher } from "../../apps/cli/src/native/index"
+import { mkdtemp, rm, utimes, writeFile } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { basename, join } from "node:path"
+import {
+  createNativePathRanker,
+  createNativeSecretMatcher,
+  nativeEditFile,
+  nativeGlob,
+  nativeReadFile,
+} from "../../apps/cli/src/native/index"
 import { createRedactedStream, replaceSecretValues } from "../../apps/cli/src/secrets/redactor"
 
 const MARKER = "[REDACTED]"
@@ -134,3 +143,186 @@ console.log(JSON.stringify({ small, large, streaming }, null, 2))
 if (small.native > small.legacy * 1.1) throw new Error("native small-case matcher regression exceeds 10 percent")
 if (large.speedup < 3) throw new Error("native large matcher speedup is below 3x")
 if (streaming.speedup < 2) throw new Error("native streaming speedup is below 2x")
+
+const FUZZY_SEPARATORS = new Set([" ", "\t", "-", "_", ".", "/", "\\", ":", "@", ",", "(", ")", "[", "]", "|"])
+
+interface LegacyCompact {
+  chars: string
+  boundary: boolean[]
+}
+
+function legacyCompact(text: string): LegacyCompact {
+  const chars: string[] = []
+  const boundary: boolean[] = []
+  let previous: string | undefined
+  let afterSeparator = true
+  for (const character of text) {
+    if (FUZZY_SEPARATORS.has(character)) {
+      afterSeparator = true
+      continue
+    }
+    const lower = character.toLowerCase()
+    const camel = character !== lower && previous !== undefined && previous === previous.toLowerCase()
+    const digitShift = previous !== undefined && /[0-9]/.test(character) !== /[0-9]/.test(previous)
+    chars.push(lower)
+    boundary.push(afterSeparator || camel || digitShift)
+    previous = character
+    afterSeparator = false
+  }
+  return { chars: chars.join(""), boundary }
+}
+
+function legacyTermScore(term: string, candidate: LegacyCompact): number | undefined {
+  let end = 0
+  for (const character of term) {
+    const found = candidate.chars.indexOf(character, end)
+    if (found < 0) return undefined
+    end = found + 1
+  }
+  let start = end
+  for (let position = term.length - 1; position >= 0; position--) {
+    start = candidate.chars.lastIndexOf(term[position]!, start - 1)
+  }
+  const gaps = end - start - term.length
+  if (gaps > term.length * 2 + 4) return undefined
+  let score = term.length - gaps - start * 0.2 - candidate.chars.length * 0.05
+  let cursor = start
+  let previous = -1
+  for (const character of term) {
+    const at = candidate.chars.indexOf(character, cursor)
+    if (at === previous + 1 && previous >= 0) score += 8
+    else if (candidate.boundary[at]) score += 6
+    cursor = at + 1
+    previous = at
+  }
+  if (start === 0) score += 12
+  if (term.length === candidate.chars.length) score += 20
+  return score
+}
+
+function legacyFuzzyScore(query: string, fields: { text: string; weight: number }[]): number | undefined {
+  const terms = query
+    .split(/\s+/)
+    .map((term) => legacyCompact(term).chars)
+    .filter(Boolean)
+  if (terms.length === 0) return 0
+  const candidates = fields.map((field) => ({ compact: legacyCompact(field.text), weight: field.weight }))
+  let total = 0
+  for (const term of terms) {
+    let best: number | undefined
+    for (const candidate of candidates) {
+      const score = legacyTermScore(term, candidate.compact)
+      if (score === undefined) continue
+      const weighted = score * candidate.weight
+      if (best === undefined || weighted > best) best = weighted
+    }
+    if (best === undefined) return undefined
+    total += best
+  }
+  return total
+}
+
+function rankedPaths(paths: string[], scores: (number | undefined)[]): string[] {
+  return paths
+    .flatMap((path, index) => {
+      const score = scores[index]
+      return score === undefined ? [] : [{ path, score }]
+    })
+    .sort((left, right) => right.score - left.score || left.path.localeCompare(right.path))
+    .slice(0, 20)
+    .map((entry) => entry.path)
+}
+
+function fuzzyMeasure(size: number, repeats: number): { legacy: number; native: number; speedup: number } {
+  const paths = Array.from(
+    { length: size },
+    (_, index) =>
+      `src/group-${String(index % 97).padStart(2, "0")}/component-${String(index).padStart(5, "0")}/file-${index}.ts`,
+  )
+  const candidates = paths.map((path) => ({
+    fields: [
+      { text: path, weight: 1 },
+      { text: basename(path), weight: 1.5 },
+    ],
+  }))
+  const query = "component 49"
+  const ranker = createNativePathRanker(paths)
+  const legacyOperation = () =>
+    rankedPaths(
+      paths,
+      candidates.map((candidate) => legacyFuzzyScore(query, candidate.fields)),
+    )
+  const nativeOperation = () => ranker.rank(query, 20)
+  if (JSON.stringify(legacyOperation()) !== JSON.stringify(nativeOperation())) {
+    throw new Error("native fuzzy benchmark output mismatch")
+  }
+  let sink = 0
+  const legacy = median(() => {
+    for (let index = 0; index < repeats; index++) sink += legacyOperation().length
+  }, 7)
+  const native = median(() => {
+    for (let index = 0; index < repeats; index++) sink += nativeOperation().length
+  }, 7)
+  if (sink === 0) throw new Error("native fuzzy benchmark did not produce output")
+  return { legacy, native, speedup: legacy / native }
+}
+
+const fuzzySmall = fuzzyMeasure(100, 100)
+const fuzzyLarge = fuzzyMeasure(50_000, 1)
+console.log(JSON.stringify({ fuzzySmall, fuzzyLarge }, null, 2))
+if (fuzzySmall.native > fuzzySmall.legacy * 1.1) {
+  throw new Error("native fuzzy small-case regression exceeds 10 percent")
+}
+if (fuzzyLarge.speedup < 3) throw new Error("native large fuzzy speedup is below 3x")
+
+async function nativeIoBenchmarks(): Promise<void> {
+  const workspace = await mkdtemp(join(tmpdir(), "xal-native-benchmark-"))
+  try {
+    for (let index = 0; index < 150; index++) {
+      const path = join(workspace, `glob-${String(index).padStart(3, "0")}.txt`)
+      await writeFile(path, String(index))
+      await utimes(path, index + 1, index + 1)
+    }
+    const globStart = performance.now()
+    const glob = await nativeGlob({ cwd: workspace, pattern: "*.txt" })
+    const globMs = performance.now() - globStart
+    if (glob.kind !== "completed" || glob.total !== 150 || glob.lines.length !== 100) {
+      throw new Error("native glob benchmark output mismatch")
+    }
+
+    const largePath = join(workspace, "large-read.txt")
+    const largeText = `${"ordinary line 猫 🔐\n".repeat(20_000)}unique-edit-target\n`
+    await writeFile(largePath, largeText)
+    const readStart = performance.now()
+    const read = await nativeReadFile(largePath, 1, 2000)
+    const readMs = performance.now() - readStart
+    if (read.kind !== "completed" || !read.text.includes("Use offset=") || read.text.length > 51_000) {
+      throw new Error("native read benchmark output mismatch")
+    }
+    const editStart = performance.now()
+    const edit = await nativeEditFile(largePath, "unique-edit-target", "updated-edit-target", false)
+    const editMs = performance.now() - editStart
+    if (
+      edit.kind !== "updated" ||
+      edit.matches !== 1 ||
+      (await Bun.file(largePath).text()) !== largeText.replace("unique-edit-target", "updated-edit-target")
+    ) {
+      throw new Error("native edit benchmark output mismatch")
+    }
+    console.log(
+      JSON.stringify(
+        {
+          glob: { milliseconds: globMs, total: glob.total, retained: glob.lines.length },
+          read: { milliseconds: readMs },
+          edit: { milliseconds: editMs },
+        },
+        null,
+        2,
+      ),
+    )
+  } finally {
+    await rm(workspace, { recursive: true, force: true })
+  }
+}
+
+await nativeIoBenchmarks()
