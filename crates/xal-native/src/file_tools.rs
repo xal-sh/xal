@@ -189,6 +189,9 @@ pub fn native_read_file(path: String, offset: u32, limit: u32) -> AsyncTask<Read
 }
 
 fn match_positions(haystack: &[u16], needle: &[u16]) -> Vec<usize> {
+    if needle.is_empty() {
+        return Vec::new();
+    }
     let mut positions = Vec::new();
     let mut cursor = 0;
     while cursor + needle.len() <= haystack.len() {
@@ -243,8 +246,8 @@ impl Task for EditTask {
         if metadata.is_dir() {
             return Ok(file_kind("directory"));
         }
-        let previous_text =
-            String::from_utf8_lossy(&fs::read(&self.path).map_err(io_error)?).into_owned();
+        let previous_text = String::from_utf8(fs::read(&self.path).map_err(io_error)?)
+            .map_err(|error| Error::new(Status::InvalidArg, error.to_string()))?;
         let previous = previous_text.encode_utf16().collect::<Vec<_>>();
         let positions = match_positions(&previous, &self.old);
         let matches = u32::try_from(positions.len()).unwrap_or(u32::MAX);
@@ -284,13 +287,19 @@ pub fn native_edit_file(
     old: Utf16String,
     new: Utf16String,
     replace_all: bool,
-) -> AsyncTask<EditTask> {
-    AsyncTask::new(EditTask {
+) -> napi::Result<AsyncTask<EditTask>> {
+    if old.is_empty() {
+        return Err(Error::new(
+            Status::InvalidArg,
+            "old string must be non-empty".to_owned(),
+        ));
+    }
+    Ok(AsyncTask::new(EditTask {
         path: PathBuf::from(path),
         old: old.to_vec(),
         new: new.to_vec(),
         replace_all,
-    })
+    }))
 }
 
 pub struct WriteTask {
@@ -370,5 +379,6 @@ mod tests {
             replace_matches(&previous, &old, &units("next"), &positions, true),
             units("next next next")
         );
+        assert!(match_positions(&previous, &[]).is_empty());
     }
 }

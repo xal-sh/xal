@@ -80,8 +80,10 @@ fn compact(text: &str) -> Compact {
         });
         let digit_shift =
             previous.is_some_and(|previous| is_digit(character) != is_digit(previous));
-        chars.extend(lower.encode_utf16());
-        boundary.push(after_separator || camel || digit_shift);
+        for (index, unit) in lower.encode_utf16().enumerate() {
+            chars.push(unit);
+            boundary.push(index == 0 && (after_separator || camel || digit_shift));
+        }
         previous = Some(character);
         after_separator = false;
     }
@@ -492,6 +494,9 @@ mod tests {
         assert!(score("猫", vec![("src/猫.rs", 1.0)]).is_some());
         assert!(score("🔐", vec![("src/🔐.rs", 1.0)]).is_none());
         assert_eq!(score("  ", vec![("anything", 1.0)]), Some(0.0));
+        let expanded = compact("İ/A");
+        assert_eq!(expanded.chars.len(), expanded.boundary.len());
+        assert_eq!(expanded.boundary, vec![true, false, true]);
         assert!(compare_paths("apps", "Cargo").is_lt());
         assert!(compare_paths("a", "A").is_lt());
     }

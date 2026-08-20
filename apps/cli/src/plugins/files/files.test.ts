@@ -3,7 +3,7 @@ import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/pr
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { appInfo } from "../../app-info"
-import { nativeUnifiedDiff } from "../../native"
+import { nativeEditFile, nativeUnifiedDiff } from "../../native"
 import type { ToolExecutionContext } from "../../tools/types"
 import { editTool } from "./edit"
 import { readTool } from "./read"
@@ -108,6 +108,22 @@ test("edit reports missing paths and exact no-match failures without mutation", 
       "old_string not found in present.txt. It must match the file text exactly, including whitespace and indentation.",
     )
     expect(await readFile(path, "utf8")).toBe("present\n")
+  })
+})
+
+test("edit rejects empty matches and invalid UTF-8 without modifying the file", async () => {
+  await withWorkspace(async (workspace) => {
+    await expect(nativeEditFile(join(workspace, "missing.txt"), "", "new", false)).rejects.toThrow(
+      "old string must be non-empty",
+    )
+    const path = join(workspace, "invalid-utf8.txt")
+    const bytes = [0xff, 0xfe, 0xfd]
+    await writeFile(path, Uint8Array.from(bytes))
+
+    await expect(
+      editTool.execute({ file_path: "invalid-utf8.txt", old_string: "old", new_string: "new" }, context(workspace)),
+    ).rejects.toThrow("invalid utf-8")
+    expect(Array.from(await readFile(path))).toEqual(bytes)
   })
 })
 

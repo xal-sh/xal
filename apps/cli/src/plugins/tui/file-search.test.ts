@@ -18,7 +18,9 @@ test("workspace index ranks files and directories without exposing secret paths"
     await writeFile(join(workspace, "Cargo.toml"), "cargo")
     await writeFile(join(workspace, "src", "nested", "visible-file.ts"), "visible")
     await writeFile(join(workspace, "src", "credential-secret.ts"), "secret")
-    await writeFile(join(workspace, "src", 'not"representable.ts'), "quote")
+    if (process.platform !== "win32") {
+      await writeFile(join(workspace, "src", 'not"representable.ts'), "quote")
+    }
     replaceSecretValues("workspace-index-test", ["credential-secret"])
 
     expect(await index.search(workspace, "visible")).toEqual([`src${sep}nested${sep}visible-file.ts`])

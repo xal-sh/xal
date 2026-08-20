@@ -8,13 +8,13 @@ const LIMIT = 250
 
 export const grepTool: Tool = {
   name: "grep",
-  description: `Search file contents with a regular expression using ripgrep. Respects .gitignore. Returns matching file paths, or matching lines with file and line numbers in content mode. Shows at most ${LIMIT} results; the footer says how many were left out.`,
+  description: `Search file contents with a regular expression. Respects .gitignore. Returns matching file paths, or matching lines with file and line numbers in content mode. Shows at most ${LIMIT} results; the footer says how many were left out.`,
   parameters: {
     type: "object",
     properties: {
       pattern: {
         type: "string",
-        description: 'Regular expression to search for, in ripgrep syntax, e.g. "fn run" or "log.*error"',
+        description: 'Regular expression to search for, using Rust regex syntax, e.g. "fn run" or "log.*error"',
       },
       path: {
         type: "string",
