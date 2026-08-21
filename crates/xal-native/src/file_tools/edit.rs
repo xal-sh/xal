@@ -143,11 +143,7 @@ pub fn native_edit_file(request: NativeEditRequest) -> napi::Result<AsyncTask<Ed
 
 #[cfg(test)]
 mod tests {
-    use super::{match_positions, replace_matches};
-
-    fn units(value: &str) -> Vec<u16> {
-        value.encode_utf16().collect()
-    }
+    use super::{match_positions, replace_matches, units};
 
     #[test]
     fn counts_non_overlapping_utf16_matches() {

@@ -82,6 +82,11 @@ fn with_diff(header: String, hunks: &[u16]) -> Vec<u16> {
     output
 }
 
+#[cfg(test)]
+fn units(value: &str) -> Vec<u16> {
+    value.encode_utf16().collect()
+}
+
 #[napi(js_name = "nativeUnifiedDiff", catch_unwind)]
 pub fn native_unified_diff(old_text: Utf16String, new_text: Utf16String) -> NativeDiffResult {
     unified_diff(&old_text, &new_text).into()

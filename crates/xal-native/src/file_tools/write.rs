@@ -84,11 +84,7 @@ mod tests {
 
     use napi::Task;
 
-    use super::WriteTask;
-
-    fn units(value: &str) -> Vec<u16> {
-        value.encode_utf16().collect()
-    }
+    use super::{WriteTask, units};
 
     #[test]
     fn rejects_non_utf8_files_in_write_comparisons() {
