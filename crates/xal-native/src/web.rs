@@ -66,7 +66,7 @@ fn internal_address(address: IpAddr) -> bool {
                 || address.is_unicast_link_local()
                 || address.is_multicast()
                 || address
-                    .to_ipv4_mapped()
+                    .to_ipv4()
                     .is_some_and(|address| internal_address(IpAddr::V4(address)))
         }
     }
@@ -374,4 +374,15 @@ pub fn native_web_fetch(
 #[napi(js_name = "nativeHtmlToMarkdown", catch_unwind)]
 pub fn native_html_to_markdown(html: String) -> String {
     html_to_markdown(html)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::internal_address;
+
+    #[test]
+    fn blocks_ipv4_compatible_internal_ipv6_addresses() {
+        assert!(internal_address("::127.0.0.1".parse().unwrap()));
+        assert!(internal_address("::10.0.0.1".parse().unwrap()));
+    }
 }
