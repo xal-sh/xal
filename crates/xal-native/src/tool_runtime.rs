@@ -11,8 +11,6 @@ const MAX_MESSAGE_LENGTH: usize = 20_000;
 const MAX_CONTEXT_LENGTH: usize = 20_000;
 const MAX_TASK_LENGTH: usize = 20_000;
 const MAX_BATCH_TASKS: usize = 8;
-const MAX_TRACKED_TASKS: usize = 20;
-const MAX_TRACKED_STEP_LENGTH: usize = 160;
 const MAX_PLAN_LENGTH: usize = 50_000;
 
 fn invalid(message: impl Into<String>) -> Error {
@@ -626,59 +624,42 @@ fn task_finalize(value: &Value) -> napi::Result<Value> {
     )
 }
 
-fn update_tasks(value: &Value) -> napi::Result<Value> {
+fn update_plan(value: &Value) -> napi::Result<Value> {
     let request = object(value)?;
-    let values = request.get("tasks").and_then(Value::as_array).ok_or_else(|| invalid(format!("tasks must contain up to {MAX_TRACKED_TASKS} unique steps of at most {MAX_TRACKED_STEP_LENGTH} characters, with no more than one in progress")))?;
-    let failure = || {
-        invalid(format!(
-            "tasks must contain up to {MAX_TRACKED_TASKS} unique steps of at most {MAX_TRACKED_STEP_LENGTH} characters, with no more than one in progress"
-        ))
+    if request
+        .keys()
+        .any(|key| !matches!(key.as_str(), "explanation" | "plan"))
+    {
+        return Err(invalid("failed to parse function arguments"));
+    }
+    let explanation = match request.get("explanation") {
+        Some(Value::String(explanation)) => Some(explanation.clone()),
+        Some(Value::Null) | None => None,
+        Some(_) => return Err(invalid("failed to parse function arguments")),
     };
-    if values.len() > MAX_TRACKED_TASKS {
-        return Err(failure());
-    }
-    let mut tasks = Vec::with_capacity(values.len());
-    let mut steps = HashSet::new();
-    let mut active = 0;
+    let values = request
+        .get("plan")
+        .and_then(Value::as_array)
+        .ok_or_else(|| invalid("failed to parse function arguments"))?;
+    let mut plan = Vec::with_capacity(values.len());
     for value in values {
-        let task = value.as_object().ok_or_else(&failure)?;
-        let step = string(task, "step")
-            .map(str::trim)
-            .filter(|step| !step.is_empty())
-            .ok_or_else(&failure)?;
-        if utf16_len(step) > MAX_TRACKED_STEP_LENGTH || !steps.insert(step.to_ascii_lowercase()) {
-            return Err(failure());
+        let item = object(value)?;
+        if item
+            .keys()
+            .any(|key| !matches!(key.as_str(), "step" | "status"))
+        {
+            return Err(invalid("failed to parse function arguments"));
         }
-        let status = string(task, "status").ok_or_else(&failure)?;
+        let step =
+            string(item, "step").ok_or_else(|| invalid("failed to parse function arguments"))?;
+        let status =
+            string(item, "status").ok_or_else(|| invalid("failed to parse function arguments"))?;
         if !matches!(status, "pending" | "in_progress" | "completed") {
-            return Err(failure());
+            return Err(invalid("failed to parse function arguments"));
         }
-        if status == "in_progress" {
-            active += 1;
-        }
-        tasks.push(json!({ "step": step, "status": status }));
+        plan.push(json!({ "step": step, "status": status }));
     }
-    if active > 1 {
-        return Err(failure());
-    }
-    let output = format!(
-        "{{\"tasks\":[{}]}}",
-        tasks
-            .iter()
-            .map(|task| {
-                let task = task
-                    .as_object()
-                    .ok_or_else(|| invalid("native task list is invalid"))?;
-                let step = serde_json::to_string(string(task, "step").unwrap_or_default())
-                    .map_err(|error| invalid(error.to_string()))?;
-                let status = serde_json::to_string(string(task, "status").unwrap_or_default())
-                    .map_err(|error| invalid(error.to_string()))?;
-                Ok(format!("{{\"step\":{step},\"status\":{status}}}"))
-            })
-            .collect::<napi::Result<Vec<_>>>()?
-            .join(",")
-    );
-    Ok(json!({ "output": output, "tasks": tasks }))
+    Ok(json!({ "explanation": explanation, "plan": plan, "output": "Plan updated" }))
 }
 
 fn request_input_prepare(value: &Value) -> napi::Result<Value> {
@@ -993,8 +974,8 @@ impl NativeToolRuntime {
         run(request, task_finalize)
     }
     #[napi(catch_unwind)]
-    pub fn update_tasks(&self, request: String) -> napi::Result<String> {
-        run(request, update_tasks)
+    pub fn update_plan(&self, request: String) -> napi::Result<String> {
+        run(request, update_plan)
     }
     #[napi(catch_unwind)]
     pub fn request_input_prepare(&self, request: String) -> napi::Result<String> {
@@ -1025,7 +1006,7 @@ impl NativeToolRuntime {
 #[cfg(test)]
 mod tests {
     use super::{
-        memory_prepare, request_input_prepare, run, task_finalize, task_prepare, update_tasks,
+        memory_prepare, request_input_prepare, run, task_finalize, task_prepare, update_plan,
     };
 
     #[test]
@@ -1063,18 +1044,21 @@ mod tests {
     }
 
     #[test]
-    fn validates_questions_and_tracked_tasks() {
+    fn validates_questions_and_task_plans() {
         let question = run(
             r#"{"questions":[{"id":"choice","header":"Choice","question":"Choose","options":[{"label":"One","description":"First"}]}]}"#.to_owned(),
             request_input_prepare,
         )
         .unwrap();
         assert!(question.contains("choice"));
-        let tasks = run(
-            r#"{"tasks":[{"step":"work","status":"in_progress"}]}"#.to_owned(),
-            update_tasks,
+        let plan = run(
+            r#"{"explanation":"Starting work","plan":[{"step":"work","status":"in_progress"}]}"#
+                .to_owned(),
+            update_plan,
         )
         .unwrap();
-        assert!(!tasks.contains("task_list_updated"));
+        assert!(plan.contains("Plan updated"));
+        assert!(plan.contains("Starting work"));
+        assert!(run(r#"{"plan":[],"tasks":[]}"#.to_owned(), update_plan,).is_err());
     }
 }

@@ -83,6 +83,7 @@ export class AgentEventController {
     switch (event.type) {
       case "task_list_updated":
         this.screen.taskList.set(event.tasks)
+        if (event.explanation?.trim()) scrollback.append({ kind: "info", text: event.explanation })
         break
       case "goal_updated": {
         if (event.goal.id !== this.goalId) this.goalEvaluatedTurns = 0

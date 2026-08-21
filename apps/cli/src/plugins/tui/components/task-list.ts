@@ -36,7 +36,7 @@ export class TaskList {
   ) {
     this.view = column(ctx, { visible: false })
     const header = row(ctx, { height: 1, alignItems: "center" })
-    header.add(label(ctx, { content: "Tasks", color: COLORS.accent, flexGrow: 1 }))
+    header.add(label(ctx, { content: "Plan", color: COLORS.accent, flexGrow: 1 }))
     this.progress = label(ctx, { content: "", color: COLORS.faint, flexShrink: 0 })
     header.add(this.progress)
     this.view.add(header)

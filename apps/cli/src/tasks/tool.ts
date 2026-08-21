@@ -1,49 +1,60 @@
-import { MAX_TASKS, MAX_TASK_STEP_LENGTH, parseTaskList } from "./types"
-import type { Tool } from "../tools/types"
+import { parseTaskList } from "./types"
+import type { SessionTool } from "../tools/types"
 import { nativeToolRecord, nativeToolString } from "../native/tool-runtime"
 
-export const updateTasksTool: Tool = {
-  name: "update_tasks",
-  description:
-    "Replace the session task list with an ordered set of pending, in-progress, and completed steps. The list is shown to the user to track progress. Send an empty list to clear it.",
+export const updatePlanTool: SessionTool = {
+  name: "update_plan",
+  description: [
+    "Updates the task plan.",
+    "Provide an optional explanation and a list of plan items, each with a step and status.",
+    "At most one step can be in_progress at a time.",
+  ].join("\n"),
   parameters: {
     type: "object",
     properties: {
-      tasks: {
+      explanation: {
+        type: "string",
+        description: "Optional explanation for this plan update.",
+      },
+      plan: {
         type: "array",
-        maxItems: MAX_TASKS,
+        description: "The list of steps",
         items: {
           type: "object",
           properties: {
-            step: { type: "string", minLength: 1, maxLength: MAX_TASK_STEP_LENGTH },
-            status: { type: "string", enum: ["pending", "in_progress", "completed"] },
+            step: { type: "string", description: "Task step text." },
+            status: {
+              type: "string",
+              enum: ["pending", "in_progress", "completed"],
+              description: "Step status.",
+            },
           },
           required: ["step", "status"],
           additionalProperties: false,
         },
       },
     },
-    required: ["tasks"],
+    required: ["plan"],
     additionalProperties: false,
   },
-  title(args) {
-    const count = Array.isArray(args.tasks) ? args.tasks.length : 0
-    if (count === 0) return "Clear task list"
-    return `Update ${count} ${count === 1 ? "task" : "tasks"}`
-  },
-  available(ctx) {
-    return ctx.kind === "primary"
+  title() {
+    return "Update plan"
   },
   readOnly() {
     return true
   },
-  async execute(args) {
-    const result = nativeToolRecord("update_tasks", args)
-    const tasks = parseTaskList(result.tasks)
-    if (!tasks) throw new Error("native update_tasks returned an invalid value")
+  sessionAware: true,
+  async execute(args, ctx) {
+    if (ctx.session.mode === "plan") {
+      throw new Error("update_plan is a TODO/checklist tool and is not allowed in Plan mode")
+    }
+    const result = nativeToolRecord("update_plan", args)
+    const tasks = parseTaskList(result.plan)
+    if (!tasks) throw new Error("native update_plan returned an invalid value")
+    const explanation = typeof result.explanation === "string" ? result.explanation : undefined
     return {
-      output: nativeToolString(result, "output", "update_tasks"),
-      events: [{ type: "task_list_updated", tasks }],
+      output: nativeToolString(result, "output", "update_plan"),
+      events: [{ type: "task_list_updated", tasks, ...(explanation === undefined ? {} : { explanation }) }],
     }
   },
 }

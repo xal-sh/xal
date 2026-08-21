@@ -194,8 +194,9 @@ function parseEvent(raw: unknown): AgentEvent | undefined {
     }
     case "task_list_updated": {
       const tasks = parseTaskList(raw.tasks)
+      const explanation = asString(raw.explanation)
       if (!tasks) return undefined
-      return { type: "task_list_updated", tasks }
+      return { type: "task_list_updated", tasks, ...(explanation === undefined ? {} : { explanation }) }
     }
     case "plan_updated": {
       const plan = parseSessionPlan(raw.plan)

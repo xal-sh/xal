@@ -4,7 +4,7 @@ import { registerTool, unregisterTool } from "../../tools/registry"
 import type { Tool } from "../../tools/types"
 import { ProviderError } from "../../providers/errors"
 import type { Usage } from "../../providers/types"
-import { updateTasksTool } from "../../tasks/tool"
+import { updatePlanTool } from "../../tasks/tool"
 import type { AgentEvent } from "../events"
 import {
   completedRound,
@@ -172,7 +172,7 @@ describe("AgentSession", () => {
     }
   })
 
-  test("continues after completed task bookkeeping to deliver the final response", async () => {
+  test("continues after a completed plan update to deliver the final response", async () => {
     const progress = "The review is complete and two blockers were found."
     const tasks = [
       { step: "Review the diff", status: "completed" },
@@ -184,7 +184,7 @@ describe("AgentSession", () => {
         { type: "item_done", item: { type: "assistant_message", text: progress } },
         {
           type: "item_done",
-          item: { type: "tool_call", callId: "complete-tasks", name: updateTasksTool.name, args: { tasks } },
+          item: { type: "tool_call", callId: "complete-tasks", name: updatePlanTool.name, args: { plan: tasks } },
         },
         { type: "done" },
       ]),
@@ -192,7 +192,7 @@ describe("AgentSession", () => {
     ])
     const session = harness.createSession(provider)
 
-    registerTool(updateTasksTool)
+    registerTool(updatePlanTool)
     try {
       const outcome = await runSettledTurn(session, { text: "Review these changes", images: [] })
 
@@ -205,11 +205,11 @@ describe("AgentSession", () => {
       expect(provider.requests).toHaveLength(2)
       expect(provider.requests[1]?.input.slice(-3)).toEqual([
         { type: "assistant_message", text: progress },
-        { type: "tool_call", callId: "complete-tasks", name: updateTasksTool.name, args: { tasks } },
-        { type: "tool_result", callId: "complete-tasks", output: JSON.stringify({ tasks }) },
+        { type: "tool_call", callId: "complete-tasks", name: updatePlanTool.name, args: { plan: tasks } },
+        { type: "tool_result", callId: "complete-tasks", output: "Plan updated" },
       ])
     } finally {
-      unregisterTool(updateTasksTool)
+      unregisterTool(updatePlanTool)
     }
   })
 
