@@ -15,6 +15,7 @@ export async function loadDocuments(): Promise<Document[]> {
       "plugins",
       "commands-and-skills",
       "goals",
+      "scheduler",
       "background-work",
     ].map((slug, index) => [slug, index]),
   )

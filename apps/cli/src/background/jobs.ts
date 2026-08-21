@@ -67,6 +67,13 @@ export interface BackgroundAgentControls {
   send(message: string, source: JobSendSource): boolean
 }
 
+export interface BackgroundScheduleJob extends BackgroundJobBase {
+  kind: "schedule"
+  durationMs: number
+  dueAt: number
+  outcome?: "completed" | "activity" | "canceled" | "interrupted"
+}
+
 export interface BackgroundAgentJob extends BackgroundJobBase {
   kind: "agent"
   task: string
@@ -85,7 +92,7 @@ export interface BackgroundAgentJob extends BackgroundJobBase {
   send(message: string, source: JobSendSource): boolean
 }
 
-export type BackgroundJob = BackgroundProcessJob | BackgroundAgentJob
+export type BackgroundJob = BackgroundProcessJob | BackgroundAgentJob | BackgroundScheduleJob
 
 export type CollectedAgentOutcome = BackgroundAgentOutcome | { status: "already_collected" }
 
@@ -195,6 +202,19 @@ export function createProcessJob(
     kill,
   }
   registerJob(job, created.complete)
+  return job
+}
+
+export function createScheduleJob(ownerId: string, durationMs: number, stop: () => void): BackgroundScheduleJob {
+  const created = createBase("schedule", ownerId, stop)
+  const job: BackgroundScheduleJob = {
+    ...created.base,
+    kind: "schedule",
+    durationMs,
+    dueAt: created.base.startedAt + durationMs,
+  }
+  registerJob(job, created.complete)
+  suppressDelivery(job)
   return job
 }
 
@@ -533,6 +553,24 @@ export async function finishProcessJob(job: BackgroundProcessJob, termination: P
   enqueueDelivery(job)
 }
 
+export function finishScheduleJob(
+  job: BackgroundScheduleJob,
+  outcome: "completed" | "activity" | "canceled" | "interrupted",
+): void {
+  if (job.done) return
+  job.outcome = outcome
+  const detail =
+    outcome === "completed"
+      ? "completed"
+      : outcome === "activity"
+        ? "session activity arrived"
+        : outcome === "canceled"
+          ? "canceled"
+          : "interrupted"
+  completeJob(job, detail, outcome === "completed" || outcome === "activity" ? "completed" : "interrupted")
+  enqueueDelivery(job)
+}
+
 export function finishAgentJob(job: BackgroundAgentJob, outcome: BackgroundAgentOutcome, detail: string): void {
   if (job.done) return
   sealAgentTranscript(job)
@@ -707,6 +745,7 @@ function killJob(job: BackgroundJob): void {
       job.kill()
       return
     case "agent":
+    case "schedule":
       job.stop()
       return
   }

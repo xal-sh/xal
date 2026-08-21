@@ -93,6 +93,8 @@ export function formatBackgroundResult(job: BackgroundJob): BackgroundResult {
       return formatAgentResult(job)
     case "process":
       return formatProcessResult(job)
+    case "schedule":
+      throw new Error(`schedule ${job.id} cannot be delivered as a background result`)
   }
 }
 

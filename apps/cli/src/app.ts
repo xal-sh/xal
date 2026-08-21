@@ -32,6 +32,7 @@ import { registerSessionClis } from "./sessions/cli"
 import { registerSessionCommands } from "./sessions/commands"
 import { protectSecretValue, redactText } from "./secrets/redactor"
 import { registerRedaction } from "./secrets/register"
+import { registerScheduler } from "./scheduler/register"
 import { discoverSkills, registerSkills } from "./skills/register"
 import { registerTasks } from "./tasks/register"
 import { registerBash } from "./tools/bash/register"
@@ -63,6 +64,7 @@ function registerCore(settings: Settings): void {
   registerGoals()
   registerPlans()
   registerTasks()
+  registerScheduler()
   registerSkills()
   registerBootstrapStep("skills", discoverSkills)
   registerBash()

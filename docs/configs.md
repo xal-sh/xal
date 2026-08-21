@@ -54,6 +54,7 @@ Built-in configuration is documented with the feature that consumes it:
 - [Providers and models](/docs/providers) covers built-in provider options and model discovery.
 - [Plugins and hooks](/docs/plugins) covers custom plugin configuration.
 - [Commands and skills](/docs/commands-and-skills) covers project instruction limits.
+- [Scheduler](/docs/scheduler) covers delayed model continuation.
 
 ## Thinking effort
 

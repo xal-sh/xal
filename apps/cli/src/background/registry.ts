@@ -33,6 +33,11 @@ export interface BackgroundAgentSnapshot {
   contextTokens?: number
 }
 
+export interface BackgroundScheduleTask extends BackgroundTaskBase {
+  kind: "schedule"
+  dueAt: number
+}
+
 export interface BackgroundAgentTask extends BackgroundTaskBase {
   kind: "agent"
   role: string
@@ -42,7 +47,7 @@ export interface BackgroundAgentTask extends BackgroundTaskBase {
   send(message: string): boolean
 }
 
-export type BackgroundTask = BackgroundProcessTask | BackgroundAgentTask
+export type BackgroundTask = BackgroundProcessTask | BackgroundAgentTask | BackgroundScheduleTask
 
 export type BackgroundChange = "lifecycle" | "progress"
 

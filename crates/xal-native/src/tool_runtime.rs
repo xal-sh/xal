@@ -5,6 +5,7 @@ use napi_derive::napi;
 use serde_json::{Map, Value, json};
 
 const MAX_WAIT_SECONDS: f64 = 600.0;
+const MAX_SCHEDULER_DURATION_MS: i64 = 12 * 60 * 60 * 1_000;
 const MAX_EXTENSION_MINUTES: i64 = 60;
 const MAX_EXTENSION_TURNS: i64 = 100;
 const MAX_MESSAGE_LENGTH: usize = 20_000;
@@ -309,7 +310,7 @@ fn job_kill(value: &Value) -> napi::Result<Value> {
         .and_then(Value::as_bool)
         .unwrap_or(false);
     let kind = required_string(request, "kind")?;
-    let pending_check = if kind == "agent" {
+    let pending_check = if matches!(kind.as_str(), "agent" | "schedule") {
         "check it with job_status"
     } else {
         "check it with job_output"
@@ -325,6 +326,9 @@ fn job_kill(value: &Value) -> napi::Result<Value> {
         if matches!(string(request, "delivery"), Some("pending" | "in_flight")) {
             output.push_str(" Its completed result will be delivered automatically.");
         }
+        return Ok(json!({ "output": output }));
+    }
+    if kind == "schedule" {
         return Ok(json!({ "output": output }));
     }
     if kind != "process" {
@@ -371,6 +375,31 @@ fn job_status(value: &Value) -> napi::Result<Value> {
         let job = object(job)?;
         if string(job, "kind") == Some("agent") {
             lines.push(agent_status(job)?);
+            continue;
+        }
+        if string(job, "kind") == Some("schedule") {
+            let id = required_string(job, "id")?;
+            let state = required_string(job, "status")?;
+            let started = job
+                .get("startedAt")
+                .and_then(Value::as_i64)
+                .ok_or_else(|| invalid("startedAt is required"))?;
+            let due = job
+                .get("dueAt")
+                .and_then(Value::as_i64)
+                .ok_or_else(|| invalid("dueAt is required"))?;
+            let scheduled = job
+                .get("durationMs")
+                .and_then(Value::as_i64)
+                .ok_or_else(|| invalid("durationMs is required"))?;
+            let timing = match job.get("finishedAt").and_then(Value::as_i64) {
+                Some(finished) => duration(finished - started),
+                None => format!("{} remaining", duration(due - now)),
+            };
+            lines.push(format!(
+                "{id} [{state}] {timing}\n  Scheduled wait {}",
+                duration(scheduled)
+            ));
             continue;
         }
         if string(job, "kind") != Some("process") {
@@ -602,6 +631,35 @@ fn task_items(value: &Value) -> napi::Result<Value> {
     complete.insert("context".to_owned(), json!("validation"));
     let prepared = task_prepare(&Value::Object(complete))?;
     Ok(json!({ "tasks": prepared.get("tasks").cloned().unwrap_or(Value::Null) }))
+}
+
+fn scheduler_prepare(value: &Value) -> napi::Result<Value> {
+    let request = object(value)?;
+    let duration = integer(request, "duration_ms")
+        .filter(|duration| (1..=MAX_SCHEDULER_DURATION_MS).contains(duration));
+    let Some(duration) = duration else {
+        return Err(invalid(format!(
+            "duration_ms must be an integer between 1 and {MAX_SCHEDULER_DURATION_MS}"
+        )));
+    };
+    Ok(json!({ "durationMs": duration }))
+}
+
+fn scheduler_finalize(value: &Value) -> napi::Result<Value> {
+    let request = object(value)?;
+    let elapsed = request
+        .get("elapsedSeconds")
+        .and_then(Value::as_f64)
+        .filter(|elapsed| elapsed.is_finite() && *elapsed >= 0.0)
+        .ok_or_else(|| invalid("elapsedSeconds must be a non-negative finite number"))?;
+    let message = match string(request, "outcome") {
+        Some("completed") => "Wait completed.",
+        Some("activity") => "Wait interrupted by new session activity.",
+        Some("canceled") => "Wait canceled.",
+        Some("interrupted") => "Wait interrupted.",
+        _ => return Err(invalid("scheduler outcome is invalid")),
+    };
+    Ok(json!({ "output": format!("Wall time: {elapsed:.4} seconds\n{message}") }))
 }
 
 fn task_finalize(value: &Value) -> napi::Result<Value> {
@@ -993,6 +1051,14 @@ impl NativeToolRuntime {
         run(request, task_finalize)
     }
     #[napi(catch_unwind)]
+    pub fn scheduler_prepare(&self, request: String) -> napi::Result<String> {
+        run(request, scheduler_prepare)
+    }
+    #[napi(catch_unwind)]
+    pub fn scheduler_finalize(&self, request: String) -> napi::Result<String> {
+        run(request, scheduler_finalize)
+    }
+    #[napi(catch_unwind)]
     pub fn update_tasks(&self, request: String) -> napi::Result<String> {
         run(request, update_tasks)
     }
@@ -1025,7 +1091,8 @@ impl NativeToolRuntime {
 #[cfg(test)]
 mod tests {
     use super::{
-        memory_prepare, request_input_prepare, run, task_finalize, task_prepare, update_tasks,
+        job_kill, job_status, memory_prepare, request_input_prepare, run, scheduler_finalize,
+        scheduler_prepare, task_finalize, task_prepare, update_tasks,
     };
 
     #[test]
@@ -1042,6 +1109,39 @@ mod tests {
         )
         .unwrap();
         assert!(output.contains("Spawned 1 background agent"));
+    }
+
+    #[test]
+    fn validates_and_formats_scheduler_requests() {
+        let prepared = run(r#"{"duration_ms":10000}"#.to_owned(), scheduler_prepare).unwrap();
+        assert_eq!(prepared, r#"{"durationMs":10000}"#);
+        assert!(run(r#"{"duration_ms":0}"#.to_owned(), scheduler_prepare).is_err());
+        assert!(run(r#"{"duration_ms":1.5}"#.to_owned(), scheduler_prepare).is_err());
+        let finalized = run(
+            r#"{"elapsedSeconds":10.125,"outcome":"completed"}"#.to_owned(),
+            scheduler_finalize,
+        )
+        .unwrap();
+        assert!(finalized.contains("Wall time: 10.1250 seconds\\nWait completed."));
+        assert!(
+            run(
+                r#"{"elapsedSeconds":1,"outcome":"unknown"}"#.to_owned(),
+                scheduler_finalize,
+            )
+            .is_err()
+        );
+        let status = run(
+            r#"{"now":5000,"jobs":[{"kind":"schedule","id":"schedule-1","status":"still running","durationMs":10000,"startedAt":0,"dueAt":10000}]}"#.to_owned(),
+            job_status,
+        )
+        .unwrap();
+        assert!(status.contains("schedule-1 [still running] 5s remaining"));
+        let stopped = run(
+            r#"{"id":"schedule-1","kind":"schedule","alreadyDone":false,"done":true,"status":"canceled"}"#.to_owned(),
+            job_kill,
+        )
+        .unwrap();
+        assert!(stopped.contains("finished after stop was requested"));
     }
 
     #[test]

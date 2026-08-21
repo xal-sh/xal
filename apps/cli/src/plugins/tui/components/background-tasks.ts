@@ -234,6 +234,7 @@ export class BackgroundTasks {
     const ordered = [
       ...running.filter((task) => task.kind === "agent"),
       ...running.filter((task) => task.kind === "process"),
+      ...running.filter((task) => task.kind === "schedule"),
       ...settled,
     ]
     const ids = hasAgents ? ["main", ...ordered.map((task) => task.id)] : ordered.map((task) => task.id)
@@ -402,9 +403,11 @@ export class BackgroundTasks {
     entry.text.content = active
       ? new StyledText([paint(COLORS.accent, name)])
       : new StyledText([state.running || viewed ? paint(COLORS.foreground, name) : muted(name)])
-    entry.status.content = new StyledText([
-      muted(state.running ? formatDuration(Date.now() - entry.task.startedAt) : redactText(state.detail)),
-    ])
+    const running =
+      entry.task.kind === "schedule"
+        ? `${formatDuration(Math.max(0, entry.task.dueAt - Date.now()))} left`
+        : formatDuration(Date.now() - entry.task.startedAt)
+    entry.status.content = new StyledText([muted(state.running ? running : redactText(state.detail))])
   }
 
   private hint(): string {

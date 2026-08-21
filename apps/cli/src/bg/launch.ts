@@ -21,6 +21,8 @@ function describeJob(job: BackgroundJob): string {
       return `shell: ${job.command}`
     case "agent":
       return `task agent: ${job.task}`
+    case "schedule":
+      return `schedule: wait ${job.durationMs}ms`
   }
 }
 

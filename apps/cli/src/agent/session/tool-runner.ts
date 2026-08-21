@@ -102,6 +102,8 @@ export interface ToolRunnerHost {
   changeWorkspace(cwd: string): void
   contextUsage(): Promise<ContextUsage | undefined>
   restartSession(prompt: string): void
+  pendingActivity(): boolean
+  activitySignal(): AbortSignal
 }
 
 export class ToolCallRunner {
@@ -374,6 +376,10 @@ export class ToolCallRunner {
                   mode: this.host.mode(),
                   workspaceUndo: this.host.workspaceUndo(),
                   changeWorkspace: (cwd) => this.host.changeWorkspace(cwd),
+                },
+                activity: {
+                  pending: this.host.pendingActivity(),
+                  signal: this.host.activitySignal(),
                 },
                 signal,
                 update,

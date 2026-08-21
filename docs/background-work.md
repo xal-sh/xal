@@ -1,6 +1,6 @@
 # Background work
 
-Background work comes in two vocabularies. A _background session_ is a whole session that keeps working after you leave the terminal: `/bg` hands the running conversation to a detached worker process and returns you to the shell. _Background jobs_ are work inside a live session: task agents dispatched with the `task` tool and processes started with `bash` `background:true`. Jobs are tracked per session, deliver their results back into the conversation automatically, and share one set of TUI surfaces.
+Background work comes in two vocabularies. A _background session_ is a whole session that keeps working after you leave the terminal: `/bg` hands the running conversation to a detached worker process and returns you to the shell. _Background jobs_ are work inside a live session: task agents dispatched with the `task` tool, processes started with `bash` `background:true`, and waits started by `scheduler`. Jobs are tracked per session and share one set of TUI surfaces. Agent and process results are delivered into the conversation automatically; a schedule resumes its waiting model turn directly.
 
 ## Background sessions
 
@@ -62,13 +62,13 @@ A running foreground `bash` command can be promoted to a background job at any m
 
 The model manages jobs with five tools:
 
-| Tool         | Purpose                                                                                                             |
-| ------------ | ------------------------------------------------------------------------------------------------------------------- |
-| `job_output` | Read process output or collect an agent report; agent waits return at a supervision checkpoint before the deadline. |
-| `job_status` | Inspect queue state, activity, provider requests, tools, turn cycles, context, timing, and remaining deadline.      |
-| `job_send`   | Queue guidance into a running task agent's current turn.                                                            |
-| `job_extend` | Add up to 60 runtime minutes, 100 soft-budget turns, or both to a queued or running task agent per call.            |
-| `job_kill`   | Stop a job. A process that ignores the graceful stop is hard-killed after 2 seconds.                                |
+| Tool         | Purpose                                                                                                              |
+| ------------ | -------------------------------------------------------------------------------------------------------------------- |
+| `job_output` | Read process output, collect an agent report, or inspect a schedule; agent waits return at a supervision checkpoint. |
+| `job_status` | Inspect processes, task agents, and schedules without consuming output.                                              |
+| `job_send`   | Queue guidance into a running task agent's current turn.                                                             |
+| `job_extend` | Add up to 60 runtime minutes, 100 soft-budget turns, or both to a queued or running task agent per call.             |
+| `job_kill`   | Stop a process, task agent, or schedule. A process that ignores the graceful stop is hard-killed after 2 seconds.    |
 
 An explicit `job_output` wait cannot consume a task agent's whole runtime budget. It reserves a supervision window of up to one minute and returns with live status so the parent can inspect, extend, steer, or stop the task; a wait started while queued may return earlier because its runtime deadline has not started. If an agent still times out, collection includes a bounded transcript tail labeled as incomplete alongside the durable task-record path.
 
@@ -78,7 +78,7 @@ Stopping a job from the TUI is never silent: the result is marked `stopped by th
 
 - The status bar shows live counts (`2 agents · 1 job · …`) whenever background work exists.
 - Running agents are summarized above the composer by ID and elapsed time; queued agents show `queued <time>` until they start.
-- The navigator at the bottom lists every job: running rows first, then finished rows (newest first). The full viewer shows live activity, timing, context, tool, and turn metrics. Successfully completed agents are dismissed when the primary session returns to idle; failed agents and finished process jobs remain reviewable until dismissed or evicted, and jobs started by a sub-agent are attributed with `⟨agent-id⟩`.
+- The navigator at the bottom lists every process, task agent, and schedule: running rows first, then finished rows (newest first). Schedule rows show their remaining time. The full viewer shows live activity and timing, plus context, tool, and turn metrics for agents. Successfully completed agents are dismissed when the primary session returns to idle; failed agents and finished jobs remain reviewable until dismissed or evicted, and jobs started by a sub-agent are attributed with `⟨agent-id⟩`.
 - Normal transcript mode shows a completed background result as its ID and first report line. Use `display.toggle-details` (default `ctrl+o`) to reveal its assignment, status, line count, report output, and record path.
 
 Open the navigator with `/agents` (alias `/jobs`), the `agents.open` shortcut (default `ctrl+x ctrl+a`), or by pressing `↓` with an empty composer.
@@ -88,7 +88,7 @@ Navigator keys:
 | Key       | Action                                                     |
 | --------- | ---------------------------------------------------------- |
 | `↑` `↓`   | Move between rows; `↑` from `main` returns to the composer |
-| `enter`   | Open the viewer for the selected agent or process          |
+| `enter`   | Open the viewer for the selected job                       |
 | `tab`     | Toggle an inline preview of the last output lines          |
 | `x` / `k` | Stop a running job, or dismiss a finished row              |
 | `esc`     | Close the viewer, collapse the preview, or leave           |

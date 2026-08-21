@@ -365,6 +365,7 @@ export class JobViewer {
         ])
         return
       case "process":
+      case "schedule":
         this.role.content = new StyledText([
           glyph,
           paint(COLORS.foreground, task.id),
@@ -378,6 +379,7 @@ export class JobViewer {
     const state = task.state()
     if (!state.running) return redactText(state.detail)
     if (task.kind === "process") return formatDuration(Date.now() - task.startedAt)
+    if (task.kind === "schedule") return `${formatDuration(Math.max(0, task.dueAt - Date.now()))} left`
     const snapshot = task.snapshot()
     if (snapshot.queued) return `queued ${formatDuration(snapshot.queuedMs)}`
     if (snapshot.stopping) return "stopping"
@@ -395,7 +397,7 @@ export class JobViewer {
     const width = Math.max(10, this.ctx.terminalWidth - HORIZONTAL_PADDING * 2)
     this.title.content = truncateToWidth(firstLine(redactText(task.title)), width)
     this.header(task, state.running, !state.running && state.ok)
-    this.hint.content = `↑↓ line · PgUp/PgDn page · Home/End jump${this.steerable ? " · i steer" : ""} · Esc agents`
+    this.hint.content = `↑↓ line · PgUp/PgDn page · Home/End jump${this.steerable ? " · i steer" : ""} · Esc tasks`
     const cache = this.syncCache(task, width)
     const partialRows = cache.partial ? wrapLine(sanitize(cache.partial), width) : []
     const renderedRowCount = cache.rowCount + partialRows.length

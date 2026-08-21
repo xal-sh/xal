@@ -19,6 +19,7 @@ import {
   type BackgroundJob,
   type CollectedAgentOutcome,
   type BackgroundProcessJob,
+  type BackgroundScheduleJob,
 } from "./jobs"
 import { listBackgroundTasks, type BackgroundAgentSnapshot } from "./registry"
 import { asNumber, asString } from "../lib/json"
@@ -39,7 +40,7 @@ function jobOf(args: Record<string, unknown>, ownerId: string): BackgroundJob {
   return job
 }
 
-const idProperty = { type: "string", description: "Job id returned by bash background mode or task" }
+const idProperty = { type: "string", description: "Job id returned by bash background mode, task, or scheduler" }
 
 function nativeJobRequest(args: Record<string, unknown>): { id: string; wait: number } {
   const prepared = nativeToolRecord("job_prepare", args)
@@ -136,21 +137,38 @@ function nativeAgentSnapshot(job: BackgroundAgentJob, now: number): Record<strin
   }
 }
 
+function nativeScheduleSnapshot(job: BackgroundScheduleJob): Record<string, unknown> {
+  return {
+    kind: "schedule",
+    id: job.id,
+    status: jobStatus(job),
+    durationMs: job.durationMs,
+    dueAt: job.dueAt,
+    startedAt: job.startedAt,
+    ...(job.finishedAt === undefined ? {} : { finishedAt: job.finishedAt }),
+  }
+}
+
 function nativeStatusOutput(id: string | undefined, ownerId: string): string {
   const selected = id ? [jobOf({ id }, ownerId)] : listJobs().filter((job) => job.ownerId === ownerId)
   const now = Date.now()
-  const jobs = selected.map((job) =>
-    job.kind === "agent"
-      ? nativeAgentSnapshot(job, now)
-      : {
+  const jobs = selected.map((job) => {
+    switch (job.kind) {
+      case "agent":
+        return nativeAgentSnapshot(job, now)
+      case "process":
+        return {
           kind: "process",
           id: job.id,
           status: jobStatus(job),
           command: job.command,
           startedAt: job.startedAt,
           ...(job.finishedAt === undefined ? {} : { finishedAt: job.finishedAt }),
-        },
-  )
+        }
+      case "schedule":
+        return nativeScheduleSnapshot(job)
+    }
+  })
   const result = nativeToolRecord("job_status", { now, jobs })
   return nativeToolString(result, "output", "job_status")
 }
@@ -186,6 +204,8 @@ export const jobOutputTool: SessionTool = {
         return { output: await processOutput(job, request.wait, ctx.signal) }
       case "agent":
         return { output: await collectAgentOutput(job, request.wait, ctx.signal) }
+      case "schedule":
+        return { output: nativeStatusOutput(job.id, ctx.session.id) }
     }
   },
 }
@@ -193,7 +213,7 @@ export const jobOutputTool: SessionTool = {
 export const jobKillTool: SessionTool = {
   name: "job_kill",
   description:
-    "Stop a running background process or task agent. Process output not yet collected is returned; agent transcripts remain available in the background-task viewer.",
+    "Stop a running background process, task agent, or schedule. Process output not yet collected is returned; agent transcripts remain available in the background-task viewer.",
   parameters: {
     type: "object",
     properties: { id: idProperty },
@@ -212,7 +232,7 @@ export const jobKillTool: SessionTool = {
     const job = jobOf({ id: request.id }, ctx.session.id)
     const alreadyDone = job.done
     if (!alreadyDone) await stopJob(job, "model")
-    if (job.kind === "agent") {
+    if (job.kind === "agent" || job.kind === "schedule") {
       const result = nativeToolRecord("job_kill", {
         id: job.id,
         kind: job.kind,
@@ -244,7 +264,7 @@ export const jobKillTool: SessionTool = {
 export const jobStatusTool: SessionTool = {
   name: "job_status",
   description:
-    "Inspect one background job or list every job without consuming output. Task-agent status includes queue state, current activity, idle and elapsed time, turn usage and limits, and its remaining deadline after it starts.",
+    "Inspect one background job or list every job without consuming output. Includes processes, task agents, and schedules. Task-agent status includes queue state, current activity, idle and elapsed time, turn usage and limits, and its remaining deadline after it starts.",
   parameters: {
     type: "object",
     properties: { id: idProperty },

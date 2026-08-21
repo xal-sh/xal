@@ -123,6 +123,7 @@ export class AgentSession {
   private readonly buffer = new StreamBuffer((event) => this.emit(event))
   private readonly queue = new InputQueue((event) => this.emit(event))
   private readonly goals = new GoalRuntime({ emit: (event) => this.emit(event), evaluate: evaluateGoal })
+  private activityController = new AbortController()
   private outputDirectory: string
   private cwd: string
   private workspaceUndo: WorkspaceUndo
@@ -177,7 +178,10 @@ export class AgentSession {
     }
     this.asyncState = new SessionAsyncState({
       ownerId: () => this.sessionId,
-      onResultsQueued: () => queueMicrotask(() => this.startBackgroundResultTurn()),
+      onResultsQueued: () => {
+        this.noteActivity()
+        queueMicrotask(() => this.startBackgroundResultTurn())
+      },
       onAgentWorkSettled: () => {
         if (this.movingHistory || this.turnActive || this.state !== "idle") return
         this.settleBackgroundAgents()
@@ -234,6 +238,8 @@ export class AgentSession {
       restartSession: (prompt) => {
         this.pendingRestart = prompt
       },
+      pendingActivity: () => this.queue.first !== undefined || this.asyncState.hasQueued(),
+      activitySignal: () => this.activityController.signal,
     }
   }
 
@@ -719,6 +725,11 @@ export class AgentSession {
     return () => this.listeners.delete(listener)
   }
 
+  private noteActivity(): void {
+    this.activityController.abort()
+    this.activityController = new AbortController()
+  }
+
   send(input: UserInput): boolean {
     const redacted = redactUserInput(input)
     if (redacted.images.length > 0 && !this.supportsImageInput) {
@@ -728,6 +739,7 @@ export class AgentSession {
     if (this.movingHistory) return false
     if (this.turnActive || this.state === "evaluating_goal") {
       if (!isDirectShellInput(redacted)) this.goals.rearm()
+      this.noteActivity()
       this.queue.push(redacted)
       return true
     }
@@ -744,6 +756,7 @@ export class AgentSession {
 
   steer(text: string): boolean {
     if (this.movingHistory || !this.turnActive || !this.acceptingQueuedInput) return false
+    this.noteActivity()
     this.queue.push(redactUserInput({ text, images: [] }))
     return true
   }
