@@ -1,3 +1,4 @@
+import { registerToolSessionDisposer } from "../../tools/session"
 import type { Plugin } from "../types"
 import { mcpCommand } from "./command"
 import { parseMcpConfig } from "./config"
@@ -5,6 +6,8 @@ import { McpManager } from "./manager"
 import { mcpTools } from "./tools"
 
 let manager: McpManager | undefined
+
+registerToolSessionDisposer((sessionId) => manager?.disposeSession(sessionId))
 
 const plugin: Plugin = {
   name: "mcp",

@@ -80,6 +80,39 @@ describe("AgentSession", () => {
     ])
   })
 
+  test("filters tool definitions with session-scoped availability", async () => {
+    const provider = new ScriptedProvider([completedRound("Finished")])
+    const session = harness.createSession(provider)
+    const visible: Tool = {
+      name: `visible_${crypto.randomUUID().replaceAll("-", "_")}`,
+      description: "Visible in this session",
+      parameters: { type: "object" },
+      available: (ctx) => ctx.sessionId === session.id,
+      title: () => "Visible",
+      execute: async () => ({ output: "visible" }),
+    }
+    const hidden: Tool = {
+      name: `hidden_${crypto.randomUUID().replaceAll("-", "_")}`,
+      description: "Hidden in this session",
+      parameters: { type: "object" },
+      available: (ctx) => ctx.sessionId !== session.id,
+      title: () => "Hidden",
+      execute: async () => ({ output: "hidden" }),
+    }
+
+    registerTool(visible)
+    registerTool(hidden)
+    try {
+      await runSettledTurn(session, { text: "Check tools", images: [] })
+
+      expect(provider.requests[0]?.tools.some((tool) => tool.name === visible.name)).toBe(true)
+      expect(provider.requests[0]?.tools.some((tool) => tool.name === hidden.name)).toBe(false)
+    } finally {
+      unregisterTool(visible)
+      unregisterTool(hidden)
+    }
+  })
+
   test("updates context usage after each provider round in a tool-driven turn", async () => {
     const toolName = `read_test_${crypto.randomUUID().replaceAll("-", "_")}`
     const executions: Record<string, unknown>[] = []

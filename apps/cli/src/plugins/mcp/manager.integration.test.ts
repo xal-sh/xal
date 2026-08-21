@@ -334,6 +334,20 @@ describe("native MCP manager", () => {
     )
     expect(manager.statusLines()[0]).toContain("warning: 1 task-based tools skipped")
     expect([...registry.tools.keys()]).not.toContain("mcp__fixture__task_only")
+    const echoTool = [...registry.tools.values()].find((tool) => tool.name.includes("echo_tool"))
+    if (!echoTool) throw new Error("echo MCP tool was not registered")
+    expect(echoTool.available?.({ sessionId: "session", interactive: false, kind: "primary", mode: "normal" })).toBe(
+      false,
+    )
+    const searchResult = manager.searchTools("session", "echo a value", 8)
+    expect(searchResult).toContain(echoTool.name)
+    expect(searchResult).not.toContain("inputSchema")
+    expect(echoTool.available?.({ sessionId: "session", interactive: false, kind: "primary", mode: "normal" })).toBe(
+      true,
+    )
+    expect(echoTool.available?.({ sessionId: "other", interactive: false, kind: "primary", mode: "normal" })).toBe(
+      false,
+    )
     expect(manager.prompt()).toContain("Use fixture tools.")
     expect(manager.resourceCatalog()).toContain("fixture://two")
     expect(manager.promptCatalog()).toContain("hello")

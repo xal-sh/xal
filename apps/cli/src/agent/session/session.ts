@@ -1256,7 +1256,14 @@ export class AgentSession {
 
   private canUseTool(tool: RegisteredTool): boolean {
     if (!this.interactive && isInteractiveTool(tool)) return false
-    return tool.available?.({ interactive: this.interactive, kind: this.kind, mode: this.mode }) ?? true
+    return (
+      tool.available?.({
+        sessionId: this.sessionId,
+        interactive: this.interactive,
+        kind: this.kind,
+        mode: this.mode,
+      }) ?? true
+    )
   }
 
   private rememberEvent(event: AgentEvent): void {
