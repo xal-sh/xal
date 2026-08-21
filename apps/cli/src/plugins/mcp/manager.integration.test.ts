@@ -41,7 +41,7 @@ function tools() {
   if (toolVersion > 0) base.push({ name: "added", description: "Added dynamically", inputSchema: { type: "object", additionalProperties: false } })
   return base
 }
-function handle(message) {
+async function handle(message) {
   if (!Object.hasOwn(message, "id")) return
   const id = message.id
   if (message.method === "initialize") return result(id, { protocolVersion: message.params.protocolVersion, capabilities: { tools: { listChanged: true }, resources: { subscribe: false, listChanged: true }, prompts: { listChanged: true } }, serverInfo: { name: "fixture", version: "1" }, instructions: "Use fixture tools." })
@@ -56,7 +56,12 @@ function handle(message) {
   if (message.method === "prompts/get") return result(id, { description: "Greeting", messages: [{ role: "user", content: { type: "text", text: "Hello " + (message.params.arguments?.name ?? "world") } }] })
   if (message.method === "tools/call") {
     const token = message.params._meta?.progressToken ?? "xal-1"
-    for (let index = 1; index <= 40; index++) send({ jsonrpc: "2.0", method: "notifications/progress", params: { progressToken: token, progress: index, total: 40 } })
+    await Bun.sleep(10)
+    for (let index = 1; index <= 40; index++) {
+      send({ jsonrpc: "2.0", method: "notifications/progress", params: { progressToken: token, progress: index, total: 40 } })
+      await Bun.sleep(1)
+    }
+    await Bun.sleep(10)
     if (message.params.name === "echo tool") {
       toolVersion = 1
       send({ jsonrpc: "2.0", method: "notifications/tools/list_changed" })
@@ -74,7 +79,7 @@ process.stdin.on("data", (chunk) => {
     if (newline < 0) break
     const line = buffer.slice(0, newline).trim()
     buffer = buffer.slice(newline + 1)
-    if (line) handle(JSON.parse(line))
+    if (line) void handle(JSON.parse(line))
   }
 })
 `,
