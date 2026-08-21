@@ -39,6 +39,21 @@ interface ToolSnapshot {
   tools: ToolDescriptor[]
 }
 
+function searchTerms(value: string): string[] {
+  return [...new Set(value.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [])]
+}
+
+function searchScore(descriptor: ToolDescriptor, query: string, terms: string[]): number {
+  const name = `${descriptor.server} ${descriptor.remoteName} ${descriptor.name}`.toLowerCase()
+  const text = `${name} ${descriptor.description.toLowerCase()}`
+  let score = text.includes(query) ? 100 : 0
+  for (const term of terms) {
+    if (name.includes(term)) score += 10
+    else if (text.includes(term)) score += 1
+  }
+  return score
+}
+
 function requiredString(value: Record<string, unknown>, key: string, message: string): string {
   const output = asString(value[key])
   if (output === undefined || output.length === 0) throw new Error(message)
@@ -131,6 +146,8 @@ function parseServers(value: string): McpServerStatus[] {
 export class McpManager {
   private readonly native: NativeMcpManager
   private registeredTools: RegisteredTool[] = []
+  private descriptors: ToolDescriptor[] = []
+  private readonly exposedTools = new Map<string, Set<string>>()
   private toolRevision = -1
   private refreshTimer: ReturnType<typeof setInterval> | undefined
   private refreshPromise: Promise<void> | undefined
@@ -174,6 +191,41 @@ export class McpManager {
     await this.refreshPromise
     await this.native.close()
     this.syncTools()
+  }
+
+  hasTools(): boolean {
+    return this.descriptors.length > 0
+  }
+
+  toolAvailable(sessionId: string, name: string): boolean {
+    return this.exposedTools.get(sessionId)?.has(name) ?? false
+  }
+
+  searchTools(sessionId: string, query: string, limit: number): string {
+    const normalized = query.trim().toLowerCase()
+    const terms = searchTerms(normalized)
+    if (terms.length === 0) throw new Error("query must not be empty")
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 20)
+      throw new Error("limit must be an integer from 1 to 20")
+
+    const matches = this.descriptors
+      .map((descriptor) => ({ descriptor, score: searchScore(descriptor, normalized, terms) }))
+      .filter((match) => match.score > 0)
+      .toSorted((left, right) => right.score - left.score || left.descriptor.name.localeCompare(right.descriptor.name))
+      .slice(0, limit)
+      .map((match) => match.descriptor)
+    if (matches.length === 0) return "No matching MCP tools found."
+
+    const exposed = this.exposedTools.get(sessionId) ?? new Set<string>()
+    for (const descriptor of matches) exposed.add(descriptor.name)
+    this.exposedTools.set(sessionId, exposed)
+    return ["Loaded MCP tools for the next model call:", ...matches.map((descriptor) => `- ${descriptor.name}`)].join(
+      "\n",
+    )
+  }
+
+  disposeSession(sessionId: string): void {
+    this.exposedTools.delete(sessionId)
   }
 
   hasResources(): boolean {
@@ -277,6 +329,13 @@ export class McpManager {
       throw error
     }
     this.registeredTools = next
+    this.descriptors = snapshot.tools
+    const names = new Set(snapshot.tools.map((descriptor) => descriptor.name))
+    for (const [sessionId, exposed] of this.exposedTools) {
+      const current = new Set([...exposed].filter((name) => names.has(name)))
+      if (current.size > 0) this.exposedTools.set(sessionId, current)
+      else this.exposedTools.delete(sessionId)
+    }
     this.toolRevision = snapshot.revision
   }
 
@@ -285,6 +344,7 @@ export class McpManager {
       name: descriptor.name,
       description: descriptor.description,
       parameters: descriptor.parameters,
+      available: (ctx) => this.toolAvailable(ctx.sessionId, descriptor.name),
       title: () => descriptor.title,
       undo: () => ({ type: "invalidate" }),
       permission: () => ({ subject: `${descriptor.server}/${descriptor.remoteName}`, suggestion: descriptor.name }),

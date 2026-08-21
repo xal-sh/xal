@@ -32,7 +32,6 @@ export interface TurnHost {
   autoCompact(signal: AbortSignal, provider: Provider, model: string): Promise<void>
   beginCheckpoint(messageId: string, input: UserInput): Promise<void>
   stopAcceptingInput(): void
-  drainTaskReminder(): void
 }
 
 export interface TurnSummary {
@@ -68,8 +67,6 @@ export async function runTurn(
       toolLoops.reset()
       interjected = midWork
     }
-    if (resumedCalls.length === 0) host.drainTaskReminder()
-
     let items: HistoryItem[] = []
     let toolCalls = resumedCalls
     const restoringCalls = resumedCalls.length > 0

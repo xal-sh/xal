@@ -1,4 +1,4 @@
-import { asString, isRecord } from "../../lib/json"
+import { asNumber, asString, isRecord } from "../../lib/json"
 import type { Tool } from "../../tools/types"
 import type { McpManager } from "./manager"
 
@@ -21,6 +21,29 @@ function promptArguments(value: unknown): Record<string, string> | undefined {
 
 export function mcpTools(manager: McpManager): Tool[] {
   return [
+    {
+      name: "mcp_tool_search",
+      description:
+        "Search deferred MCP tool metadata and load the matching tools for the next model call. Use this when an external MCP capability may help but its tool is not already available.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "Capability or operation to search for" },
+          limit: { type: "integer", minimum: 1, maximum: 20, description: "Maximum matches. Defaults to 8." },
+        },
+        required: ["query"],
+        additionalProperties: false,
+      },
+      available: () => manager.hasTools(),
+      title: (args) => asString(args.query) ?? "MCP tools",
+      readOnly: () => true,
+      concurrency: () => "shared",
+      async execute(args, ctx) {
+        return {
+          output: manager.searchTools(ctx.sessionId, requiredString(args, "query"), asNumber(args.limit) ?? 8),
+        }
+      },
+    },
     {
       name: "mcp_resources",
       description:

@@ -43,7 +43,6 @@ import { isPersistable } from "../../sessions/records"
 import { normalizeSessionTitle, titleFromInput } from "../../sessions/title"
 import type { SessionMeta } from "../../sessions/types"
 import { expandSkillInvocation } from "../../skills/invoke"
-import { TaskReminders, taskListSnapshot } from "../../tasks/reminders"
 import type { TrackedTask } from "../../tasks/types"
 import { getTool, listTools } from "../../tools/registry"
 import { toolOutputDirectory } from "../../tools/output"
@@ -107,8 +106,6 @@ export class AgentSession {
   private providerRequests = 0
   private compactionFailures = 0
   private tasks: TrackedTask[] = []
-  private pendingTaskSnapshot = false
-  private readonly taskReminders = new TaskReminders()
   private readonly listeners = new Set<(event: AgentEvent) => void>()
   private readonly recorder: SessionRecorder | undefined
   private readonly interactive: boolean
@@ -275,7 +272,6 @@ export class AgentSession {
       stopAcceptingInput: () => {
         this.acceptingQueuedInput = false
       },
-      drainTaskReminder: () => this.drainTaskReminder(),
     }
   }
 
@@ -295,7 +291,6 @@ export class AgentSession {
       replaceHistory: (item) => {
         this.items = []
         this.pushItem(item)
-        this.pendingTaskSnapshot = this.tasks.some((task) => task.status !== "completed")
         this.contextTokens = undefined
         this.compactionFailures = 0
       },
@@ -314,7 +309,6 @@ export class AgentSession {
         this.checkpoints = state.checkpoints
         this.contextTokens = undefined
         this.compactionFailures = 0
-        this.pendingTaskSnapshot = false
         if (this.tasks.length > 0) this.publishToolEvent({ type: "task_list_updated", tasks: [] })
       },
       recordEvent: (event) => this.recordEvent(event),
@@ -494,7 +488,6 @@ export class AgentSession {
     this.contextTokens = undefined
     this.compactionFailures = 0
     this.tasks = []
-    this.pendingTaskSnapshot = false
     this.plan = undefined
     this.planHandoffActive = false
     this.pendingRestart = undefined
@@ -584,7 +577,6 @@ export class AgentSession {
     this.contextTokens = recordedContext(target.session.events)
     this.compactionFailures = 0
     this.tasks = []
-    this.pendingTaskSnapshot = false
     this.modeBeforePlan = meta.mode === "plan" ? meta.modeBeforePlan : undefined
     this.plan = undefined
     this.planHandoffActive = false
@@ -787,7 +779,6 @@ export class AgentSession {
     this.abortController = controller
     this.turnActive = true
     this.acceptingQueuedInput = true
-    this.taskReminders.startTurn()
     this.promoteOnAbort = false
     this.setState("streaming")
     let failure: string | undefined
@@ -1269,7 +1260,14 @@ export class AgentSession {
 
   private canUseTool(tool: RegisteredTool): boolean {
     if (!this.interactive && isInteractiveTool(tool)) return false
-    return tool.available?.({ interactive: this.interactive, kind: this.kind, mode: this.mode }) ?? true
+    return (
+      tool.available?.({
+        sessionId: this.sessionId,
+        interactive: this.interactive,
+        kind: this.kind,
+        mode: this.mode,
+      }) ?? true
+    )
   }
 
   private rememberEvent(event: AgentEvent): void {
@@ -1314,20 +1312,7 @@ export class AgentSession {
   }
 
   private addToolOutput(call: ToolCallItem, output: string): void {
-    this.taskReminders.recordToolCall()
     this.pushItem({ type: "tool_result", callId: call.callId, output })
-  }
-
-  private drainTaskReminder(): void {
-    if (this.pendingTaskSnapshot) {
-      this.pendingTaskSnapshot = false
-      if (this.tasks.some((task) => task.status !== "completed")) {
-        this.recordSystemNotice(taskListSnapshot(this.tasks))
-      }
-      return
-    }
-    const notice = this.taskReminders.take(this.tasks)
-    if (notice) this.recordSystemNotice(notice)
   }
 
   private recordProviderRequest(): void {
@@ -1407,7 +1392,6 @@ export class AgentSession {
         break
       case "task_list_updated":
         this.tasks = event.tasks
-        this.taskReminders.recordUpdate()
         this.emit(event)
         break
     }

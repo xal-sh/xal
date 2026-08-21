@@ -57,6 +57,7 @@ export type UndoAction =
   { type: "none" } | { type: "paths"; paths: string[] } | { type: "workspace" } | { type: "invalidate" }
 
 export interface ToolAvailabilityContext {
+  sessionId: string
   interactive: boolean
   kind: SessionKind
   mode: PermissionMode

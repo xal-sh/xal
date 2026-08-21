@@ -106,8 +106,10 @@ function renderEvent(event: AgentEvent): string | undefined {
       return `## Plan: ${event.plan.status}\n\n${event.plan.markdown}`
     case "goal_updated":
       return renderGoal(event.goal)
-    case "task_list_updated":
-      return `## Tasks\n\n${event.tasks.map((task) => `- [${task.status === "completed" ? "x" : " "}] ${task.step} (${task.status})`).join("\n")}`
+    case "task_list_updated": {
+      const explanation = event.explanation ? `${event.explanation}\n\n` : ""
+      return `## Updated Plan\n\n${explanation}${event.tasks.map((task) => `- [${task.status === "completed" ? "x" : " "}] ${task.step} (${task.status})`).join("\n")}`
+    }
     case "hook_finished":
       return `## Hook\n\n${event.hook} · ${event.event} · ${event.action} · ${event.elapsedMs}ms`
     case "turn_failed":

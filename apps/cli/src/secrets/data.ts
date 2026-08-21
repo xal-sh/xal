@@ -215,6 +215,7 @@ export function redactAgentEvent(event: AgentEvent): AgentEvent {
       return {
         type: "task_list_updated",
         tasks: event.tasks.map((task) => ({ ...task, step: redactText(task.step) })),
+        ...(event.explanation === undefined ? {} : { explanation: redactText(event.explanation) }),
       }
     case "session_started":
       return redactSessionStartedEvent(event)

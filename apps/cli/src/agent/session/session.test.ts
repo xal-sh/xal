@@ -4,7 +4,7 @@ import { registerTool, unregisterTool } from "../../tools/registry"
 import type { Tool } from "../../tools/types"
 import { ProviderError } from "../../providers/errors"
 import type { Usage } from "../../providers/types"
-import { updateTasksTool } from "../../tasks/tool"
+import { updatePlanTool } from "../../tasks/tool"
 import type { AgentEvent } from "../events"
 import {
   completedRound,
@@ -78,6 +78,39 @@ describe("AgentSession", () => {
       { type: "text_delta", text: "Second response" },
       { type: "assistant_message", text: "Second response" },
     ])
+  })
+
+  test("filters tool definitions with session-scoped availability", async () => {
+    const provider = new ScriptedProvider([completedRound("Finished")])
+    const session = harness.createSession(provider)
+    const visible: Tool = {
+      name: `visible_${crypto.randomUUID().replaceAll("-", "_")}`,
+      description: "Visible in this session",
+      parameters: { type: "object" },
+      available: (ctx) => ctx.sessionId === session.id,
+      title: () => "Visible",
+      execute: async () => ({ output: "visible" }),
+    }
+    const hidden: Tool = {
+      name: `hidden_${crypto.randomUUID().replaceAll("-", "_")}`,
+      description: "Hidden in this session",
+      parameters: { type: "object" },
+      available: (ctx) => ctx.sessionId !== session.id,
+      title: () => "Hidden",
+      execute: async () => ({ output: "hidden" }),
+    }
+
+    registerTool(visible)
+    registerTool(hidden)
+    try {
+      await runSettledTurn(session, { text: "Check tools", images: [] })
+
+      expect(provider.requests[0]?.tools.some((tool) => tool.name === visible.name)).toBe(true)
+      expect(provider.requests[0]?.tools.some((tool) => tool.name === hidden.name)).toBe(false)
+    } finally {
+      unregisterTool(visible)
+      unregisterTool(hidden)
+    }
   })
 
   test("updates context usage after each provider round in a tool-driven turn", async () => {
@@ -172,7 +205,7 @@ describe("AgentSession", () => {
     }
   })
 
-  test("continues after completed task bookkeeping to deliver the final response", async () => {
+  test("continues after a completed plan update to deliver the final response", async () => {
     const progress = "The review is complete and two blockers were found."
     const tasks = [
       { step: "Review the diff", status: "completed" },
@@ -184,7 +217,7 @@ describe("AgentSession", () => {
         { type: "item_done", item: { type: "assistant_message", text: progress } },
         {
           type: "item_done",
-          item: { type: "tool_call", callId: "complete-tasks", name: updateTasksTool.name, args: { tasks } },
+          item: { type: "tool_call", callId: "complete-tasks", name: updatePlanTool.name, args: { plan: tasks } },
         },
         { type: "done" },
       ]),
@@ -192,7 +225,7 @@ describe("AgentSession", () => {
     ])
     const session = harness.createSession(provider)
 
-    registerTool(updateTasksTool)
+    registerTool(updatePlanTool)
     try {
       const outcome = await runSettledTurn(session, { text: "Review these changes", images: [] })
 
@@ -205,11 +238,11 @@ describe("AgentSession", () => {
       expect(provider.requests).toHaveLength(2)
       expect(provider.requests[1]?.input.slice(-3)).toEqual([
         { type: "assistant_message", text: progress },
-        { type: "tool_call", callId: "complete-tasks", name: updateTasksTool.name, args: { tasks } },
-        { type: "tool_result", callId: "complete-tasks", output: JSON.stringify({ tasks }) },
+        { type: "tool_call", callId: "complete-tasks", name: updatePlanTool.name, args: { plan: tasks } },
+        { type: "tool_result", callId: "complete-tasks", output: "Plan updated" },
       ])
     } finally {
-      unregisterTool(updateTasksTool)
+      unregisterTool(updatePlanTool)
     }
   })
 
