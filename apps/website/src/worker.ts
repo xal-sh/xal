@@ -87,34 +87,64 @@ function bodyFor(request: Request, body: string): string | null {
   return request.method === "HEAD" ? null : body
 }
 
-function markdownResponse(request: Request, body: string, status: number): Response {
-  const headers = new Headers({ "Content-Type": "text/markdown; charset=utf-8" })
+type RecoveryLink = { label: string; url: string }
+
+function pageErrorResponse(
+  request: Request,
+  status: number,
+  title: string,
+  message: string,
+  links: RecoveryLink[] = [],
+): Response {
+  const representation = preferredType(request.headers.get("Accept"), ["text/html", "text/markdown"])
+  const headers = new Headers()
   addNegotiationHeaders(headers)
   headers.set("Link", '</llms.txt>; rel="describedby"')
-  return new Response(bodyFor(request, body), { status, headers })
+
+  if (representation === "text/markdown") {
+    const resources = links.length ? `\n\n${links.map((link) => `- [${link.label}](${link.url})`).join("\n")}` : ""
+    headers.set("Content-Type", "text/markdown; charset=utf-8")
+    return new Response(bodyFor(request, `# ${title}\n\n${message}${resources}\n`), { status, headers })
+  }
+
+  const resources = links.length
+    ? `<ul>${links.map((link) => `<li><a href="${link.url}">${link.label}</a></li>`).join("")}</ul>`
+    : ""
+  headers.set("Content-Type", "text/html; charset=utf-8")
+  return new Response(
+    bodyFor(
+      request,
+      `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${title} | Xal</title></head><body><main><h1>${title}</h1><p>${message}</p>${resources}</main></body></html>`,
+    ),
+    { status, headers },
+  )
 }
 
 function notFound(request: Request): Response {
-  return markdownResponse(
+  return pageErrorResponse(
     request,
-    `# 404: Xal resource not found
-
-No page or file exists at this URL. Continue with one of these official indexes:
-
-- [Xal documentation](https://xal.sh/docs)
-- [Xal developer resources](https://xal.sh/developers)
-- [Xal agent index](https://xal.sh/llms.txt)
-- [Xal sitemap](https://xal.sh/sitemap.xml)
-`,
     404,
+    "404: Xal resource not found",
+    "No page or file exists at this URL. Continue with one of these official indexes:",
+    [
+      { label: "Xal documentation", url: "https://xal.sh/docs" },
+      { label: "Xal developer resources", url: "https://xal.sh/developers" },
+      { label: "Xal agent index", url: "https://xal.sh/llms.txt" },
+      { label: "Xal sitemap", url: "https://xal.sh/sitemap.xml" },
+    ],
   )
 }
 
 function notAcceptable(request: Request): Response {
-  return markdownResponse(
-    request,
-    "# 406: Not Acceptable\n\nThis page is available as `text/html` or `text/markdown`. Update the `Accept` header and retry.\n",
-    406,
+  const headers = new Headers({ "Content-Type": "text/plain; charset=utf-8" })
+  addNegotiationHeaders(headers)
+  headers.set("Link", '</llms.txt>; rel="describedby"')
+  return new Response(
+    bodyFor(
+      request,
+      "406: Not Acceptable\n\nThis page is available as text/html or text/markdown. Update the Accept header and retry.\n",
+    ),
+    { status: 406, headers },
   )
 }
 
@@ -204,10 +234,11 @@ export async function handleRequest(request: Request, env: WorkerEnvironment): P
 
   if (pathname === "/install" || /\.[a-z0-9]+$/i.test(pathname)) return staticResponse(request, env)
   if (request.method !== "GET" && request.method !== "HEAD") {
-    const response = markdownResponse(
+    const response = pageErrorResponse(
       request,
-      "# 405: Method Not Allowed\n\nPublic Xal pages support GET and HEAD. Retry with one of those methods.\n",
       405,
+      "405: Method Not Allowed",
+      "Public Xal pages support GET and HEAD. Retry with one of those methods.",
     )
     response.headers.set("Allow", "GET, HEAD")
     return response

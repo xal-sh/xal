@@ -119,7 +119,7 @@ export function llmsFullText(documents: Document[]): string {
 
 export function docsIndexMarkdown(documents: Document[]): string {
   const entries = documents
-    .map((document) => `- [${document.title}](/docs/${document.slug}): ${document.intro}`)
+    .map((document) => `- [${document.title}](${markdownUrl(`/docs/${document.slug}`)}): ${document.intro}`)
     .join("\n")
   return `# Xal documentation\n\nLearn how to install, configure, extend, and operate Xal.\n\n${entries}\n`
 }

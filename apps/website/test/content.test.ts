@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, test } from "bun:test"
 import { GlobalRegistrator } from "@happy-dom/global-registrator"
-import { jsonLd, llmsText } from "../src/agent-resources.ts"
+import { docsIndexMarkdown, jsonLd, llmsText } from "../src/agent-resources.ts"
 import { blocksMarkdown } from "../src/content/markdown.ts"
 import * as content from "../src/content/sections.ts"
 import type { Document } from "../src/docs/render.ts"
@@ -51,7 +51,10 @@ describe("server-rendered content", () => {
 
   test("publishes substantial About, Contact, and Privacy content", () => {
     expect(blocksMarkdown(content.about).length).toBeGreaterThan(500)
-    expect(blocksMarkdown(content.contact).length).toBeGreaterThan(500)
+    const contact = blocksMarkdown(content.contact)
+    expect(contact.length).toBeGreaterThan(500)
+    expect(contact).toContain("https://github.com/xal-sh/xal/security/advisories/new")
+    expect(contact).not.toContain("establish a private reporting channel")
     expect(blocksMarkdown(content.privacy).length).toBeGreaterThan(500)
   })
 })
@@ -65,6 +68,7 @@ describe("agent resources", () => {
     expect(llms).toContain("https://xal.sh/openapi.json")
     expect(llms).toContain("https://xal.sh/docs/install/index.md")
     expect(llms).toContain("webhooks status")
+    expect(docsIndexMarkdown(documents)).toContain("https://xal.sh/docs/install/index.md")
   })
 
   test("publishes SoftwareApplication and Organization JSON-LD", () => {

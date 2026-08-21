@@ -56,8 +56,8 @@ describe("content negotiation", () => {
   test("returns 406 when no representation is acceptable", async () => {
     const response = await request("/about", { headers: { Accept: "application/pdf" } })
     expect(response.status).toBe(406)
-    expect(response.headers.get("content-type")).toBe("text/markdown; charset=utf-8")
-    expect(await response.text()).toContain("Update the `Accept` header")
+    expect(response.headers.get("content-type")).toBe("text/plain; charset=utf-8")
+    expect(await response.text()).toContain("Update the Accept header")
   })
 
   test("passes the extensionless installer through unchanged", async () => {
@@ -69,14 +69,38 @@ describe("content negotiation", () => {
 })
 
 describe("agent-friendly errors", () => {
-  test("returns a real Markdown 404 with recovery links", async () => {
-    const response = await request("/missing-resource")
+  test("returns HTML 404s to browsers with recovery links", async () => {
+    for (const init of [undefined, { headers: { Accept: "text/html" } }]) {
+      const response = await request("/missing-resource", init)
+      expect(response.status).toBe(404)
+      expect(response.headers.get("content-type")).toBe("text/html; charset=utf-8")
+      const body = await response.text()
+      expect(body).toContain("<h1>404: Xal resource not found</h1>")
+      expect(body).toContain('href="https://xal.sh/llms.txt"')
+      expect(body).toContain('href="https://xal.sh/sitemap.xml"')
+    }
+  })
+
+  test("returns Markdown 404s to agents with recovery links", async () => {
+    const response = await request("/missing-resource", { headers: { Accept: "text/markdown" } })
     expect(response.status).toBe(404)
     expect(response.headers.get("content-type")).toBe("text/markdown; charset=utf-8")
     const body = await response.text()
-    expect(body).toContain("# 404")
+    expect(body).toContain("# 404: Xal resource not found")
     expect(body).toContain("https://xal.sh/llms.txt")
     expect(body).toContain("https://xal.sh/sitemap.xml")
+  })
+
+  test("negotiates page method errors", async () => {
+    const html = await request("/about", { method: "POST", headers: { Accept: "text/html" } })
+    expect(html.status).toBe(405)
+    expect(html.headers.get("content-type")).toBe("text/html; charset=utf-8")
+    expect(await html.text()).toContain("<h1>405: Method Not Allowed</h1>")
+
+    const markdown = await request("/about", { method: "POST", headers: { Accept: "text/markdown" } })
+    expect(markdown.status).toBe(405)
+    expect(markdown.headers.get("content-type")).toBe("text/markdown; charset=utf-8")
+    expect(await markdown.text()).toStartWith("# 405: Method Not Allowed")
   })
 
   test("returns structured JSON for unknown API routes", async () => {

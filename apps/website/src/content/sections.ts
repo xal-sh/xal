@@ -279,7 +279,7 @@ export const contact: Block[] = [
       },
       {
         kind: "paragraph",
-        text: "Do not post API keys, access tokens, private repository content, personal data, or unredacted logs in a public issue. If a report describes a security vulnerability, do not publish exploit details. Open an issue that asks the maintainers to establish a private reporting channel, but leave all sensitive technical details out of that issue.",
+        text: "Do not post API keys, access tokens, private repository content, personal data, unredacted logs, or vulnerability details in a public issue. Report security vulnerabilities directly through [GitHub private vulnerability reporting](https://github.com/xal-sh/xal/security/advisories/new), where the report and follow-up discussion remain private between the reporter and Xal maintainers.",
       },
       {
         kind: "paragraph",
