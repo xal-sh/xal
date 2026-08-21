@@ -241,6 +241,9 @@ async fn web_fetch(
         return Ok(interrupted());
     }
     let mut client = Client::builder().redirect(Policy::none());
+    if request.allow_internal != Some(true) {
+        client = client.no_proxy();
+    }
     if !addresses.is_empty() {
         let host = url
             .host_str()

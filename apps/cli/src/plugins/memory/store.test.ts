@@ -42,6 +42,14 @@ describe("native memory store", () => {
     }
   })
 
+  test("rejects oversized memory files", async () => {
+    const path = await memoryPath()
+    await writeFile(path, "x".repeat(16 * 1024 + 1), { mode: 0o600 })
+    const store = createNativeMemoryStore(path)
+
+    await expect(store.load([])).rejects.toThrow("global memory exceeds its 16384-byte limit")
+  })
+
   test("honors cancellation before a write", async () => {
     const store = createNativeMemoryStore(await memoryPath())
     const empty = await store.load([])

@@ -262,12 +262,18 @@ export class McpManager {
     const snapshot = parseToolSnapshot(this.native.toolDescriptors())
     if (snapshot.revision === this.toolRevision) return
     const next = snapshot.tools.map((descriptor) => this.tool(descriptor))
-    for (const tool of this.registeredTools) this.tools.unregister(tool)
+    const previous = this.registeredTools
+    for (const tool of previous) this.tools.unregister(tool)
+    const registered: RegisteredTool[] = []
     try {
-      for (const tool of next) this.tools.register(tool)
+      for (const tool of next) {
+        this.tools.register(tool)
+        registered.push(tool)
+      }
     } catch (error) {
-      for (const tool of next) this.tools.unregister(tool)
-      this.registeredTools = []
+      for (const tool of registered) this.tools.unregister(tool)
+      for (const tool of previous) this.tools.register(tool)
+      this.registeredTools = previous
       throw error
     }
     this.registeredTools = next

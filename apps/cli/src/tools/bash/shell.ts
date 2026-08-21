@@ -90,9 +90,14 @@ function shellExecution(native: NativeShellExecution, onOutput: (text: string) =
   const decoder = new TextDecoder()
   const nativeDone = native.wait()
   let settled = false
-  void nativeDone.finally(() => {
-    settled = true
-  })
+  void nativeDone.then(
+    () => {
+      settled = true
+    },
+    () => {
+      settled = true
+    },
+  )
   const drain = (): void => {
     const bytes = native.drain()
     if (bytes.length === 0) return

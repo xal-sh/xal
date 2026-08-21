@@ -32,9 +32,14 @@ function nativeCommand(launch: string[], environment: NodeJS.ProcessEnv, cwd: st
   const nativeDone = native.wait()
   let pending = Buffer.alloc(0)
   let settled = false
-  void nativeDone.finally(() => {
-    settled = true
-  })
+  void nativeDone.then(
+    () => {
+      settled = true
+    },
+    () => {
+      settled = true
+    },
+  )
   const drain = (): boolean => {
     const chunk = Buffer.from(native.drain())
     if (chunk.length === 0) return false

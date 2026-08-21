@@ -134,7 +134,7 @@ fn read(path: &Path, secrets: &[String]) -> napi::Result<Snapshot> {
         use std::os::windows::fs::OpenOptionsExt;
         options.custom_flags(0x0020_0000);
     }
-    let mut file = options
+    let file = options
         .open(path)
         .map_err(|error| failed(error.to_string()))?;
     let metadata = file.metadata().map_err(|error| failed(error.to_string()))?;
@@ -151,8 +151,9 @@ fn read(path: &Path, secrets: &[String]) -> napi::Result<Snapshot> {
             return Err(invalid("global memory file permissions must be 0600"));
         }
     }
-    let mut bytes = Vec::new();
-    file.read_to_end(&mut bytes)
+    let mut bytes = Vec::with_capacity(MAX_BYTES + 1);
+    file.take((MAX_BYTES + 1) as u64)
+        .read_to_end(&mut bytes)
         .map_err(|error| failed(error.to_string()))?;
     let content =
         String::from_utf8(bytes).map_err(|_| invalid("global memory file is not valid UTF-8"))?;

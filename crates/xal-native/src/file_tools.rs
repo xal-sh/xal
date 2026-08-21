@@ -263,8 +263,13 @@ impl Task for EditTask {
                 self.display_path
             )));
         }
-        let previous_text = String::from_utf8(fs::read(&self.path).map_err(io_error)?)
-            .map_err(|error| invalid(error.to_string()))?;
+        let previous_text =
+            String::from_utf8(fs::read(&self.path).map_err(io_error)?).map_err(|error| {
+                invalid(format!(
+                    "Cannot edit binary file {}: {error}",
+                    self.display_path
+                ))
+            })?;
         let previous = previous_text.encode_utf16().collect::<Vec<_>>();
         let positions = match_positions(&previous, &self.old);
         let matches = checked_count(positions.len(), "edit match")?;
@@ -352,7 +357,12 @@ impl Task for WriteTask {
         let previous = match metadata {
             Some(_) => Some(
                 String::from_utf8(fs::read(&self.path).map_err(io_error)?)
-                    .map_err(|error| invalid(error.to_string()))?
+                    .map_err(|error| {
+                        invalid(format!(
+                            "Cannot write to binary file {}: {error}",
+                            self.display_path
+                        ))
+                    })?
                     .encode_utf16()
                     .collect::<Vec<_>>(),
             ),

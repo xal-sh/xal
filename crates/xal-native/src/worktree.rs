@@ -253,6 +253,8 @@ fn suffix() -> String {
 }
 
 fn repository_key(path: &Path) -> String {
+    #[cfg(not(any(unix, windows)))]
+    compile_error!("repository_key requires unix or windows path encoding");
     let mut hasher = Sha256::new();
     #[cfg(unix)]
     {

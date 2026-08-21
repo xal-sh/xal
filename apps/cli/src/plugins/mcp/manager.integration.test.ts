@@ -9,9 +9,11 @@ const directories: string[] = []
 
 class Registry {
   readonly tools = new Map<string, Tool>()
+  rejectName: string | undefined
 
   register(tool: RegisteredTool): void {
     if ("interactive" in tool || "sessionAware" in tool) throw new Error("unexpected MCP tool type")
+    if (tool.name === this.rejectName) throw new Error(`rejected ${tool.name}`)
     this.tools.set(tool.name, tool)
   }
 
@@ -260,6 +262,48 @@ describe("native MCP manager", () => {
       server.stop(true)
     }
   })
+
+  test("restores registered tools when a catalog replacement fails", async () => {
+    const server = await fakeServer()
+    const registry = new Registry()
+    const manager = new McpManager(
+      [
+        {
+          id: "rollback",
+          enabled: true,
+          timeoutMs: 5_000,
+          transport: "stdio",
+          command: process.execPath,
+          args: [server],
+          env: {},
+        },
+      ],
+      registry,
+    )
+
+    try {
+      await manager.connectAll()
+      const [previousName, tool] = registry.tools.entries().next().value ?? []
+      if (!previousName || !tool) throw new Error("MCP tool was not registered")
+      registry.rejectName = "mcp__rollback__added"
+      await tool.execute(
+        { value: "native" },
+        {
+          cwd: process.cwd(),
+          sessionId: "session",
+          sessionKind: "primary",
+          directory: process.cwd(),
+          signal: new AbortController().signal,
+          update() {},
+        },
+      )
+
+      await waitFor(() => manager.statusLines()[0]?.includes("rejected mcp__rollback__added") ?? false)
+      expect([...registry.tools.keys()]).toEqual([previousName])
+    } finally {
+      await manager.close()
+    }
+  }, 15_000)
 
   test("owns stdio catalogs, dynamic tools, progress, resources, prompts, and shutdown", async () => {
     const server = await fakeServer()
