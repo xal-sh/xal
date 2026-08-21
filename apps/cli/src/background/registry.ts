@@ -82,26 +82,6 @@ export function listBackgroundTasks(): BackgroundTask[] {
   return [...tasks.values()]
 }
 
-export interface BackgroundCounts {
-  runningAgents: number
-  runningJobs: number
-  done: number
-  failed: number
-}
-
-export function backgroundCounts(): BackgroundCounts {
-  const counts = { runningAgents: 0, runningJobs: 0, done: 0, failed: 0 }
-  for (const task of tasks.values()) {
-    const state = task.state()
-    if (state.running) {
-      if (task.kind === "agent") counts.runningAgents += 1
-      else counts.runningJobs += 1
-    } else if (state.ok) counts.done += 1
-    else counts.failed += 1
-  }
-  return counts
-}
-
 function emit(): void {
   lastEmitAt = Date.now()
   if (trailing) {

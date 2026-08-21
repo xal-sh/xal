@@ -41,7 +41,7 @@ interface RowRenderables {
   glyph: TextRenderable
   text: TextRenderable
   status: TextRenderable
-  discover: TextRenderable
+  outcome: TextRenderable
   preview: BoxRenderable
   previewLabels: TextRenderable[]
 }
@@ -277,16 +277,16 @@ export class BackgroundTasks {
     const glyph = label(this.ctx, { content: "", width: FOOTER_ICON_WIDTH })
     const text = label(this.ctx, { content: "", flexGrow: 1, flexShrink: 1, minWidth: 1 })
     const status = label(this.ctx, { content: "", flexShrink: 0, marginLeft: 1 })
-    const discover = label(this.ctx, { content: "", flexShrink: 0, color: COLORS.faint })
+    const outcome = label(this.ctx, { content: "", flexShrink: 0 })
     header.add(glyph)
     header.add(text)
     header.add(status)
-    header.add(discover)
+    header.add(outcome)
     view.add(header)
     const preview = detailPanel(this.ctx, { marginLeft: GUTTER })
     preview.visible = false
     view.add(preview)
-    return { view, glyph, text, status, discover, preview, previewLabels: [] }
+    return { view, glyph, text, status, outcome, preview, previewLabels: [] }
   }
 
   private createMainRow(): MainRow {
@@ -300,7 +300,6 @@ export class BackgroundTasks {
   private render(): void {
     this.scrollToSelected()
     const visibleEnd = Math.min(this.rows.length, this.offset + MAX_VISIBLE)
-    const hasAgents = this.rows.some((entry) => entry.kind === "task" && entry.task.kind === "agent")
     this.rows.forEach((entry, index) => {
       const visible = index >= this.offset && index < visibleEnd
       entry.view.visible = visible
@@ -311,10 +310,6 @@ export class BackgroundTasks {
       const active = index === this.selected
       if (entry.kind === "main") this.renderMain(entry, active)
       else this.renderTask(entry, active)
-      const discover = !this.focusedFlag && index === this.offset ? `↓ ${hasAgents ? "agents" : "tasks"}` : ""
-      entry.discover.content = discover
-      entry.discover.visible = discover.length > 0
-      entry.discover.marginLeft = discover ? 2 : 0
       this.renderPreview(entry, this.expanded && active)
     })
     const hidden = this.rows.length - (visibleEnd - this.offset)
@@ -344,14 +339,18 @@ export class BackgroundTasks {
     return parts.join(" · ")
   }
 
+  private navigationMarker(active: boolean, viewed: boolean): StyledText {
+    if (this.focusedFlag && active) {
+      return new StyledText([paint(COLORS.accent, terminalGlyph("❯", ">"))])
+    }
+    return new StyledText([
+      paint(viewed ? COLORS.foreground : COLORS.faint, terminalGlyph(viewed ? "●" : "○", viewed ? "*" : "o")),
+    ])
+  }
+
   private renderMain(entry: MainRow, active: boolean): void {
     const viewingMain = this.viewedJobId === undefined
-    entry.glyph.content = new StyledText([
-      paint(
-        viewingMain ? COLORS.foreground : COLORS.faint,
-        terminalGlyph(viewingMain ? "●" : "○", viewingMain ? "*" : "o"),
-      ),
-    ])
+    entry.glyph.content = this.navigationMarker(active, viewingMain)
     entry.text.content = active
       ? new StyledText([paint(COLORS.accent, "main")])
       : new StyledText([paint(viewingMain ? COLORS.foreground : COLORS.faint, "main")])
@@ -369,17 +368,14 @@ export class BackgroundTasks {
 
   private renderTask(entry: TaskRow, active: boolean): void {
     const state = entry.task.state()
+    const viewed = entry.task.id === this.viewedJobId
+    entry.outcome.visible = !state.running
+    entry.outcome.marginLeft = state.running ? 0 : 1
+    entry.outcome.content = state.running
+      ? ""
+      : new StyledText([paint(state.ok ? COLORS.success : COLORS.error, state.ok ? "✓" : "x")])
     if (entry.task.kind === "agent") {
-      const viewed = entry.task.id === this.viewedJobId
-      const glyph = state.running ? terminalGlyph(viewed ? "●" : "○", viewed ? "*" : "o") : state.ok ? "✓" : "x"
-      const glyphColor = state.running
-        ? viewed
-          ? COLORS.foreground
-          : COLORS.faint
-        : state.ok
-          ? COLORS.success
-          : COLORS.error
-      entry.glyph.content = new StyledText([paint(glyphColor, glyph)])
+      entry.glyph.content = this.navigationMarker(active, viewed || !state.running)
       const id = active
         ? paint(COLORS.accent, entry.task.id)
         : state.running || viewed
@@ -395,10 +391,10 @@ export class BackgroundTasks {
       entry.status.content = new StyledText([muted(state.running ? running : redactText(state.detail))])
       return
     }
-    const viewed = entry.task.id === this.viewedJobId
-    entry.glyph.content = state.running
-      ? new StyledText([paint(COLORS.agent, spinnerGlyph())])
-      : new StyledText([paint(state.ok ? COLORS.success : COLORS.error, state.ok ? "✓" : "x")])
+    entry.glyph.content =
+      state.running && !(this.focusedFlag && active)
+        ? new StyledText([paint(COLORS.agent, spinnerGlyph())])
+        : this.navigationMarker(active, viewed || !state.running)
     const name = `${entry.task.id} · ${firstLine(redactText(entry.task.title))}${this.ownerSuffix(entry.task)}`
     entry.text.content = active
       ? new StyledText([paint(COLORS.accent, name)])

@@ -39,7 +39,6 @@ function alignedText(text: string): StyledText {
 export class StatusBar {
   readonly view: BoxRenderable
   private readonly activity: TextRenderable
-  private readonly backgroundLabel: TextRenderable
   private readonly goalLabel: TextRenderable
   private readonly modeLabel: TextRenderable
   private readonly meta: TextRenderable
@@ -71,7 +70,6 @@ export class StatusBar {
       paddingRight: FOOTER_RIGHT_PADDING,
     })
     this.activity = label(ctx, { content: "", flexGrow: 1, flexShrink: 1 })
-    this.backgroundLabel = label(ctx, { content: "", flexShrink: 0, marginLeft: 1 })
     this.goalLabel = label(ctx, { content: "", flexShrink: 0, marginLeft: 1 })
     this.modeLabel = label(ctx, { content: "", flexShrink: 0, marginLeft: 1 })
     this.meta = label(ctx, {
@@ -81,7 +79,6 @@ export class StatusBar {
       color: COLORS.faint,
     })
     this.view.add(this.activity)
-    this.view.add(this.backgroundLabel)
     this.view.add(this.goalLabel)
     this.view.add(this.meta)
     this.view.add(this.modeLabel)
@@ -111,11 +108,6 @@ export class StatusBar {
   setThinking(thinking: ThinkingEffort | undefined): void {
     this.thinking = thinking
     this.renderMeta()
-  }
-
-  setBackground(summary: string | undefined): void {
-    this.backgroundLabel.content =
-      summary === undefined ? "" : new StyledText([paint(COLORS.agent, summary), muted(" ·")])
   }
 
   resetGoal(): void {

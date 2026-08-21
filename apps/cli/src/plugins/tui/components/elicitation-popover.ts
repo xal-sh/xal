@@ -399,7 +399,12 @@ export class ElicitationPopover {
       this.openQuestion(this.questionIndex + 1)
       return
     }
-    if (this.answers.every((answer) => answer)) this.openReview()
+    if (!this.answers.every((answer) => answer)) return
+    if (this.questions.length === 1) {
+      this.submit()
+      return
+    }
+    this.openReview()
   }
 
   private openQuestion(index: number): void {

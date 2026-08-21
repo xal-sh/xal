@@ -1,6 +1,6 @@
 import type { BoxRenderable, CliRenderer } from "@opentui/core"
 import type { AgentSession } from "../../agent/session/session"
-import { backgroundCounts, type BackgroundTask } from "../../background/registry"
+import type { BackgroundTask } from "../../background/registry"
 import { runCommand } from "../../commands/run"
 import type { CommandContext, SelectRequest } from "../../commands/types"
 import { describeError } from "../../lib/error"
@@ -24,7 +24,6 @@ import { ShortcutHelp } from "./components/shortcut-help"
 import { StatusBar, STATUS_ROWS } from "./components/status-bar"
 import { TaskList } from "./components/task-list"
 import { saveTuiConfig, type TuiConfig } from "./config"
-import { formatBackgroundSummary } from "./lib/format"
 import { column } from "./lib/renderables"
 import type { MessageHistory } from "./message-history"
 import { Scrollback } from "./scrollback/scrollback"
@@ -155,7 +154,6 @@ export class Screen {
       {
         changed: () => {
           this.jobViewer.refresh()
-          this.statusBar.setBackground(formatBackgroundSummary(backgroundCounts(), shortcuts.help("agents.open")))
           this.syncFooter()
         },
         released: () => {
