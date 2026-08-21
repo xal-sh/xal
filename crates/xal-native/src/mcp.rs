@@ -31,7 +31,7 @@ use tokio::runtime::Runtime;
 
 use crate::tool_contracts::cancellation_flag;
 
-const PROGRESS_CAPACITY: usize = 32;
+const PROGRESS_CAPACITY: usize = 256;
 const MAX_ITEMS_PER_CATALOG: usize = 100_000;
 const MAX_LEGACY_SSE_BUFFER_BYTES: usize = 16 * 1024 * 1024;
 
@@ -109,11 +109,42 @@ struct ProgressEvent {
 }
 
 #[derive(Default)]
+struct ProgressState {
+    senders: HashMap<String, mpsc::SyncSender<ProgressEvent>>,
+    pending: VecDeque<(String, ProgressEvent)>,
+}
+
+impl ProgressState {
+    fn push(&mut self, key: String, event: ProgressEvent) {
+        if let Some(sender) = self.senders.get(&key) {
+            let _ = sender.try_send(event);
+            return;
+        }
+        if self.pending.len() == PROGRESS_CAPACITY {
+            self.pending.pop_front();
+        }
+        self.pending.push_back((key, event));
+    }
+
+    fn register(&mut self, key: String, sender: mpsc::SyncSender<ProgressEvent>) {
+        self.senders.insert(key.clone(), sender.clone());
+        let pending = std::mem::take(&mut self.pending);
+        for (pending_key, event) in pending {
+            if pending_key == key {
+                let _ = sender.try_send(event);
+            } else {
+                self.pending.push_back((pending_key, event));
+            }
+        }
+    }
+}
+
+#[derive(Default)]
 struct HandlerState {
     tool_revision: AtomicU64,
     resource_revision: AtomicU64,
     prompt_revision: AtomicU64,
-    progress: Mutex<HashMap<String, mpsc::SyncSender<ProgressEvent>>>,
+    progress: Mutex<ProgressState>,
 }
 
 #[derive(Clone)]
@@ -133,14 +164,11 @@ impl ClientHandler for Handler {
         _context: NotificationContext<RoleClient>,
     ) -> impl Future<Output = ()> + Send + '_ {
         let key = serde_json::to_string(&params.progress_token).unwrap_or_default();
-        let sender = lock(&self.state.progress).get(&key).cloned();
-        if let Some(sender) = sender {
-            let event = ProgressEvent {
-                progress: params.progress,
-                text: progress_text(&params),
-            };
-            let _ = sender.try_send(event);
-        }
+        let event = ProgressEvent {
+            progress: params.progress,
+            text: progress_text(&params),
+        };
+        lock(&self.state.progress).push(key, event);
         std::future::ready(())
     }
 
@@ -2019,7 +2047,7 @@ impl NativeMcpManager {
                 .ok()
                 .and_then(|handle| serde_json::to_string(&handle.progress_token).ok());
             if let Some(progress_key) = &progress_key {
-                lock(&handler.progress).insert(progress_key.clone(), progress_sender);
+                lock(&handler.progress).register(progress_key.clone(), progress_sender);
             }
             let outcome = match handle {
                 Ok(handle) => await_tool_response(handle, duration, &task_shared.cancelled)
@@ -2038,7 +2066,7 @@ impl NativeMcpManager {
             }
             .map_err(|error| error.to_string());
             if let Some(progress_key) = progress_key {
-                lock(&handler.progress).remove(&progress_key);
+                lock(&handler.progress).senders.remove(&progress_key);
             }
             let _ = result_sender.send(outcome);
         });
@@ -2086,7 +2114,9 @@ fn connected_entries<'a>(
 
 #[cfg(test)]
 mod tests {
-    use super::{native_tool_name, progress_text};
+    use std::sync::mpsc;
+
+    use super::{ProgressEvent, ProgressState, native_tool_name, progress_text};
     use rmcp::model::{NumberOrString, ProgressNotificationParam, ProgressToken};
 
     #[test]
@@ -2099,6 +2129,39 @@ mod tests {
                 .count()
                 <= 64
         );
+    }
+
+    #[test]
+    fn delivers_progress_received_before_registration() {
+        let mut state = ProgressState::default();
+        state.push(
+            "other".to_owned(),
+            ProgressEvent {
+                progress: 1.0,
+                text: "other".to_owned(),
+            },
+        );
+        state.push(
+            "call".to_owned(),
+            ProgressEvent {
+                progress: 1.0,
+                text: "first".to_owned(),
+            },
+        );
+        let (sender, receiver) = mpsc::sync_channel(2);
+        state.register("call".to_owned(), sender);
+        state.push(
+            "call".to_owned(),
+            ProgressEvent {
+                progress: 2.0,
+                text: "second".to_owned(),
+            },
+        );
+
+        assert_eq!(receiver.recv().unwrap().text, "first");
+        assert_eq!(receiver.recv().unwrap().text, "second");
+        assert_eq!(state.pending.len(), 1);
+        assert_eq!(state.pending[0].0, "other");
     }
 
     #[test]
