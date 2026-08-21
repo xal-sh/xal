@@ -587,7 +587,7 @@ export async function selfCheck(): Promise<void> {
     const index = await createNativeWorkspaceIndex(directory, [], "[REDACTED]")
     const result = await index.search("workspace-check")
     const repository = createNativeGitRepository(directory)
-    const discovery = await repository.discover()
+    await repository.discover()
     const git = await repository.run({ args: ["--version"] })
     const child = createNativeProcess({
       launch: [process.execPath, "--version"],
@@ -603,7 +603,6 @@ export async function selfCheck(): Promise<void> {
     if (
       result.kind !== "completed" ||
       result.paths[0] !== "workspace-check.txt" ||
-      discovery.status !== "unavailable" ||
       git.exitCode !== 0 ||
       termination.status !== "exited" ||
       termination.exitCode !== 0

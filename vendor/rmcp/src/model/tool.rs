@@ -70,7 +70,6 @@ pub struct ToolAnnotations {
     /// (This property is meaningful only when `readOnlyHint == false`)
     ///
     /// Default: true
-    /// A human-readable description of the tool's purpose.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub destructive_hint: Option<bool>,
 
@@ -181,7 +180,7 @@ impl Tool {
         }
     }
 
-    /// Create a new tool with just a name and input schema (no description)
+    /// Create a new tool with a name, description, and raw input schema
     pub fn new_with_raw<N, S>(
         name: N,
         description: Option<Cow<'static, str>>,

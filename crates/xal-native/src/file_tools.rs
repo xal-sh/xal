@@ -351,7 +351,8 @@ impl Task for WriteTask {
         }
         let previous = match metadata {
             Some(_) => Some(
-                String::from_utf8_lossy(&fs::read(&self.path).map_err(io_error)?)
+                String::from_utf8(fs::read(&self.path).map_err(io_error)?)
+                    .map_err(|error| invalid(error.to_string()))?
                     .encode_utf16()
                     .collect::<Vec<_>>(),
             ),
@@ -404,7 +405,11 @@ pub fn native_unified_diff(old_text: Utf16String, new_text: Utf16String) -> Nati
 
 #[cfg(test)]
 mod tests {
-    use super::{match_positions, normalized_count, replace_matches};
+    use std::fs;
+
+    use napi::Task;
+
+    use super::{WriteTask, match_positions, normalized_count, replace_matches};
 
     fn units(value: &str) -> Vec<u16> {
         value.encode_utf16().collect()
@@ -421,6 +426,20 @@ mod tests {
             units("next next next")
         );
         assert!(match_positions(&previous, &[]).is_empty());
+    }
+
+    #[test]
+    fn rejects_non_utf8_files_in_write_comparisons() {
+        let path =
+            std::env::temp_dir().join(format!("xal-native-write-test-{}.bin", std::process::id()));
+        fs::write(&path, [0xff]).expect("fixture should write");
+        let mut task = WriteTask {
+            path: path.clone(),
+            display_path: path.display().to_string(),
+            content: units("�"),
+        };
+        assert!(task.compute().is_err());
+        fs::remove_file(path).expect("fixture should clean up");
     }
 
     #[test]

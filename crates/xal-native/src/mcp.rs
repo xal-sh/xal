@@ -33,6 +33,7 @@ use crate::tool_contracts::cancellation_flag;
 
 const PROGRESS_CAPACITY: usize = 32;
 const MAX_ITEMS_PER_CATALOG: usize = 100_000;
+const MAX_LEGACY_SSE_BUFFER_BYTES: usize = 16 * 1024 * 1024;
 
 fn lock<'a, T>(mutex: &'a Mutex<T>) -> MutexGuard<'a, T> {
     mutex
@@ -138,7 +139,7 @@ impl ClientHandler for Handler {
                 progress: params.progress,
                 text: progress_text(&params),
             };
-            let _ = sender.send(event);
+            let _ = sender.try_send(event);
         }
         std::future::ready(())
     }
@@ -259,6 +260,16 @@ struct SseEvent {
     data: String,
 }
 
+fn extend_sse_buffer(buffer: &mut Vec<u8>, chunk: &[u8]) -> napi::Result<()> {
+    if buffer.len().saturating_add(chunk.len()) > MAX_LEGACY_SSE_BUFFER_BYTES {
+        return Err(failed(format!(
+            "legacy MCP SSE event exceeds {MAX_LEGACY_SSE_BUFFER_BYTES} bytes"
+        )));
+    }
+    buffer.extend_from_slice(chunk);
+    Ok(())
+}
+
 fn take_sse_event(buffer: &mut Vec<u8>) -> napi::Result<Option<SseEvent>> {
     let newline = buffer.windows(2).position(|window| window == b"\n\n");
     let carriage = buffer.windows(4).position(|window| window == b"\r\n\r\n");
@@ -341,7 +352,7 @@ impl LegacySseTransport {
                 .await
                 .ok_or_else(|| failed("legacy MCP SSE closed before announcing an endpoint"))?
                 .map_err(|error| failed(format!("legacy MCP SSE failed: {error}")))?;
-            buffer.extend_from_slice(&chunk);
+            extend_sse_buffer(&mut buffer, &chunk)?;
             let mut endpoint = None;
             while let Some(event) = take_sse_event(&mut buffer)? {
                 if event.event == "endpoint" {
@@ -364,8 +375,9 @@ impl LegacySseTransport {
                 let Ok(chunk) = chunk else {
                     return;
                 };
-                buffer.extend_from_slice(&chunk);
-                if process_sse_buffer(&mut buffer, &sender).await.is_err() {
+                if extend_sse_buffer(&mut buffer, &chunk).is_err()
+                    || process_sse_buffer(&mut buffer, &sender).await.is_err()
+                {
                     return;
                 }
             }

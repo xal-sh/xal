@@ -1,32 +1,5 @@
-import { asString, isRecord } from "../../lib/json"
-import { nativeToolRecord, nativeToolString } from "../../native/tool-runtime"
-import type { ElicitationOption, ElicitationQuestion, InteractiveTool } from "../../tools/types"
-
-function nativeOption(value: unknown): ElicitationOption {
-  if (!isRecord(value)) throw new Error("native request_user_input returned an invalid value")
-  const label = asString(value.label)
-  const description = asString(value.description)
-  if (label === undefined || description === undefined) {
-    throw new Error("native request_user_input returned an invalid value")
-  }
-  return { label, description }
-}
-
-export function nativeQuestions(value: unknown): ElicitationQuestion[] {
-  if (!Array.isArray(value)) throw new Error("native request_user_input returned an invalid value")
-  return value.map((entry) => {
-    if (!isRecord(entry) || !Array.isArray(entry.options)) {
-      throw new Error("native request_user_input returned an invalid value")
-    }
-    const id = asString(entry.id)
-    const header = asString(entry.header)
-    const question = asString(entry.question)
-    if (id === undefined || header === undefined || question === undefined) {
-      throw new Error("native request_user_input returned an invalid value")
-    }
-    return { id, header, question, options: entry.options.map(nativeOption) }
-  })
-}
+import { nativeQuestions, nativeToolRecord, nativeToolString } from "../../native/tool-runtime"
+import type { InteractiveTool } from "../../tools/types"
 
 export const requestUserInputTool: InteractiveTool = {
   name: "request_user_input",

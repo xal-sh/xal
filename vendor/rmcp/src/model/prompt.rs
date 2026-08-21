@@ -185,32 +185,15 @@ impl PromptMessage {
 
     pub fn new_resource(
         role: Role,
-        uri: String,
-        mime_type: Option<String>,
-        text: Option<String>,
+        resource: ResourceContents,
         resource_meta: Option<MetaObject>,
-        resource_content_meta: Option<MetaObject>,
         annotations: Option<Annotations>,
     ) -> Self {
-        let resource_contents = match text {
-            Some(t) => ResourceContents::TextResourceContents {
-                uri,
-                mime_type,
-                text: t,
-                meta: resource_content_meta,
-            },
-            None => ResourceContents::BlobResourceContents {
-                uri,
-                mime_type,
-                blob: String::new(),
-                meta: resource_content_meta,
-            },
-        };
         Self {
             role,
             content: ContentBlock::Resource(EmbeddedResource {
                 meta: resource_meta,
-                resource: resource_contents,
+                resource,
                 annotations,
             }),
         }
@@ -304,10 +287,12 @@ mod tests {
     fn test_prompt_message_resource_serialization_is_flat() {
         let message = PromptMessage::new_resource(
             Role::User,
-            "alc://packages/sc/narrative".to_string(),
-            Some("text/markdown".to_string()),
-            Some("# Hello".to_string()),
-            None,
+            ResourceContents::TextResourceContents {
+                uri: "alc://packages/sc/narrative".to_string(),
+                mime_type: Some("text/markdown".to_string()),
+                text: "# Hello".to_string(),
+                meta: None,
+            },
             None,
             None,
         );

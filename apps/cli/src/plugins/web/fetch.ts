@@ -10,6 +10,17 @@ export async function htmlToMarkdown(html: string): Promise<string> {
   return nativeHtmlToMarkdown(html)
 }
 
+export function fetchUrl(url: string, signal: AbortSignal, allowInternal = false): Promise<{ output: string }> {
+  return nativeWebFetch(
+    {
+      url,
+      userAgent: `${appInfo.name}/${appInfo.version}`,
+      ...(allowInternal ? { allowInternal: true } : {}),
+    },
+    signal,
+  )
+}
+
 function parseHttpUrl(raw: string): URL | undefined {
   const url = URL.parse(raw)
   if (!url) return undefined

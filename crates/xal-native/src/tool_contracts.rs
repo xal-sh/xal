@@ -38,7 +38,9 @@ pub fn normalize_path(path: &Path) -> PathBuf {
         match component {
             Component::CurDir => {}
             Component::ParentDir => {
-                if !output.pop() && !path.is_absolute() {
+                if matches!(output.components().next_back(), Some(Component::Normal(_))) {
+                    output.pop();
+                } else if !path.has_root() {
                     output.push("..");
                 }
             }
@@ -59,7 +61,11 @@ pub fn truncate_utf16(value: &str, limit: usize, suffix: &str) -> Vec<u16> {
     if units.len() <= limit {
         return units;
     }
-    let mut truncated = units[..limit].to_vec();
+    let mut end = limit;
+    if end > 0 && (0xd800..=0xdbff).contains(&units[end - 1]) {
+        end -= 1;
+    }
+    let mut truncated = units[..end].to_vec();
     truncated.extend(suffix.encode_utf16());
     truncated
 }
@@ -101,5 +107,15 @@ mod tests {
         );
         let units = truncate_utf16("a😀b", 3, "…");
         assert_eq!(utf16_lossy(&units), "a😀…");
+        assert_eq!(utf16_lossy(&truncate_utf16("a😀b", 2, "…")), "a…");
+        assert_eq!(
+            normalize_path(Path::new("../../a/../b")),
+            Path::new("../../b")
+        );
+        #[cfg(unix)]
+        {
+            assert_eq!(normalize_path(Path::new("/a/../..")), Path::new("/"));
+            assert_eq!(normalize_path(Path::new("/a/../../b")), Path::new("/b"));
+        }
     }
 }

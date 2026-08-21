@@ -797,8 +797,11 @@ fn memory_prepare(value: &Value) -> napi::Result<Value> {
             .insert("revision".to_owned(), json!(revision));
     }
     if operation == "replace" {
-        let content =
-            string(request, "content").ok_or_else(|| invalid("content is required for replace"))?;
+        let content = string(request, "content")
+            .filter(|content| !content.trim().is_empty())
+            .ok_or_else(|| {
+                invalid("content is required for replace; use clear to erase global memory")
+            })?;
         output
             .as_object_mut()
             .ok_or_else(|| invalid("native memory request is invalid"))?
@@ -1021,7 +1024,9 @@ impl NativeToolRuntime {
 
 #[cfg(test)]
 mod tests {
-    use super::{request_input_prepare, run, task_finalize, task_prepare, update_tasks};
+    use super::{
+        memory_prepare, request_input_prepare, run, task_finalize, task_prepare, update_tasks,
+    };
 
     #[test]
     fn validates_and_formats_tasks() {
@@ -1037,6 +1042,24 @@ mod tests {
         )
         .unwrap();
         assert!(output.contains("Spawned 1 background agent"));
+    }
+
+    #[test]
+    fn rejects_empty_memory_replacements() {
+        assert!(
+            run(
+                r#"{"operation":"replace","revision":"revision","content":"  "}"#.to_owned(),
+                memory_prepare,
+            )
+            .is_err()
+        );
+        assert!(
+            run(
+                r#"{"operation":"clear","revision":"revision"}"#.to_owned(),
+                memory_prepare,
+            )
+            .is_ok()
+        );
     }
 
     #[test]

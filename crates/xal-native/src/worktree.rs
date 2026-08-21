@@ -1,8 +1,6 @@
 #![cfg_attr(test, allow(dead_code))]
 
-use std::collections::HashMap;
 use std::fs::{self, OpenOptions};
-use std::hash::{Hash, Hasher};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, atomic::AtomicBool};
@@ -11,6 +9,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use napi::bindgen_prelude::{AbortSignal, AsyncTask};
 use napi::{Env, Error, Status, Task};
 use napi_derive::napi;
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use crate::file_tools::NativeToolOutput;
 use crate::git::run_git;
@@ -28,6 +28,46 @@ pub struct NativeManagedWorktree {
     pub cwd: String,
     pub branch: String,
     pub base_commit: String,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct MarkerRecord {
+    version: u32,
+    repository_root: String,
+    original_cwd: String,
+    path: String,
+    cwd: String,
+    branch: String,
+    base_commit: String,
+}
+
+impl From<&NativeManagedWorktree> for MarkerRecord {
+    fn from(worktree: &NativeManagedWorktree) -> Self {
+        Self {
+            version: worktree.version,
+            repository_root: worktree.repository_root.clone(),
+            original_cwd: worktree.original_cwd.clone(),
+            path: worktree.path.clone(),
+            cwd: worktree.cwd.clone(),
+            branch: worktree.branch.clone(),
+            base_commit: worktree.base_commit.clone(),
+        }
+    }
+}
+
+impl From<MarkerRecord> for NativeManagedWorktree {
+    fn from(record: MarkerRecord) -> Self {
+        Self {
+            version: record.version,
+            repository_root: record.repository_root,
+            original_cwd: record.original_cwd,
+            path: record.path,
+            cwd: record.cwd,
+            branch: record.branch,
+            base_commit: record.base_commit,
+        }
+    }
 }
 
 #[napi(object)]
@@ -213,28 +253,23 @@ fn suffix() -> String {
 }
 
 fn repository_key(path: &Path) -> String {
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    path.hash(&mut hasher);
-    format!("{:016x}", hasher.finish())
-}
-
-fn json_string(value: &str) -> String {
-    let mut output = String::from("\"");
-    for character in value.chars() {
-        match character {
-            '\"' => output.push_str("\\\""),
-            '\\' => output.push_str("\\\\"),
-            '\n' => output.push_str("\\n"),
-            '\r' => output.push_str("\\r"),
-            '\t' => output.push_str("\\t"),
-            character if character < ' ' => {
-                output.push_str(&format!("\\u{:04x}", u32::from(character)))
-            }
-            character => output.push(character),
+    let mut hasher = Sha256::new();
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        hasher.update(path.as_os_str().as_bytes());
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        for unit in path.as_os_str().encode_wide() {
+            hasher.update(unit.to_le_bytes());
         }
     }
-    output.push('\"');
-    output
+    hasher.finalize()[..8]
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
 fn write_new_secure(path: &Path, text: &str) -> napi::Result<()> {
@@ -269,309 +304,27 @@ fn write_new_secure(path: &Path, text: &str) -> napi::Result<()> {
     result
 }
 
-fn marker_json(worktree: &NativeManagedWorktree) -> String {
-    format!(
-        "{{\n  \"version\": 1,\n  \"repositoryRoot\": {},\n  \"originalCwd\": {},\n  \"path\": {},\n  \"cwd\": {},\n  \"branch\": {},\n  \"baseCommit\": {}\n}}\n",
-        json_string(&worktree.repository_root),
-        json_string(&worktree.original_cwd),
-        json_string(&worktree.path),
-        json_string(&worktree.cwd),
-        json_string(&worktree.branch),
-        json_string(&worktree.base_commit),
-    )
-}
-
-struct JsonParser<'a> {
-    bytes: &'a [u8],
-    cursor: usize,
-}
-
-impl JsonParser<'_> {
-    fn whitespace(&mut self) {
-        while self
-            .bytes
-            .get(self.cursor)
-            .is_some_and(u8::is_ascii_whitespace)
-        {
-            self.cursor += 1;
-        }
-    }
-
-    fn byte(&mut self, expected: u8) -> Option<()> {
-        self.whitespace();
-        if self.bytes.get(self.cursor) != Some(&expected) {
-            return None;
-        }
-        self.cursor += 1;
-        Some(())
-    }
-
-    fn string(&mut self) -> Option<String> {
-        self.byte(b'\"')?;
-        let mut output = String::new();
-        loop {
-            let byte = *self.bytes.get(self.cursor)?;
-            self.cursor += 1;
-            match byte {
-                b'\"' => return Some(output),
-                b'\\' => {
-                    let escaped = *self.bytes.get(self.cursor)?;
-                    self.cursor += 1;
-                    match escaped {
-                        b'\"' => output.push('\"'),
-                        b'\\' => output.push('\\'),
-                        b'/' => output.push('/'),
-                        b'b' => output.push('\u{0008}'),
-                        b'f' => output.push('\u{000c}'),
-                        b'n' => output.push('\n'),
-                        b'r' => output.push('\r'),
-                        b't' => output.push('\t'),
-                        b'u' => {
-                            let first = self.unicode_unit()?;
-                            let scalar = if (0xd800..=0xdbff).contains(&first) {
-                                let escape_end = self.cursor.checked_add(2)?;
-                                if self.bytes.get(self.cursor..escape_end)? != b"\\u" {
-                                    return None;
-                                }
-                                self.cursor += 2;
-                                let second = self.unicode_unit()?;
-                                if !(0xdc00..=0xdfff).contains(&second) {
-                                    return None;
-                                }
-                                0x1_0000
-                                    + ((u32::from(first) - 0xd800) << 10)
-                                    + (u32::from(second) - 0xdc00)
-                            } else if (0xdc00..=0xdfff).contains(&first) {
-                                return None;
-                            } else {
-                                u32::from(first)
-                            };
-                            output.push(char::from_u32(scalar)?);
-                        }
-                        _ => return None,
-                    }
-                }
-                byte if byte < 0x20 => return None,
-                _ => {
-                    let start = self.cursor - 1;
-                    let width = std::str::from_utf8(&self.bytes[start..])
-                        .ok()?
-                        .chars()
-                        .next()?
-                        .len_utf8();
-                    let character =
-                        std::str::from_utf8(self.bytes.get(start..start + width)?).ok()?;
-                    output.push_str(character);
-                    self.cursor = start + width;
-                }
-            }
-        }
-    }
-
-    fn unicode_unit(&mut self) -> Option<u16> {
-        let end = self.cursor.checked_add(4)?;
-        let digits = std::str::from_utf8(self.bytes.get(self.cursor..end)?).ok()?;
-        self.cursor = end;
-        u16::from_str_radix(digits, 16).ok()
-    }
-
-    fn number(&mut self) -> Option<u32> {
-        self.whitespace();
-        let start = self.cursor;
-        while self.bytes.get(self.cursor).is_some_and(u8::is_ascii_digit) {
-            self.cursor += 1;
-        }
-        std::str::from_utf8(self.bytes.get(start..self.cursor)?)
-            .ok()?
-            .parse()
-            .ok()
-    }
-
-    fn literal(&mut self, expected: &[u8]) -> Option<()> {
-        self.whitespace();
-        let end = self.cursor.checked_add(expected.len())?;
-        if self.bytes.get(self.cursor..end)? != expected {
-            return None;
-        }
-        self.cursor = end;
-        Some(())
-    }
-
-    fn skip_number(&mut self) -> Option<()> {
-        self.whitespace();
-        let start = self.cursor;
-        if self.bytes.get(self.cursor) == Some(&b'-') {
-            self.cursor += 1;
-        }
-        match self.bytes.get(self.cursor) {
-            Some(b'0') => self.cursor += 1,
-            Some(b'1'..=b'9') => {
-                self.cursor += 1;
-                while self.bytes.get(self.cursor).is_some_and(u8::is_ascii_digit) {
-                    self.cursor += 1;
-                }
-            }
-            _ => return None,
-        }
-        if self.bytes.get(self.cursor) == Some(&b'.') {
-            self.cursor += 1;
-            let fraction = self.cursor;
-            while self.bytes.get(self.cursor).is_some_and(u8::is_ascii_digit) {
-                self.cursor += 1;
-            }
-            if self.cursor == fraction {
-                return None;
-            }
-        }
-        if self
-            .bytes
-            .get(self.cursor)
-            .is_some_and(|byte| *byte == b'e' || *byte == b'E')
-        {
-            self.cursor += 1;
-            if self
-                .bytes
-                .get(self.cursor)
-                .is_some_and(|byte| *byte == b'+' || *byte == b'-')
-            {
-                self.cursor += 1;
-            }
-            let exponent = self.cursor;
-            while self.bytes.get(self.cursor).is_some_and(u8::is_ascii_digit) {
-                self.cursor += 1;
-            }
-            if self.cursor == exponent {
-                return None;
-            }
-        }
-        (self.cursor > start).then_some(())
-    }
-
-    fn skip_value(&mut self) -> Option<()> {
-        self.whitespace();
-        match self.bytes.get(self.cursor).copied()? {
-            b'"' => self.string().map(|_| ()),
-            b'{' => self.skip_object(),
-            b'[' => self.skip_array(),
-            b't' => self.literal(b"true"),
-            b'f' => self.literal(b"false"),
-            b'n' => self.literal(b"null"),
-            b'-' | b'0'..=b'9' => self.skip_number(),
-            _ => None,
-        }
-    }
-
-    fn skip_object(&mut self) -> Option<()> {
-        self.byte(b'{')?;
-        self.whitespace();
-        if self.bytes.get(self.cursor) == Some(&b'}') {
-            self.cursor += 1;
-            return Some(());
-        }
-        loop {
-            self.string()?;
-            self.byte(b':')?;
-            self.skip_value()?;
-            self.whitespace();
-            match self.bytes.get(self.cursor) {
-                Some(b',') => self.cursor += 1,
-                Some(b'}') => {
-                    self.cursor += 1;
-                    return Some(());
-                }
-                _ => return None,
-            }
-        }
-    }
-
-    fn skip_array(&mut self) -> Option<()> {
-        self.byte(b'[')?;
-        self.whitespace();
-        if self.bytes.get(self.cursor) == Some(&b']') {
-            self.cursor += 1;
-            return Some(());
-        }
-        loop {
-            self.skip_value()?;
-            self.whitespace();
-            match self.bytes.get(self.cursor) {
-                Some(b',') => self.cursor += 1,
-                Some(b']') => {
-                    self.cursor += 1;
-                    return Some(());
-                }
-                _ => return None,
-            }
-        }
-    }
-}
-
-fn valid_json(text: &str) -> bool {
-    let mut parser = JsonParser {
-        bytes: text.as_bytes(),
-        cursor: 0,
-    };
-    if parser.skip_value().is_none() {
-        return false;
-    }
-    parser.whitespace();
-    parser.cursor == parser.bytes.len()
+fn marker_json(worktree: &NativeManagedWorktree) -> napi::Result<String> {
+    serde_json::to_string_pretty(&MarkerRecord::from(worktree))
+        .map(|text| format!("{text}\n"))
+        .map_err(|error| failed(error.to_string()))
 }
 
 fn parse_marker(text: &str) -> Option<NativeManagedWorktree> {
-    let mut parser = JsonParser {
-        bytes: text.as_bytes(),
-        cursor: 0,
-    };
-    parser.byte(b'{')?;
-    let mut strings = HashMap::new();
-    let mut version = None;
-    loop {
-        parser.whitespace();
-        if parser.bytes.get(parser.cursor) == Some(&b'}') {
-            parser.cursor += 1;
-            break;
-        }
-        let key = parser.string()?;
-        parser.byte(b':')?;
-        if key == "version" {
-            version = Some(parser.number()?);
-        } else {
-            strings.insert(key, parser.string()?);
-        }
-        parser.whitespace();
-        match parser.bytes.get(parser.cursor) {
-            Some(b',') => parser.cursor += 1,
-            Some(b'}') => continue,
-            _ => return None,
-        }
-    }
-    parser.whitespace();
-    if parser.cursor != parser.bytes.len() || version != Some(1) {
-        return None;
-    }
-    let repository_root = strings.remove("repositoryRoot")?;
-    let original_cwd = strings.remove("originalCwd")?;
-    let path = strings.remove("path")?;
-    let cwd = strings.remove("cwd")?;
-    let branch = strings.remove("branch")?;
-    let base_commit = strings.remove("baseCommit")?;
-    if !strings.is_empty()
-        || ![&repository_root, &original_cwd, &path, &cwd]
-            .iter()
-            .all(|value| Path::new(value).is_absolute())
+    let record = serde_json::from_str::<MarkerRecord>(text).ok()?;
+    if record.version != 1
+        || ![
+            &record.repository_root,
+            &record.original_cwd,
+            &record.path,
+            &record.cwd,
+        ]
+        .iter()
+        .all(|value| Path::new(value).is_absolute())
     {
         return None;
     }
-    Some(NativeManagedWorktree {
-        version: 1,
-        repository_root,
-        original_cwd,
-        path,
-        cwd,
-        branch,
-        base_commit,
-    })
+    Some(record.into())
 }
 
 fn marker_path(
@@ -598,7 +351,7 @@ fn lookup(
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(failed(error.to_string())),
     };
-    if !valid_json(&text) {
+    if serde_json::from_str::<serde_json::Value>(&text).is_err() {
         return Err(failed(format!(
             "{} is malformed — fix or delete it",
             marker.display()
@@ -740,7 +493,7 @@ fn create(
             )));
         }
         let marker = marker_path(&path, request, cancelled)?;
-        write_new_secure(&marker, &marker_json(&worktree))
+        write_new_secure(&marker, &marker_json(&worktree)?)
     })();
     if let Err(error) = result {
         return Err(rollback_error(
@@ -1031,7 +784,7 @@ pub fn native_unmanage_worktree(
 mod tests {
     use super::{
         NativeManagedWorktree, NativeWorktreeToolRequest, marker_json,
-        native_prepare_worktree_tool, parse_marker, valid_json,
+        native_prepare_worktree_tool, parse_marker,
     };
 
     #[test]
@@ -1045,7 +798,8 @@ mod tests {
             branch: "xal/branch".to_owned(),
             base_commit: "abcdef".to_owned(),
         };
-        let parsed = parse_marker(&marker_json(&worktree)).expect("marker should parse");
+        let text = marker_json(&worktree).expect("marker should serialize");
+        let parsed = parse_marker(&text).expect("marker should parse");
         assert_eq!(parsed.repository_root, worktree.repository_root);
         assert_eq!(parsed.cwd, worktree.cwd);
         assert_eq!(parsed.branch, worktree.branch);
@@ -1058,8 +812,10 @@ mod tests {
             parse_marker(text).expect("marker should parse").branch,
             "😀"
         );
-        assert!(valid_json("{\"valid\": [true, null, -1.5e2]}"));
-        assert!(!valid_json("{broken"));
+        assert!(parse_marker(&text.replace("\"baseCommit\"", "\"unknown\"")).is_none());
+        assert!(
+            parse_marker(&text.replace("\"version\":1", "\"version\":1,\"version\":1")).is_none()
+        );
     }
 
     #[test]

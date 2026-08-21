@@ -3,8 +3,7 @@ import { appInfo } from "../app-info"
 import { writeSecureText } from "../lib/fs"
 import { MAX_PLAN_LENGTH, parseSessionPlan, type SessionPlan } from "./types"
 import type { InteractiveTool } from "../tools/types"
-import { nativeToolRecord, nativeToolString } from "../native/tool-runtime"
-import { nativeQuestions } from "../plugins/ask/tool"
+import { nativeQuestions, nativeToolRecord, nativeToolString } from "../native/tool-runtime"
 
 const RESTART_PROMPT =
   "A previous agent produced the plan below to accomplish the user's task. Implement the plan in a fresh context. Treat the plan as the source of user intent, re-read files as needed, and carry the work through implementation and verification."

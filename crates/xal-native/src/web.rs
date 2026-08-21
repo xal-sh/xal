@@ -1,5 +1,6 @@
 #![cfg_attr(test, allow(dead_code))]
 
+use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
@@ -25,6 +26,7 @@ const TIMEOUT_SECONDS: u64 = 30;
 pub struct NativeWebFetchRequest {
     pub url: Option<String>,
     pub user_agent: String,
+    pub allow_internal: Option<bool>,
 }
 
 pub struct WebFetchTask {
@@ -42,6 +44,70 @@ fn failed(message: impl Into<String>) -> Error {
 
 fn interrupted() -> String {
     "(interrupted by user)".to_owned()
+}
+
+fn internal_address(address: IpAddr) -> bool {
+    match address {
+        IpAddr::V4(address) => {
+            let octets = address.octets();
+            address.is_private()
+                || address.is_loopback()
+                || address.is_link_local()
+                || address.is_unspecified()
+                || address.is_broadcast()
+                || address.is_multicast()
+                || octets[0] >= 240
+                || (octets[0] == 100 && (64..=127).contains(&octets[1]))
+        }
+        IpAddr::V6(address) => {
+            address.is_loopback()
+                || address.is_unspecified()
+                || address.is_unique_local()
+                || address.is_unicast_link_local()
+                || address.is_multicast()
+                || address
+                    .to_ipv4_mapped()
+                    .is_some_and(|address| internal_address(IpAddr::V4(address)))
+        }
+    }
+}
+
+async fn resolve_target(url: &reqwest13::Url) -> napi::Result<Vec<SocketAddr>> {
+    let host = url
+        .host_str()
+        .ok_or_else(|| invalid(format!("URL has no host: {url}")))?;
+    let port = url
+        .port_or_known_default()
+        .ok_or_else(|| invalid(format!("URL has no port: {url}")))?;
+    let host = host.to_owned();
+    let addresses = tokio::time::timeout(
+        Duration::from_secs(TIMEOUT_SECONDS),
+        tokio::task::spawn_blocking(move || {
+            (host.as_str(), port)
+                .to_socket_addrs()
+                .map(|addresses| addresses.collect::<Vec<_>>())
+        }),
+    )
+    .await
+    .map_err(|_| {
+        failed(format!(
+            "DNS lookup timed out after {TIMEOUT_SECONDS} seconds: {url}"
+        ))
+    })?
+    .map_err(|error| failed(error.to_string()))?
+    .map_err(|error| failed(error.to_string()))?;
+    if addresses.is_empty() {
+        return Err(failed(format!("URL host did not resolve: {url}")));
+    }
+    if addresses
+        .iter()
+        .any(|address| internal_address(address.ip()))
+    {
+        return Err(invalid(format!(
+            "URL resolves to an internal address: {url}"
+        )));
+    }
+    Ok(addresses)
 }
 
 fn binary_type(content_type: &str) -> bool {
@@ -166,8 +232,22 @@ async fn web_fetch(
     if cancelled.load(Ordering::Relaxed) {
         return Ok(interrupted());
     }
-    let client = Client::builder()
-        .redirect(Policy::none())
+    let addresses = if request.allow_internal == Some(true) {
+        Vec::new()
+    } else {
+        resolve_target(&url).await?
+    };
+    if cancelled.load(Ordering::Relaxed) {
+        return Ok(interrupted());
+    }
+    let mut client = Client::builder().redirect(Policy::none());
+    if !addresses.is_empty() {
+        let host = url
+            .host_str()
+            .ok_or_else(|| invalid(format!("URL has no host: {url}")))?;
+        client = client.resolve_to_addrs(host, &addresses);
+    }
+    let client = client
         .timeout(Duration::from_secs(TIMEOUT_SECONDS))
         .build()
         .map_err(|error| failed(error.to_string()))?;

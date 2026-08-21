@@ -874,11 +874,24 @@ fn text_document_sync(capabilities: &Value) -> TextDocumentSync {
 }
 
 fn end_position(text: &str) -> Value {
-    let lines = text.split(['\r', '\n']).collect::<Vec<_>>();
-    json!({
-        "line": lines.len().saturating_sub(1),
-        "character": lines.last().map_or(0, |line| line.encode_utf16().count())
-    })
+    let mut line = 0;
+    let mut character = 0;
+    let mut characters = text.chars().peekable();
+    while let Some(current) = characters.next() {
+        if current == '\r' {
+            if characters.peek() == Some(&'\n') {
+                characters.next();
+            }
+            line += 1;
+            character = 0;
+        } else if current == '\n' {
+            line += 1;
+            character = 0;
+        } else {
+            character += current.len_utf16();
+        }
+    }
+    json!({ "line": line, "character": character })
 }
 
 fn parse_query(request: &str) -> napi::Result<Query> {
@@ -955,7 +968,10 @@ fn match_server(
         for (suffix, language_id) in &server.file_types {
             if display.ends_with(suffix)
                 && selected.as_ref().is_none_or(
-                    |(current, _, _): &(String, String, ServerConfig)| suffix.len() > current.len(),
+                    |(current, _, config): &(String, String, ServerConfig)| {
+                        suffix.len() > current.len()
+                            || (suffix.len() == current.len() && server.id < config.id)
+                    },
                 )
             {
                 selected = Some((suffix.clone(), language_id.clone(), (**server).clone()));
@@ -1811,7 +1827,7 @@ impl NativeLspManager {
 
 #[cfg(test)]
 mod tests {
-    use super::{format_diagnostics, format_hover, format_locations, parse_query};
+    use super::{end_position, format_diagnostics, format_hover, format_locations, parse_query};
     use serde_json::json;
 
     #[test]
@@ -1823,6 +1839,18 @@ mod tests {
         assert!(
             parse_query(r#"{"operation":"workspace_symbols","filePath":"a.ts","query":"x"}"#)
                 .is_ok()
+        );
+    }
+
+    #[test]
+    fn computes_end_positions_for_crlf_documents() {
+        assert_eq!(
+            end_position("one\r\ntwo😀"),
+            json!({ "line": 1, "character": 5 })
+        );
+        assert_eq!(
+            end_position("one\r\n"),
+            json!({ "line": 1, "character": 0 })
         );
     }
 

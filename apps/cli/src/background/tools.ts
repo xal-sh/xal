@@ -80,26 +80,31 @@ export async function collectAgentOutput(job: BackgroundAgentJob, wait: number, 
     return nativeToolString(result, "output", "job_output")
   }
 
-  const predicted: CollectedAgentOutcome | undefined =
-    reservation !== undefined
-      ? job.delivery === "reserved"
-        ? job.outcome
-        : { status: "already_collected" }
-      : job.delivery === "reserved" || job.delivery === "delivered" || job.delivery === "suppressed"
-        ? { status: "already_collected" }
-        : job.outcome
-  if (!predicted) throw new Error(`background agent ${job.id} has no outcome`)
-  const result = nativeToolRecord("job_agent_output", {
-    ...nativeAgentSnapshot(job, Date.now()),
-    outcome: predicted.status,
-    ...(predicted.status === "completed" ? { report: predicted.report } : {}),
-    ...(predicted.status === "timed_out" ? { incomplete: incompleteAgentTranscript(job) } : {}),
-    status: jobStatus(job),
-    ...(job.record ? { record: job.record } : {}),
-  })
-  const output = nativeToolString(result, "output", "job_output")
-  collectAgentOutcome(job, reservation)
-  return output
+  try {
+    const predicted: CollectedAgentOutcome | undefined =
+      reservation !== undefined
+        ? job.delivery === "reserved"
+          ? job.outcome
+          : { status: "already_collected" }
+        : job.delivery === "reserved" || job.delivery === "delivered" || job.delivery === "suppressed"
+          ? { status: "already_collected" }
+          : job.outcome
+    if (!predicted) throw new Error(`background agent ${job.id} has no outcome`)
+    const result = nativeToolRecord("job_agent_output", {
+      ...nativeAgentSnapshot(job, Date.now()),
+      outcome: predicted.status,
+      ...(predicted.status === "completed" ? { report: predicted.report } : {}),
+      ...(predicted.status === "timed_out" ? { incomplete: incompleteAgentTranscript(job) } : {}),
+      status: jobStatus(job),
+      ...(job.record ? { record: job.record } : {}),
+    })
+    const output = nativeToolString(result, "output", "job_output")
+    collectAgentOutcome(job, reservation)
+    return output
+  } catch (error) {
+    if (reservation !== undefined) releaseDelivery(job, reservation)
+    throw error
+  }
 }
 
 function agentSnapshot(job: BackgroundAgentJob): BackgroundAgentSnapshot | undefined {

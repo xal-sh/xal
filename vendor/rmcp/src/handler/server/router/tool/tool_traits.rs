@@ -109,6 +109,7 @@ pub(crate) fn tool_attribute<T: ToolBase>() -> crate::model::Tool {
         output_schema: T::output_schema(),
         annotations: T::annotations(),
         icons: T::icons(),
+        execution: None,
         meta: T::meta(),
     }
 }

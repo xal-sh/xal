@@ -18,6 +18,8 @@ use crate::{
     service::{RxJsonRpcMessage, ServiceRole, TxJsonRpcMessage},
 };
 
+const DEFAULT_MAX_LINE_LENGTH: usize = 16 * 1024 * 1024;
+
 #[non_exhaustive]
 pub enum TransportAdapterAsyncRW {}
 
@@ -64,13 +66,40 @@ where
         let read = BufReader::new(read);
         let write = Arc::new(Mutex::new(Some(FramedWrite::new(
             write,
-            JsonRpcMessageCodec::<TxJsonRpcMessage<Role>>::default(),
+            JsonRpcMessageCodec::<TxJsonRpcMessage<Role>>::new_with_max_length(
+                DEFAULT_MAX_LINE_LENGTH,
+            ),
         ))));
         Self {
             read,
             line_buf: Vec::new(),
             write,
             _role: PhantomData,
+        }
+    }
+
+    async fn read_line(&mut self) -> Result<bool, JsonRpcMessageCodecError> {
+        loop {
+            let available = self.read.fill_buf().await?;
+            if available.is_empty() {
+                return Ok(false);
+            }
+            let newline = available.iter().position(|byte| *byte == b'\n');
+            let consumed = newline.map_or(available.len(), |index| index + 1);
+            let content = newline.map_or(available, |index| &available[..index]);
+            let overflow =
+                self.line_buf.len().saturating_add(content.len()) > DEFAULT_MAX_LINE_LENGTH;
+            if !overflow {
+                self.line_buf.extend_from_slice(content);
+            }
+            self.read.consume(consumed);
+            if overflow {
+                self.line_buf.clear();
+                return Err(JsonRpcMessageCodecError::MaxLineLengthExceeded);
+            }
+            if newline.is_some() {
+                return Ok(true);
+            }
         }
     }
 }
@@ -124,23 +153,11 @@ where
 
     async fn receive(&mut self) -> Option<RxJsonRpcMessage<Role>> {
         loop {
-            // `read_until` is not cancellation-safe on its own, and `receive` is
-            // polled inside a `select!` in the service loop: an in-progress line
-            // read is dropped whenever another branch (e.g. an outgoing response)
-            // becomes ready. We rely on `read_until` appending into `self.line_buf`
-            // and only returning at a delimiter or EOF, so a cancelled read leaves
-            // its partial bytes in `self.line_buf`. Keeping that buffer across
-            // calls lets the next read resume the same line; it is cleared only
-            // after a whole line has been consumed. Clearing at the top of the
-            // loop (the previous behaviour) discarded the partial read and so
-            // dropped incoming requests under concurrent response load.
-            match self.read.read_until(b'\n', &mut self.line_buf).await {
-                // EOF. Any bytes still in `line_buf` are an incomplete trailing
-                // message with no delimiter, so there is nothing to deliver.
-                Ok(0) => return None,
-                Ok(_) => {}
-                Err(e) => {
-                    tracing::error!("Error reading from stream: {}", e);
+            match self.read_line().await {
+                Ok(false) => return None,
+                Ok(true) => {}
+                Err(error) => {
+                    tracing::error!("Error reading from stream: {error}");
                     return None;
                 }
             }
@@ -417,9 +434,8 @@ impl<T: DeserializeOwned> Decoder for JsonRpcMessageCodec<T> {
                     let line = without_carriage_return(line);
 
                     // Use compatibility handling function
-                    let item = match try_parse_with_compatibility(line, "decode")? {
-                        Some(item) => item,
-                        None => return Ok(None), // Skip non-standard message
+                    let Some(item) = try_parse_with_compatibility(line, "decode")? else {
+                        continue;
                     };
                     return Ok(Some(item));
                 }

@@ -1,4 +1,4 @@
-use std::{borrow::Cow, collections::HashMap, sync::Arc};
+use std::{borrow::Cow, collections::HashMap, future::Future, sync::Arc, time::Duration};
 
 use futures::stream::BoxStream;
 use http::{HeaderName, HeaderValue, header::WWW_AUTHENTICATE};
@@ -23,6 +23,19 @@ impl From<reqwest::Error> for StreamableHttpError<reqwest::Error> {
     fn from(e: reqwest::Error) -> Self {
         StreamableHttpError::Client(e)
     }
+}
+
+async fn with_request_timeout<T>(
+    future: impl Future<Output = Result<T, reqwest::Error>>,
+) -> Result<T, StreamableHttpError<reqwest::Error>> {
+    tokio::time::timeout(Duration::from_secs(30), future)
+        .await
+        .map_err(|_| {
+            StreamableHttpError::UnexpectedServerResponse(Cow::Borrowed(
+                "HTTP request timed out after 30 seconds",
+            ))
+        })?
+        .map_err(StreamableHttpError::Client)
 }
 
 /// Applies custom headers to a request builder, rejecting reserved headers.
@@ -90,7 +103,7 @@ impl StreamableHttpClient for reqwest::Client {
             request_builder = request_builder.bearer_auth(auth_header);
         }
         request_builder = apply_custom_headers(request_builder, custom_headers)?;
-        let response = request_builder.send().await?;
+        let response = with_request_timeout(request_builder.send()).await?;
         if response.status() == reqwest::StatusCode::METHOD_NOT_ALLOWED {
             return Err(StreamableHttpError::ServerDoesNotSupportSse);
         }
@@ -157,7 +170,7 @@ impl StreamableHttpClient for reqwest::Client {
         }
         request_builder = request_builder.header(HEADER_SESSION_ID, session.as_ref());
         request_builder = apply_custom_headers(request_builder, custom_headers)?;
-        let response = request_builder.send().await?;
+        let response = with_request_timeout(request_builder.send()).await?;
 
         // if method no allowed
         if response.status() == reqwest::StatusCode::METHOD_NOT_ALLOWED {
@@ -208,7 +221,7 @@ impl StreamableHttpClient for reqwest::Client {
         if let Some(session_id) = session_id {
             request = request.header(HEADER_SESSION_ID, session_id.as_ref());
         }
-        let response = request.json(&message).send().await?;
+        let response = with_request_timeout(request.json(&message).send()).await?;
         if response.status() == reqwest::StatusCode::UNAUTHORIZED
             && let Some(header) = response.headers().get(WWW_AUTHENTICATE)
         {
@@ -276,8 +289,7 @@ impl StreamableHttpClient for reqwest::Client {
         // Non-success responses may carry valid JSON-RPC error payloads that
         // should be surfaced as McpError rather than lost in TransportSend.
         if !status.is_success() {
-            let body = response
-                .text()
+            let body = with_request_timeout(response.text())
                 .await
                 .unwrap_or_else(|_| "<failed to read response body>".to_owned());
             if content_type
@@ -293,8 +305,13 @@ impl StreamableHttpClient for reqwest::Client {
                     ),
                 }
             }
+            let mut characters = body.chars();
+            let mut snippet = characters.by_ref().take(512).collect::<String>();
+            if characters.next().is_some() {
+                snippet.push('…');
+            }
             return Err(StreamableHttpError::UnexpectedServerResponse(Cow::Owned(
-                format!("HTTP {status}: {body}"),
+                format!("HTTP {status}: {snippet}"),
             )));
         }
         match content_type.as_deref() {
@@ -306,7 +323,7 @@ impl StreamableHttpClient for reqwest::Client {
                 // Try to parse as a valid JSON-RPC message. If the body is
                 // malformed (e.g. a 200 response to a notification that lacks
                 // an `id` field), treat it as accepted rather than failing.
-                match response.json::<ServerJsonRpcMessage>().await {
+                match with_request_timeout(response.json::<ServerJsonRpcMessage>()).await {
                     Ok(message) => Ok(StreamableHttpPostResponse::Json(message, session_id)),
                     Err(e) => {
                         tracing::warn!(
@@ -382,6 +399,7 @@ impl StreamableHttpClientTransport<reqwest::Client> {
         reqwest::Client::builder()
             .pool_max_idle_per_host(0)
             .redirect(reqwest::redirect::Policy::none())
+            .connect_timeout(Duration::from_secs(10))
             .build()
             .expect("failed to build default reqwest client")
     }

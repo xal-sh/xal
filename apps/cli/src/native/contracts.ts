@@ -67,6 +67,7 @@ export interface NativeToolOutput {
 export interface NativeWebFetchRequest {
   url?: string
   userAgent: string
+  allowInternal?: boolean
 }
 
 export interface NativeLspManager {

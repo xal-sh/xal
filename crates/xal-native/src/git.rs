@@ -103,10 +103,14 @@ pub(crate) fn run_git(
             None => thread::sleep(Duration::from_millis(10)),
         }
     };
-    input_thread
+    let input_result = input_thread
         .join()
-        .map_err(|_| "git input thread panicked".to_owned())?
-        .map_err(|error| format!("could not send input to git: {error}"))?;
+        .map_err(|_| "git input thread panicked".to_owned())?;
+    if let Err(error) = input_result
+        && error.kind() != std::io::ErrorKind::BrokenPipe
+    {
+        return Err(format!("could not send input to git: {error}"));
+    }
     let stdout = stdout_thread
         .join()
         .map_err(|_| "git output thread panicked".to_owned())?

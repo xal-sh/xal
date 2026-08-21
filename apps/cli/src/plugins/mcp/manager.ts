@@ -133,7 +133,9 @@ export class McpManager {
   private registeredTools: RegisteredTool[] = []
   private toolRevision = -1
   private refreshTimer: ReturnType<typeof setInterval> | undefined
+  private refreshPromise: Promise<void> | undefined
   private refreshFailure: string | undefined
+  private closed = false
 
   constructor(
     configs: McpServerConfig[],
@@ -147,12 +149,14 @@ export class McpManager {
       await this.close()
       return
     }
+    this.closed = false
     await this.native.connectAll(signal)
     this.syncTools()
     this.startRefresh()
   }
 
   async reconnect(server?: string): Promise<void> {
+    this.closed = false
     await this.native.reconnect(server)
     this.syncTools()
     this.startRefresh()
@@ -164,8 +168,10 @@ export class McpManager {
   }
 
   async close(): Promise<void> {
+    this.closed = true
     if (this.refreshTimer) clearInterval(this.refreshTimer)
     this.refreshTimer = undefined
+    await this.refreshPromise
     await this.native.close()
     this.syncTools()
   }
@@ -224,18 +230,31 @@ export class McpManager {
   }
 
   private startRefresh(): void {
-    if (this.refreshTimer) return
+    if (this.closed || this.refreshTimer) return
     this.refreshTimer = setInterval(() => void this.refreshCatalogs(), 250)
     this.refreshTimer.unref?.()
   }
 
   private async refreshCatalogs(): Promise<void> {
+    if (this.closed) return
+    if (this.refreshPromise) return this.refreshPromise
+    const refresh = this.runRefresh()
+    this.refreshPromise = refresh
+    try {
+      await refresh
+    } finally {
+      if (this.refreshPromise === refresh) this.refreshPromise = undefined
+    }
+  }
+
+  private async runRefresh(): Promise<void> {
     try {
       await this.native.refresh()
+      if (this.closed) return
       this.syncTools()
       this.refreshFailure = undefined
     } catch (error) {
-      this.refreshFailure = describeError(error)
+      if (!this.closed) this.refreshFailure = describeError(error)
     }
   }
 
@@ -249,7 +268,6 @@ export class McpManager {
     } catch (error) {
       for (const tool of next) this.tools.unregister(tool)
       this.registeredTools = []
-      this.toolRevision = snapshot.revision
       throw error
     }
     this.registeredTools = next
@@ -271,7 +289,7 @@ export class McpManager {
         let progressFailure: unknown
         const drain = (async () => {
           while (true) {
-            const progress = await call.nextProgress()
+            const progress = await call.nextProgress(ctx.signal)
             if (progress === undefined) return
             try {
               ctx.update(progress)
@@ -286,7 +304,7 @@ export class McpManager {
         } finally {
           await drain
         }
-        if (progressFailure) throw progressFailure
+        if (progressFailure !== undefined) throw progressFailure
         return { output }
       },
     }

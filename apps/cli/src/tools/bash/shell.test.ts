@@ -4,6 +4,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { appInfo } from "../../app-info"
 import { getJob, stopJob, suppressDelivery, waitForProcessOutput } from "../../background/jobs"
+import { createNativeProcess } from "../../native"
 import { REDACTION_MARKER, replaceSecretValues } from "../../secrets/redactor"
 import { spawnCommand } from "./process"
 import { disposeShellSession, executeShellCommand } from "./shell"
@@ -84,10 +85,18 @@ test("preserves merged output ordering and non-zero status", async () => {
 test("applies native timeout and drains output beyond channel capacity without loss", async () => {
   const sessionId = crypto.randomUUID()
   sessions.add(sessionId)
-  const timed = executeShellCommand(sessionId, "sleep 30", process.cwd(), undefined, () => {})
+  await run(sessionId, "export XAL_TIMEOUT_STATE=preserved; trap 'printf original-trap' INT", process.cwd())
+  const originalTrap = await run(sessionId, "trap", process.cwd())
+  let timedOutput = ""
+  const timed = executeShellCommand(sessionId, "sleep 30; printf missed", process.cwd(), undefined, (text) => {
+    timedOutput += text
+  })
   timed.setTimeout(50)
-  expect((await timed.done).status).toBe("signaled")
+  expect((await timed.done).status).toBe("exited")
   expect(timed.timedOut()).toBe(true)
+  expect(timedOutput).toBe("")
+  expect(await run(sessionId, 'printf "%s" "$XAL_TIMEOUT_STATE"', process.cwd())).toBe("preserved")
+  expect(await run(sessionId, "trap", process.cwd())).toBe(originalTrap)
 
   const commandProcess = spawnCommand(["/bin/sh", "-c", "yes x | head -c 1000000"], { ...process.env }, process.cwd())
   let bytes = 0
@@ -96,6 +105,17 @@ test("applies native timeout and drains output beyond channel capacity without l
   })
   expect(await commandProcess.done).toEqual({ status: "exited", exitCode: 0 })
   expect(bytes).toBe(1_000_000)
+
+  const unobserved = spawnCommand(["/bin/sh", "-c", "yes x | head -c 1000000"], { ...process.env }, process.cwd())
+  expect(await unobserved.done).toEqual({ status: "exited", exitCode: 0 })
+
+  const native = createNativeProcess({
+    launch: ["/bin/sh", "-c", "yes x | head -c 1000000"],
+    cwd: process.cwd(),
+    environment: [],
+    stdin: false,
+  })
+  expect(await native.wait()).toMatchObject({ status: "exited", exitCode: 0 })
 })
 
 test("redacts cross-drain secrets and generations added while Bash is running", async () => {

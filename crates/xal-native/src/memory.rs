@@ -1,5 +1,5 @@
 use std::fs::{self, File, OpenOptions};
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{
     Arc, Mutex,
@@ -114,11 +114,30 @@ fn validate(content: String, secrets: &[String]) -> napi::Result<Snapshot> {
 }
 
 fn read(path: &Path, secrets: &[String]) -> napi::Result<Snapshot> {
-    let metadata = match fs::symlink_metadata(path) {
+    let path_metadata = match fs::symlink_metadata(path) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(empty_snapshot()),
         Err(error) => return Err(failed(error.to_string())),
     };
+    if path_metadata.file_type().is_symlink() {
+        return Err(invalid("global memory path must not be a symbolic link"));
+    }
+    let mut options = OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        options.custom_flags(0x0020_0000);
+    }
+    let mut file = options
+        .open(path)
+        .map_err(|error| failed(error.to_string()))?;
+    let metadata = file.metadata().map_err(|error| failed(error.to_string()))?;
     if metadata.file_type().is_symlink() {
         return Err(invalid("global memory path must not be a symbolic link"));
     }
@@ -132,7 +151,9 @@ fn read(path: &Path, secrets: &[String]) -> napi::Result<Snapshot> {
             return Err(invalid("global memory file permissions must be 0600"));
         }
     }
-    let bytes = fs::read(path).map_err(|error| failed(error.to_string()))?;
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)
+        .map_err(|error| failed(error.to_string()))?;
     let content =
         String::from_utf8(bytes).map_err(|_| invalid("global memory file is not valid UTF-8"))?;
     validate(content, secrets)

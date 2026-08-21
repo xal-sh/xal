@@ -2793,6 +2793,7 @@ dependencies = [
  "html2md",
  "ignore",
  "jsonschema",
+ "libc",
  "napi",
  "napi-build",
  "napi-derive",

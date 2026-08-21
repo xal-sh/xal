@@ -227,7 +227,14 @@ impl SseRetryPolicy for ExponentialBackoff {
         {
             return None;
         }
-        Some(self.base_duration * (2u32.pow(current_times as u32)))
+        Some(
+            self.base_duration.saturating_mul(
+                u32::try_from(current_times)
+                    .ok()
+                    .and_then(|exponent| 2u32.checked_pow(exponent))
+                    .unwrap_or(u32::MAX),
+            ),
+        )
     }
 }
 

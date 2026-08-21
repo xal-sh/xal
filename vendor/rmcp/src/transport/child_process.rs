@@ -44,15 +44,20 @@ pub struct ChildWithCleanup {
 
 impl Drop for ChildWithCleanup {
     fn drop(&mut self) {
-        // We should not use start_kill(), instead we should use kill() to avoid zombies
-        if let Some(mut inner) = self.inner.take() {
-            // We don't care about the result, just try to kill it
-            tokio::spawn(async move {
-                if let Err(e) = Box::into_pin(inner.kill()).await {
-                    tracing::warn!("Error killing child process: {}", e);
-                }
-            });
-        }
+        let Some(mut inner) = self.inner.take() else {
+            return;
+        };
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            if let Err(error) = inner.start_kill() {
+                tracing::warn!("Error starting child process termination: {error}");
+            }
+            return;
+        };
+        runtime.spawn(async move {
+            if let Err(error) = Box::into_pin(inner.kill()).await {
+                tracing::warn!("Error killing child process: {error}");
+            }
+        });
     }
 }
 
@@ -79,9 +84,8 @@ impl TokioChildProcess {
     /// and wait for the child process to exit normally with a timeout.
     /// If the child process doesn't exit within the timeout, it will be killed.
     pub async fn graceful_shutdown(&mut self) -> std::io::Result<()> {
+        self.transport.close().await?;
         if let Some(mut child) = self.child.inner.take() {
-            self.transport.close().await?;
-
             let wait_fut = child.wait();
             tokio::select! {
                 _ = tokio::time::sleep(std::time::Duration::from_secs(MAX_WAIT_ON_DROP_SECS)) => {

@@ -472,10 +472,11 @@ where
     pub fn disable_route(&mut self, name: impl Into<Cow<'static, str>>) -> bool {
         let name = name.into();
         let was_visible = self.map.contains_key(&name) && !self.disabled.contains(&name);
+        let inserted = self.disabled.insert(name.clone());
         if was_visible {
             self.notify_if_visible(&name);
         }
-        self.disabled.insert(name)
+        inserted
     }
 
     /// Re-enable a previously disabled tool. Returns `true` if the name

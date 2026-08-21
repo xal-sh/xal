@@ -232,6 +232,7 @@ where
 
     fn close(&mut self) -> impl Future<Output = Result<(), Self::Error>> + Send {
         self.message.take();
+        self.termination.add_permits(1);
         std::future::ready(Ok(()))
     }
 }

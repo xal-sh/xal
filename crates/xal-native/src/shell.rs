@@ -6,7 +6,7 @@ use std::sync::{
     atomic::{AtomicBool, AtomicU64},
 };
 use std::thread;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use napi::bindgen_prelude::{AsyncTask, Buffer};
 use napi::{Env, Error, Status, Task};
@@ -14,9 +14,8 @@ use napi_derive::napi;
 
 use crate::process::{
     NativeEnvironmentVariable, NativeProcessRequest, NativeProcessTermination, ProcessState,
-    process_clear_timeout, process_drain, process_output_closed, process_reader_error,
-    process_set_timeout, process_signal, process_termination, process_timed_out, process_write,
-    spawn_process,
+    process_drain, process_interrupt, process_output_closed, process_reader_error, process_signal,
+    process_termination, process_write, spawn_process,
 };
 
 const OUTPUT_CAPACITY: usize = 256 * 1024;
@@ -32,6 +31,7 @@ struct RunOutput {
     chunks: VecDeque<Vec<u8>>,
     bytes: usize,
     closed: bool,
+    lossy: bool,
 }
 
 struct RunState {
@@ -39,6 +39,8 @@ struct RunState {
     output_changed: Condvar,
     completion: Mutex<Option<Result<NativeProcessTermination, String>>>,
     completed: Condvar,
+    deadline: Mutex<Option<Instant>>,
+    timed_out: AtomicBool,
     process: Arc<ProcessState>,
 }
 
@@ -49,10 +51,13 @@ impl RunState {
                 chunks: VecDeque::new(),
                 bytes: 0,
                 closed: false,
+                lossy: false,
             }),
             output_changed: Condvar::new(),
             completion: Mutex::new(None),
             completed: Condvar::new(),
+            deadline: Mutex::new(None),
+            timed_out: AtomicBool::new(false),
             process,
         })
     }
@@ -61,12 +66,26 @@ impl RunState {
         if bytes.is_empty() {
             return;
         }
+        let bytes = if bytes.len() > OUTPUT_CAPACITY {
+            bytes[bytes.len() - OUTPUT_CAPACITY..].to_vec()
+        } else {
+            bytes
+        };
         let mut output = lock(&self.output);
         while !output.closed && output.bytes + bytes.len() > OUTPUT_CAPACITY {
-            output = self
+            if output.lossy {
+                let Some(dropped) = output.chunks.pop_front() else {
+                    break;
+                };
+                output.bytes -= dropped.len();
+                continue;
+            }
+            let (next, timeout) = self
                 .output_changed
-                .wait(output)
+                .wait_timeout(output, Duration::from_millis(100))
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
+            output = next;
+            output.lossy = timeout.timed_out();
         }
         if output.closed {
             return;
@@ -97,6 +116,30 @@ impl RunState {
 
     fn done(&self) -> bool {
         lock(&self.completion).is_some()
+    }
+
+    fn set_timeout(&self, milliseconds: u32) {
+        *lock(&self.deadline) =
+            Some(Instant::now() + Duration::from_millis(u64::from(milliseconds)));
+    }
+
+    fn clear_timeout(&self) {
+        *lock(&self.deadline) = None;
+    }
+
+    fn timed_out(&self) -> bool {
+        self.timed_out.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    fn expire(&self) -> bool {
+        let mut deadline = lock(&self.deadline);
+        if deadline.is_none_or(|deadline| Instant::now() < deadline) {
+            return false;
+        }
+        *deadline = None;
+        self.timed_out
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        true
     }
 }
 
@@ -184,8 +227,17 @@ fn fail_active(entry: &PersistentEntry, error: String) {
     }
 }
 
+fn expire_active(entry: &PersistentEntry) -> bool {
+    lock(&entry.active)
+        .as_ref()
+        .is_some_and(|run| run.state.expire())
+}
+
 fn dispatch_persistent(entry: Arc<PersistentEntry>) {
     loop {
+        if expire_active(&entry) && !process_interrupt(&entry.process) {
+            process_signal(&entry.process, true);
+        }
         let bytes = process_drain(&entry.process);
         if !bytes.is_empty() {
             feed_active(&entry, bytes);
@@ -214,6 +266,9 @@ fn dispatch_persistent(entry: Arc<PersistentEntry>) {
 
 fn dispatch_isolated(process: Arc<ProcessState>, run: Arc<RunState>) {
     loop {
+        if run.expire() {
+            process_signal(&process, true);
+        }
         let bytes = process_drain(&process);
         if !bytes.is_empty() {
             run.push(bytes);
@@ -313,6 +368,7 @@ impl NativeShellExecution {
             bytes.extend(chunk);
         }
         output.bytes = 0;
+        output.lossy = false;
         self.state.output_changed.notify_all();
         bytes.into()
     }
@@ -331,17 +387,17 @@ impl NativeShellExecution {
 
     #[napi(catch_unwind)]
     pub fn set_timeout(&self, milliseconds: u32) {
-        process_set_timeout(&self.state.process, milliseconds);
+        self.state.set_timeout(milliseconds);
     }
 
     #[napi(catch_unwind)]
     pub fn clear_timeout(&self) {
-        process_clear_timeout(&self.state.process);
+        self.state.clear_timeout();
     }
 
     #[napi(catch_unwind)]
     pub fn timed_out(&self) -> bool {
-        process_timed_out(&self.state.process)
+        self.state.timed_out()
     }
 
     #[napi(catch_unwind)]
@@ -440,8 +496,11 @@ impl NativeShellManager {
             needle,
             pending: Vec::new(),
         });
+        let run_function = format!("{marker}_run");
+        let status_variable = format!("{marker}_status");
+        let trap_variable = format!("{marker}_trap");
         let framed = format!(
-            "{{ eval {}; }} </dev/null 2>&1\nprintf '\\n%s:%s\\n' {} \"$?\"\n",
+            "{run_function}() {{ eval \"$1\"; }}\n{trap_variable}=\"$(trap | grep -E ' (SIG)?INT$')\"\ntrap 'return 124' INT\n{run_function} {} </dev/null 2>&1\n{status_variable}=$?\ntrap - INT\n[ -z \"${trap_variable}\" ] || eval \"${trap_variable}\"\nunset {trap_variable}\nunset -f {run_function}\nprintf '\\n%s:%s\\n' {} \"${status_variable}\"\nunset {status_variable}\n",
             shell_quote(&request.command),
             shell_quote(&marker)
         );

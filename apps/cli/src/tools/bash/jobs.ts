@@ -100,7 +100,7 @@ export function startJob(
       if (tail) appendProcessOutput(job, tail)
       runningProcs.delete(proc)
       const message = describeError(error)
-      appendProcessOutput(job, `${job.history.text() ? "\n" : ""}failed to launch: ${message}`)
+      appendProcessOutput(job, `${job.history.text() ? "\n" : ""}process failed: ${message}`)
       void finishProcessJob(job, { status: "launch_failed", message })
     },
   )

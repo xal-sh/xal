@@ -35,9 +35,11 @@ describe("native memory store", () => {
     await expect(store.replace("contains TOKEN", empty.revision, ["TOKEN"])).rejects.toThrow(
       "global memory contains a configured secret",
     )
-    await writeFile(path, "public")
-    await chmod(path, 0o644)
-    await expect(store.load([])).rejects.toThrow("global memory file permissions must be 0600")
+    if (process.platform !== "win32") {
+      await writeFile(path, "public")
+      await chmod(path, 0o644)
+      await expect(store.load([])).rejects.toThrow("global memory file permissions must be 0600")
+    }
   })
 
   test("honors cancellation before a write", async () => {

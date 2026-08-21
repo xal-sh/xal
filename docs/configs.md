@@ -21,6 +21,8 @@ A project-root `.mcp.json` is a discovery source rather than a third configurati
 
 Commands that save model, thinking, or TUI display preferences write the user file. Xal then recomputes the effective configuration, and any project override remains active. Importing discovered MCP servers and deleting servers from `/mcp` are source-aware exceptions: project choices update the project file, global choices update the user file, and deletion updates the file that supplied the effective server.
 
+Global memory is stored at `<app-home>/MEMORY.md`. On Unix, Xal creates it with mode `0600` and rejects broader permissions. Windows does not expose an equivalent mode through the filesystem API, so Xal relies on the inherited ACL of `<app-home>`. If the app home is overridden on Windows, its directory must be private to the current user.
+
 ## Top-level options
 
 | Option         | Type       | Default                  | Details                                                                     |

@@ -48,27 +48,58 @@ pub(crate) fn validate_custom_header(name: &http::HeaderName) -> Result<(), Stri
 /// Handles both quoted (`scope="files:read files:write"`) and unquoted (`scope=read:data`) forms.
 #[cfg(feature = "client-side-sse")]
 pub(crate) fn extract_scope_from_header(header: &str) -> Option<String> {
-    let header_lowercase = header.to_ascii_lowercase();
-    let scope_key = "scope=";
-
-    if let Some(pos) = header_lowercase.find(scope_key) {
-        let start = pos + scope_key.len();
-        let value_slice = &header[start..];
-
-        if let Some(stripped) = value_slice.strip_prefix('"') {
-            if let Some(end_quote) = stripped.find('"') {
-                return Some(stripped[..end_quote].to_string());
+    let lowercase = header.to_ascii_lowercase();
+    let bytes = lowercase.as_bytes();
+    let mut in_quotes = false;
+    let mut escaped = false;
+    let mut index = 0;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if in_quotes {
+            if escaped {
+                escaped = false;
+            } else if byte == b'\\' {
+                escaped = true;
+            } else if byte == b'"' {
+                in_quotes = false;
             }
-        } else {
-            let end = value_slice
-                .find(|c: char| c == ',' || c == ';' || c.is_whitespace())
-                .unwrap_or(value_slice.len());
-            if end > 0 {
-                return Some(value_slice[..end].to_string());
-            }
+            index += 1;
+            continue;
         }
+        if byte == b'"' {
+            in_quotes = true;
+            index += 1;
+            continue;
+        }
+        let boundary = index == 0
+            || matches!(bytes[index - 1], b',' | b';')
+            || bytes[index - 1].is_ascii_whitespace();
+        if !boundary || !bytes[index..].starts_with(b"scope=") {
+            index += 1;
+            continue;
+        }
+        let start = index + b"scope=".len();
+        let value = &header[start..];
+        if let Some(quoted) = value.strip_prefix('"') {
+            let mut escaped = false;
+            for (end, character) in quoted.char_indices() {
+                if escaped {
+                    escaped = false;
+                } else if character == '\\' {
+                    escaped = true;
+                } else if character == '"' {
+                    return Some(quoted[..end].to_owned());
+                }
+            }
+            return None;
+        }
+        let end = value
+            .find(|character: char| {
+                character == ',' || character == ';' || character.is_whitespace()
+            })
+            .unwrap_or(value.len());
+        return (end > 0).then(|| value[..end].to_owned());
     }
-
     None
 }
 
@@ -102,6 +133,18 @@ mod tests {
     fn extract_scope_missing() {
         let header = r#"Bearer error="invalid_token""#;
         assert_eq!(extract_scope_from_header(header), None);
+    }
+
+    #[cfg(feature = "client-side-sse")]
+    #[test]
+    fn extract_scope_ignores_other_parameters_and_quoted_values() {
+        assert_eq!(extract_scope_from_header("Bearer custom_scope=admin"), None);
+        assert_eq!(
+            extract_scope_from_header(
+                r#"Bearer error_uri="https://idp.test?scope=admin", scope="files:read""#,
+            ),
+            Some("files:read".to_owned())
+        );
     }
 
     #[cfg(feature = "client-side-sse")]

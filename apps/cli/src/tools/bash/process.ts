@@ -29,8 +29,8 @@ function terminationOf(termination: NativeProcessTermination): ProcessTerminatio
 function nativeCommand(launch: string[], environment: NodeJS.ProcessEnv, cwd: string, stdin: boolean): CommandProcess {
   const native = createNativeProcess({ launch, cwd, environment: environmentEntries(environment), stdin })
   const listeners = new Set<(chunk: Buffer) => void>()
-  const ready = Promise.withResolvers<void>()
   const nativeDone = native.wait()
+  let pending = Buffer.alloc(0)
   let settled = false
   void nativeDone.finally(() => {
     settled = true
@@ -38,11 +38,14 @@ function nativeCommand(launch: string[], environment: NodeJS.ProcessEnv, cwd: st
   const drain = (): boolean => {
     const chunk = Buffer.from(native.drain())
     if (chunk.length === 0) return false
+    if (listeners.size === 0) {
+      pending = Buffer.concat([pending, chunk]).subarray(-256 * 1024)
+      return true
+    }
     for (const listener of listeners) listener(chunk)
     return true
   }
   const pump = async (): Promise<void> => {
-    await ready.promise
     while (!settled || !native.outputClosed()) {
       drain()
       await Bun.sleep(10)
@@ -54,7 +57,10 @@ function nativeCommand(launch: string[], environment: NodeJS.ProcessEnv, cwd: st
     done: Promise.all([nativeDone, pumped]).then(([termination]) => terminationOf(termination)),
     onOutput(listener) {
       listeners.add(listener)
-      ready.resolve()
+      if (pending.length > 0) {
+        listener(pending)
+        pending = Buffer.alloc(0)
+      }
     },
     write(text) {
       native.write(Buffer.from(text))
