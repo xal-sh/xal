@@ -1,5 +1,6 @@
 import { appInfo } from "../app-info"
 import { registerCli } from "../cli/registry"
+import { settings } from "../config/settings"
 import type { Cli } from "../cli/types"
 import { parseGoalPrompt } from "../goals/invocation"
 import { describeError } from "../lib/error"
@@ -50,7 +51,12 @@ function isOutputFormat(value: string): value is OutputFormat {
 }
 
 function parseArgs(args: string[]): RunOptions {
-  const options: RunOptions = { format: "text", mode: defaultPermissionMode, prompt: [], help: false }
+  const options: RunOptions = {
+    format: "text",
+    mode: settings().mode ?? defaultPermissionMode,
+    prompt: [],
+    help: false,
+  }
 
   for (let index = 0; index < args.length; index++) {
     const arg = args[index]!
@@ -108,7 +114,9 @@ function printHelp(print: (line: string) => void): void {
   print("Run one agent prompt or a /goal completion loop without starting the TUI.")
   print("")
   print("  --format text|json|jsonl  final text, one JSON result, or live JSONL events")
-  print(`  --mode ${permissionModes().join("|")}  permission mode (default: ${defaultPermissionMode})`)
+  print(
+    `  --mode ${permissionModes().join("|")}  permission mode (default: ${settings().mode ?? defaultPermissionMode})`,
+  )
   print("  --provider id             override the configured provider")
   print("  --model id                override the configured model")
   print("  --output-schema file      require the final response to match a JSON Schema")

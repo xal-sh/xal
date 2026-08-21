@@ -1,6 +1,8 @@
+import type { PermissionMode } from "../permissions/types"
 import type { SessionSummary } from "../sessions/types"
 
 export interface UiOptions {
+  mode?: PermissionMode
   resume?: SessionSummary
   continueWork?: boolean
   retryPendingTools?: boolean

@@ -23,6 +23,14 @@ Run Xal from any project:
 xal
 ```
 
+Start the TUI in `plan`, `normal`, or `yolo` mode:
+
+```bash
+xal --mode plan
+```
+
+Set `"mode": "plan"` in `config.json` to use it by default. Command-line `--mode` takes precedence.
+
 Update to the latest beta release:
 
 ```bash

@@ -1,3 +1,4 @@
+import { parseAppOptions } from "./cli/app-options"
 import { runCli } from "./cli/run"
 import type { CliContext } from "./cli/types"
 import { describeError } from "./lib/error"
@@ -24,19 +25,6 @@ const lightweightContext: CliContext = {
 let terminationRequested = false
 let app: App | undefined
 
-function parseGlobalOptions(input: string[]): { profile: boolean; args: string[] } {
-  let profile = false
-  let index = 0
-  while (input[index]?.startsWith("-")) {
-    const option = input[index]!
-    if (option !== "--profile") break
-    if (profile) throw new Error("duplicate option: --profile")
-    profile = true
-    index++
-  }
-  return { profile, args: input.slice(index) }
-}
-
 function normalize(args: string[]): string[] {
   const first = args[0]
   if (first === "-c" || first === "--continue") return ["resume", ...args.slice(1)]
@@ -55,8 +43,11 @@ function runsWithoutApp(args: string[]): boolean {
 }
 
 async function main(input: string[]): Promise<void> {
-  const options = parseGlobalOptions(input)
+  const options = parseAppOptions(input)
   const args = normalize(options.args)
+  if (options.mode && args.length > 0) {
+    throw new Error('--mode can only be used when starting the TUI; place it after "run" for a headless run')
+  }
   registerUpdateCli()
   registerNativeCli()
   if (runsWithoutApp(args)) {
@@ -67,7 +58,7 @@ async function main(input: string[]): Promise<void> {
   const loaded = await import("./app")
   app = loaded
   if (terminationRequested) return
-  await loaded.runApp(args, options.profile, () => terminationRequested)
+  await loaded.runApp(args, options, () => terminationRequested)
 }
 
 let exitRun: Promise<never> | undefined

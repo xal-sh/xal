@@ -4,6 +4,7 @@ import { registerAgentCommands } from "./agent/commands"
 import { registerTaskAgents } from "./agent/task/tool"
 import { registerJobTools } from "./background/register"
 import { registerBgClis } from "./bg/cli"
+import type { AppOptions } from "./cli/app-options"
 import { chooseOption } from "./cli/choose"
 import { askLine } from "./cli/input"
 import { runCli } from "./cli/run"
@@ -15,6 +16,7 @@ import { registerGoals } from "./goals/register"
 import { registerHookCommands } from "./hooks/commands"
 import { describeError } from "./lib/error"
 import { usesMusl } from "./lib/process"
+import { isPermissionMode, permissionModes } from "./permissions/modes"
 import { registerPermissions } from "./permissions/register"
 import { registerPlans } from "./plans/register"
 import { bootstrapPlugins, registerBootstrapStep, registerPlugins, shutdownPlugins } from "./plugins/discover"
@@ -97,9 +99,13 @@ async function initializeApp(args: string[], profile: boolean) {
   return { settings, plugins }
 }
 
-export async function runApp(args: string[], profile: boolean, terminationRequested: () => boolean): Promise<void> {
+export async function runApp(
+  args: string[],
+  options: Pick<AppOptions, "profile" | "mode">,
+  terminationRequested: () => boolean,
+): Promise<void> {
   if (usesMusl()) process.env.OPENTUI_LIBC = "musl"
-  const initialization = initializeApp(args, profile)
+  const initialization = initializeApp(args, options.profile)
   initializationBarrier = initialization.then(
     () => undefined,
     () => undefined,
@@ -112,6 +118,10 @@ export async function runApp(args: string[], profile: boolean, terminationReques
   }
   if (!initialized || terminationRequested()) return
   const { settings, plugins } = initialized
+  if (options.mode && !isPermissionMode(options.mode)) {
+    throw new Error(`--mode expects one of: ${permissionModes().join(", ")}`)
+  }
+  const mode = options.mode ?? settings.mode
 
   if (args.length === 0) {
     const uiId = settings.ui ?? "tui"
@@ -126,7 +136,7 @@ export async function runApp(args: string[], profile: boolean, terminationReques
     }
     void bootstrapPlugins().catch((error) => ctx.error(describeError(error)))
     void refreshModelCatalogs().catch((error) => ctx.error(describeError(error)))
-    await ui.start()
+    await ui.start(mode ? { mode } : undefined)
     return
   }
 

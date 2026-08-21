@@ -43,6 +43,7 @@ test("trusted project settings override user settings with recursive object merg
       plugins: ["user-plugin"],
       provider: "user-provider",
       model: "user-model",
+      mode: "normal",
       permissions: {
         allow: ["bash(git status*)"],
         deny: ["bash(rm *)"],
@@ -62,6 +63,7 @@ test("trusted project settings override user settings with recursive object merg
     await writeJson(projectConfigPath(project), {
       plugins: ["project-plugin"],
       model: "project-model",
+      mode: "plan",
       permissions: {
         allow: ["bash(git log*)"],
       },
@@ -85,6 +87,7 @@ test("trusted project settings override user settings with recursive object merg
       provider: "user-provider",
       model: "project-model",
       ui: undefined,
+      mode: "plan",
       permissions: {
         allow: ["bash(git log*)"],
         ask: [],
@@ -124,6 +127,7 @@ test("does not read malformed project settings until the project is trusted", as
       provider: "user-provider",
       model: undefined,
       ui: undefined,
+      mode: undefined,
       permissions: { allow: [], ask: [], deny: [] },
       modes: {},
       goal: { evaluatorModels: {} },
@@ -136,6 +140,24 @@ test("does not read malformed project settings until the project is trusted", as
     await writeJson(join(home, "trust.json"), [project])
 
     await expect(loadSettings()).rejects.toThrow(`${projectConfig} is malformed — fix or delete it`)
+  })
+})
+
+test("validates built-in and custom default modes", async () => {
+  await withSettingsEnvironment(async ({ home }) => {
+    const config = join(home, "config.json")
+    await writeJson(config, {
+      mode: "review",
+      modes: { review: { base: "plan" } },
+    })
+
+    expect((await loadSettings()).mode).toBe("review")
+
+    await writeJson(config, { mode: "unknown" })
+    await expect(loadSettings()).rejects.toThrow("mode must be one of: normal, plan, yolo")
+
+    await writeJson(config, { mode: 42 })
+    await expect(loadSettings()).rejects.toThrow("mode must be a string")
   })
 })
 
@@ -165,6 +187,7 @@ test("saves only user settings securely while retaining project overrides in mem
       provider: "project-provider",
       model: "selected-model",
       ui: undefined,
+      mode: undefined,
       permissions: { allow: [], ask: [], deny: [] },
       modes: {},
       goal: { evaluatorModels: {} },

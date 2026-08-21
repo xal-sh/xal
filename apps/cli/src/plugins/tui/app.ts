@@ -57,6 +57,7 @@ export async function startTui(events: EventService, config: TuiConfig, options:
     createSession({ persist: true, interactive: true }),
     MessageHistory.load(root),
   ])
+  if (options.mode && !session.setMode(options.mode)) throw new Error(`could not start in ${options.mode} mode`)
 
   const startRow = await cursorRow()
   const { promise: destroyed, resolve: finishDestroy } = Promise.withResolvers<void>()

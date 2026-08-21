@@ -74,6 +74,10 @@ export function modeDefinition(mode: PermissionMode): ModeDefinition {
   return found
 }
 
+export function builtinPermissionModes(): PermissionMode[] {
+  return builtins.map((definition) => definition.name)
+}
+
 export function permissionModes(): PermissionMode[] {
   return modes.map((definition) => definition.name)
 }

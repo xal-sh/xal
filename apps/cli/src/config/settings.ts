@@ -1,5 +1,6 @@
 import { readJsonFile, writeSecureJson } from "../lib/fs"
 import { asString, asStringArray, isRecord } from "../lib/json"
+import { builtinPermissionModes } from "../permissions/modes"
 import { findProjectRoot } from "../project/root"
 import { isTrusted } from "../project/trust"
 import { isThinkingEffort, type ThinkingEffort } from "../providers/types"
@@ -40,6 +41,7 @@ export interface Settings {
   profile?: string
   model?: string
   ui?: string
+  mode?: string
   permissions: PermissionSettings
   modes: Record<string, ModeSettings>
   goal: GoalSettings
@@ -53,6 +55,7 @@ const AGENT_DEFAULTS: AgentSettings = { maxConcurrent: 4, timeoutMinutes: 10, ma
 
 let current: Settings = {
   plugins: [],
+  mode: undefined,
   permissions: { allow: [], ask: [], deny: [] },
   modes: {},
   goal: { evaluatorModels: {} },
@@ -164,6 +167,12 @@ function parseSettings(raw: Record<string, unknown>): Settings {
       guidance: asString(value.guidance),
     }
   }
+  const mode = raw.mode
+  if (mode !== undefined && typeof mode !== "string") throw new Error("mode must be a string")
+  const availableModes = [...builtinPermissionModes(), ...Object.keys(modes)]
+  if (mode !== undefined && !availableModes.includes(mode)) {
+    throw new Error(`mode must be one of: ${availableModes.join(", ")}`)
+  }
   const redaction = sectionRecord(raw, "redaction")
   const agents = sectionRecord(raw, "agents")
   const pluginConfig: Record<string, Record<string, unknown>> = {}
@@ -189,6 +198,7 @@ function parseSettings(raw: Record<string, unknown>): Settings {
     profile: asString(raw.profile),
     model: asString(raw.model),
     ui: asString(raw.ui),
+    mode,
     permissions: {
       allow: strictStringArray(permissions.allow, "permissions.allow"),
       ask: strictStringArray(permissions.ask, "permissions.ask"),

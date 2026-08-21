@@ -26,6 +26,16 @@ Xal ships three modes, cycled while the session is idle with the `session.next-m
 - `plan` is read-only. Tools that mutate anything are refused before they run.
 - `yolo` converts every ask into an allow. Deny rules still block actions.
 
+Set the default for new TUI and headless sessions in `config.json`:
+
+```json
+{
+  "mode": "plan"
+}
+```
+
+The default is `normal` when `mode` is omitted. Override it for one TUI session with `xal --mode plan`, `xal --mode normal`, or `xal --mode yolo`. For a headless run, place the option after the command, such as `xal run --mode yolo "prompt"`.
+
 ## Plan mode
 
 `/plan [prompt]` enters plan mode and can submit the planning request in the same command. The agent grounds repository facts with read-only tools, asks structured questions only for material choices that cannot be discovered, and produces a self-contained implementation plan. `submit_plan` saves the complete Markdown as the session-local `plan.md`, renders it for review, and offers three outcomes. Free-form review input becomes revision feedback, and each resubmission replaces the complete proposal.
