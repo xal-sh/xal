@@ -1,54 +1,17 @@
-#![cfg_attr(test, allow(dead_code))]
+use super::*;
 
-use std::collections::VecDeque;
-use std::io::{Read, Write};
-use std::process::{Child, ChildStdin, Command, Stdio};
-use std::sync::{
-    Arc, Condvar, Mutex, MutexGuard,
-    atomic::{AtomicBool, AtomicUsize},
-};
-use std::thread;
-use std::time::{Duration, Instant};
-
-use napi::bindgen_prelude::{AsyncTask, Buffer, Utf16String};
-use napi::{Env, Error, Status, Task};
-use napi_derive::napi;
-
-const OUTPUT_CAPACITY: usize = 256 * 1024;
-
-#[napi(object)]
-pub struct NativeEnvironmentVariable {
-    pub name: String,
-    pub value: String,
-}
-
-#[napi(object)]
-pub struct NativeProcessRequest {
-    pub launch: Vec<String>,
-    pub cwd: String,
-    pub environment: Vec<NativeEnvironmentVariable>,
-    pub stdin: bool,
-}
-
-#[napi(object)]
-pub struct NativeProcessTermination {
-    pub status: String,
-    pub exit_code: Option<i32>,
-    pub signal: Option<String>,
-}
-
-struct OutputQueue {
+pub(super) struct OutputQueue {
     chunks: VecDeque<Vec<u8>>,
     bytes: usize,
-    closed: bool,
+    pub(super) closed: bool,
     lossy: bool,
 }
 
 pub(crate) struct ProcessState {
     child: Mutex<Option<Child>>,
-    stdin: Mutex<Option<ChildStdin>>,
-    output: Mutex<OutputQueue>,
-    output_changed: Condvar,
+    pub(super) stdin: Mutex<Option<ChildStdin>>,
+    pub(super) output: Mutex<OutputQueue>,
+    pub(super) output_changed: Condvar,
     readers: AtomicUsize,
     reader_error: Mutex<Option<String>>,
     termination: Mutex<Option<NativeProcessTermination>>,
@@ -58,7 +21,7 @@ pub(crate) struct ProcessState {
     pid: u32,
 }
 
-fn lock<'a, T>(mutex: &'a Mutex<T>) -> MutexGuard<'a, T> {
+pub(super) fn lock<'a, T>(mutex: &'a Mutex<T>) -> MutexGuard<'a, T> {
     mutex
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -192,7 +155,7 @@ fn watch_process(state: Arc<ProcessState>) {
     state.terminated.notify_all();
 }
 
-fn signal_process_tree(state: &ProcessState, force: bool) {
+pub(super) fn signal_process_tree(state: &ProcessState, force: bool) {
     #[cfg(unix)]
     {
         let signal = if force { "-KILL" } else { "-TERM" };
@@ -334,15 +297,15 @@ pub(crate) fn process_write(state: &ProcessState, bytes: &[u8]) -> napi::Result<
         .map_err(|error| Error::new(Status::GenericFailure, error.to_string()))
 }
 
-pub(crate) fn process_set_timeout(state: &ProcessState, milliseconds: u32) {
+pub(super) fn process_set_timeout(state: &ProcessState, milliseconds: u32) {
     *lock(&state.deadline) = Some(Instant::now() + Duration::from_millis(u64::from(milliseconds)));
 }
 
-pub(crate) fn process_clear_timeout(state: &ProcessState) {
+pub(super) fn process_clear_timeout(state: &ProcessState) {
     *lock(&state.deadline) = None;
 }
 
-pub(crate) fn process_timed_out(state: &ProcessState) -> bool {
+pub(super) fn process_timed_out(state: &ProcessState) -> bool {
     state.timed_out.load(std::sync::atomic::Ordering::Relaxed)
 }
 
@@ -367,7 +330,7 @@ pub(crate) fn process_interrupt(state: &ProcessState) -> bool {
     }
 }
 
-fn wait_process(state: &ProcessState) -> napi::Result<NativeProcessTermination> {
+pub(super) fn wait_process(state: &ProcessState) -> napi::Result<NativeProcessTermination> {
     let mut termination = lock(&state.termination);
     while termination.is_none() {
         termination = state
@@ -396,240 +359,4 @@ fn wait_process(state: &ProcessState) -> napi::Result<NativeProcessTermination> 
         ));
     }
     Ok(termination)
-}
-
-pub struct WaitProcessTask {
-    state: Arc<ProcessState>,
-}
-
-impl Task for WaitProcessTask {
-    type Output = NativeProcessTermination;
-    type JsValue = NativeProcessTermination;
-
-    fn compute(&mut self) -> napi::Result<Self::Output> {
-        wait_process(&self.state)
-    }
-
-    fn resolve(&mut self, _env: Env, output: Self::Output) -> napi::Result<Self::JsValue> {
-        Ok(output)
-    }
-}
-
-impl Clone for NativeProcessTermination {
-    fn clone(&self) -> Self {
-        Self {
-            status: self.status.clone(),
-            exit_code: self.exit_code,
-            signal: self.signal.clone(),
-        }
-    }
-}
-
-#[napi]
-pub struct NativeProcess {
-    state: Arc<ProcessState>,
-}
-
-#[napi]
-impl NativeProcess {
-    #[napi(factory, catch_unwind)]
-    pub fn spawn(request: NativeProcessRequest) -> napi::Result<Self> {
-        Ok(Self {
-            state: spawn_process(request)?,
-        })
-    }
-
-    #[napi(catch_unwind)]
-    pub fn write(&self, bytes: Buffer) -> napi::Result<()> {
-        process_write(&self.state, &bytes)
-    }
-
-    #[napi(catch_unwind)]
-    pub fn close_stdin(&self) {
-        *lock(&self.state.stdin) = None;
-    }
-
-    #[napi(catch_unwind)]
-    pub fn drain(&self) -> Buffer {
-        process_drain(&self.state).into()
-    }
-
-    #[napi(catch_unwind)]
-    pub fn output_closed(&self) -> bool {
-        process_output_closed(&self.state)
-    }
-
-    #[napi(catch_unwind)]
-    pub fn wait(&self) -> AsyncTask<WaitProcessTask> {
-        AsyncTask::new(WaitProcessTask {
-            state: self.state.clone(),
-        })
-    }
-
-    #[napi(catch_unwind)]
-    pub fn set_timeout(&self, milliseconds: u32) {
-        process_set_timeout(&self.state, milliseconds);
-    }
-
-    #[napi(catch_unwind)]
-    pub fn clear_timeout(&self) {
-        process_clear_timeout(&self.state);
-    }
-
-    #[napi(catch_unwind)]
-    pub fn timed_out(&self) -> bool {
-        process_timed_out(&self.state)
-    }
-
-    #[napi(catch_unwind)]
-    pub fn terminate(&self) {
-        process_signal(&self.state, false);
-    }
-
-    #[napi(catch_unwind)]
-    pub fn kill(&self) {
-        process_signal(&self.state, true);
-    }
-}
-
-fn consume_csi(characters: &[char], mut cursor: usize) -> usize {
-    while cursor < characters.len() {
-        let character = characters[cursor];
-        cursor += 1;
-        if ('@'..='~').contains(&character) {
-            break;
-        }
-    }
-    cursor
-}
-
-fn consume_terminal_string(characters: &[char], mut cursor: usize, bell_terminated: bool) -> usize {
-    while cursor < characters.len() {
-        if bell_terminated && characters[cursor] == '\u{0007}' {
-            return cursor + 1;
-        }
-        if characters[cursor] == '\u{009c}' {
-            return cursor + 1;
-        }
-        if characters[cursor] == '\u{001b}' && characters.get(cursor + 1) == Some(&'\\') {
-            return cursor + 2;
-        }
-        cursor += 1;
-    }
-    cursor
-}
-
-fn consume_escape(characters: &[char], mut cursor: usize) -> usize {
-    let Some(introducer) = characters.get(cursor).copied() else {
-        return cursor;
-    };
-    cursor += 1;
-    match introducer {
-        '[' => consume_csi(characters, cursor),
-        ']' => consume_terminal_string(characters, cursor, true),
-        'P' | 'X' | '^' | '_' => consume_terminal_string(characters, cursor, false),
-        '\u{0020}'..='\u{002f}' => {
-            while characters
-                .get(cursor)
-                .is_some_and(|character| ('\u{0020}'..='\u{002f}').contains(character))
-            {
-                cursor += 1;
-            }
-            if characters
-                .get(cursor)
-                .is_some_and(|character| ('\u{0030}'..='\u{007e}').contains(character))
-            {
-                cursor += 1;
-            }
-            cursor
-        }
-        _ => cursor,
-    }
-}
-
-fn strip_terminal_controls(text: &str) -> String {
-    let characters = text.chars().collect::<Vec<_>>();
-    let mut output = String::new();
-    let mut cursor = 0;
-    while cursor < characters.len() {
-        match characters[cursor] {
-            '\u{001b}' => cursor = consume_escape(&characters, cursor + 1),
-            '\u{009b}' => cursor = consume_csi(&characters, cursor + 1),
-            '\u{009d}' => cursor = consume_terminal_string(&characters, cursor + 1, true),
-            '\u{0090}' | '\u{0098}' | '\u{009e}' | '\u{009f}' => {
-                cursor = consume_terminal_string(&characters, cursor + 1, false);
-            }
-            '\u{0080}'..='\u{009f}' => cursor += 1,
-            character => {
-                output.push(character);
-                cursor += 1;
-            }
-        }
-    }
-    output
-}
-
-#[napi(js_name = "nativeNormalizeProcessOutput", catch_unwind)]
-pub fn native_normalize_process_output(output: Utf16String) -> Utf16String {
-    let source = String::from_utf16_lossy(&output).replace("\r\n", "\n");
-    let stripped = strip_terminal_controls(&source);
-    stripped
-        .split('\n')
-        .map(|line| {
-            let line = line.rsplit_once('\r').map_or(line, |(_, tail)| tail);
-            let mut normalized = Vec::new();
-            for character in line.chars() {
-                if character == '\u{0008}' {
-                    normalized.pop();
-                    continue;
-                }
-                if (character < ' ' && character != '\t') || character == '\u{007f}' {
-                    continue;
-                }
-                normalized.push(character);
-            }
-            normalized.into_iter().collect::<String>()
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-        .into()
-}
-
-impl Drop for NativeProcess {
-    fn drop(&mut self) {
-        let running = process_termination(&self.state).is_none();
-        {
-            let mut output = lock(&self.state.output);
-            output.closed = true;
-            self.state.output_changed.notify_all();
-        }
-        if running {
-            signal_process_tree(&self.state, true);
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::native_normalize_process_output;
-
-    #[test]
-    fn normalizes_terminal_output() {
-        let output = native_normalize_process_output(
-            "before\rreplace\n\u{001b}[31mred\u{001b}[0m\nab\u{0008}c"
-                .to_owned()
-                .into(),
-        );
-        assert_eq!(String::from_utf16_lossy(&output), "replace\nred\nac");
-    }
-
-    #[test]
-    fn strips_extended_terminal_control_families() {
-        let output = native_normalize_process_output(
-            "a\u{009b}31mb\u{001b}Psecret\u{001b}\\c\u{001b}(0d\u{009d}title\u{009c}e"
-                .to_owned()
-                .into(),
-        );
-        assert_eq!(String::from_utf16_lossy(&output), "abcde");
-    }
 }
