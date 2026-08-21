@@ -286,7 +286,7 @@ async function nativeIoBenchmarks(): Promise<void> {
     const globStart = performance.now()
     const glob = await nativeGlob({ cwd: workspace, pattern: "*.txt" })
     const globMs = performance.now() - globStart
-    if (glob.kind !== "completed" || glob.total !== 150 || glob.lines.length !== 100) {
+    if (!glob.output.startsWith("Found 150 files\n") || !glob.output.includes("Showing first 100 of 150")) {
       throw new Error("native glob benchmark output mismatch")
     }
 
@@ -294,17 +294,22 @@ async function nativeIoBenchmarks(): Promise<void> {
     const largeText = `${"ordinary line 猫 🔐\n".repeat(20_000)}unique-edit-target\n`
     await writeFile(largePath, largeText)
     const readStart = performance.now()
-    const read = await nativeReadFile(largePath, 1, 2000)
+    const read = await nativeReadFile({ path: largePath, displayPath: largePath, offset: 1, limit: 2000 })
     const readMs = performance.now() - readStart
-    if (read.kind !== "completed" || !read.text.includes("Use offset=") || read.text.length > 51_000) {
+    if (!read.output.includes("Use offset=") || read.output.length > 51_000) {
       throw new Error("native read benchmark output mismatch")
     }
     const editStart = performance.now()
-    const edit = await nativeEditFile(largePath, "unique-edit-target", "updated-edit-target", false)
+    const edit = await nativeEditFile({
+      path: largePath,
+      displayPath: largePath,
+      oldString: "unique-edit-target",
+      newString: "updated-edit-target",
+      replaceAll: false,
+    })
     const editMs = performance.now() - editStart
     if (
-      edit.kind !== "updated" ||
-      edit.matches !== 1 ||
+      !edit.output.startsWith(`Updated ${largePath}`) ||
       (await Bun.file(largePath).text()) !== largeText.replace("unique-edit-target", "updated-edit-target")
     ) {
       throw new Error("native edit benchmark output mismatch")
@@ -312,7 +317,7 @@ async function nativeIoBenchmarks(): Promise<void> {
     console.log(
       JSON.stringify(
         {
-          glob: { milliseconds: globMs, total: glob.total, retained: glob.lines.length },
+          glob: { milliseconds: globMs, total: 150, retained: 100 },
           read: { milliseconds: readMs },
           edit: { milliseconds: editMs },
         },

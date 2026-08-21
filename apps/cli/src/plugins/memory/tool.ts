@@ -1,4 +1,5 @@
 import { asString } from "../../lib/json"
+import { nativeToolRecord } from "../../native/tool-runtime"
 import type { Tool } from "../../tools/types"
 import type { GlobalMemoryStore } from "./store"
 
@@ -7,18 +8,6 @@ type MemoryOperation = "read" | "replace" | "clear"
 function operationValue(args: Record<string, unknown>): MemoryOperation | undefined {
   const value = asString(args.operation)
   return value === "read" || value === "replace" || value === "clear" ? value : undefined
-}
-
-function operation(args: Record<string, unknown>): MemoryOperation {
-  const value = operationValue(args)
-  if (value) return value
-  throw new Error("operation must be read, replace, or clear")
-}
-
-function expectedRevision(args: Record<string, unknown>): string {
-  const value = asString(args.revision)
-  if (!value) throw new Error("revision is required; read global memory before changing it")
-  return value
 }
 
 export function createMemoryTool(store: GlobalMemoryStore): Tool {
@@ -71,22 +60,19 @@ export function createMemoryTool(store: GlobalMemoryStore): Tool {
       return { subject: operationValue(args) ?? "invalid" }
     },
     async execute(args, ctx) {
-      switch (operation(args)) {
-        case "read": {
-          const snapshot = await store.load()
-          return { output: JSON.stringify(snapshot) }
-        }
-        case "replace": {
-          const content = asString(args.content)
-          if (content === undefined) throw new Error("content is required for replace")
-          const snapshot = await store.replace(content, expectedRevision(args), ctx.signal)
-          return { output: JSON.stringify({ revision: snapshot.revision }) }
-        }
-        case "clear": {
-          const snapshot = await store.replace("", expectedRevision(args), ctx.signal)
-          return { output: JSON.stringify({ revision: snapshot.revision }) }
-        }
+      const prepared = nativeToolRecord("memory_prepare", args)
+      const operation = operationValue(prepared)
+      if (!operation) throw new Error("native memory returned an invalid request")
+      if (operation === "read") {
+        const snapshot = await store.load(ctx.signal)
+        return { output: JSON.stringify(snapshot) }
       }
+      const revision = asString(prepared.revision)
+      if (!revision) throw new Error("native memory returned an invalid request")
+      const content = operation === "clear" ? "" : asString(prepared.content)
+      if (content === undefined) throw new Error("native memory returned an invalid request")
+      const snapshot = await store.replace(content, revision, ctx.signal)
+      return { output: JSON.stringify({ revision: snapshot.revision }) }
     },
   }
 }

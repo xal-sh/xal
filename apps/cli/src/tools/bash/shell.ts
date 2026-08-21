@@ -1,9 +1,6 @@
-import { randomUUID } from "node:crypto"
 import { statSync } from "node:fs"
 import { basename, isAbsolute } from "node:path"
-import { appInfo } from "../../app-info"
-import { killProcessTree } from "../../lib/process"
-import { spawnCommand, spawnShellProcess, type ShellProcess } from "./process"
+import { nativeShellManager, type NativeShellExecution } from "../../native"
 import { sandboxLaunch, sandboxProcessEnvironment, type SandboxAccess } from "./sandbox"
 
 const SUPPORTED_SHELLS = new Set(["sh", "bash", "dash", "ksh", "mksh", "zsh"])
@@ -60,155 +57,74 @@ export function shellLaunch(args: string[], cwd: string, sandbox: SandboxAccess 
   return sandbox ? sandboxLaunch(launch, cwd, sandbox) : launch
 }
 
-function shellQuote(value: string): string {
-  return `'${value.replaceAll("'", `'\\''`)}'`
-}
-
 export interface ShellExecution {
   done: Promise<ShellTermination>
+  setTimeout(milliseconds: number): void
+  clearTimeout(): void
+  timedOut(): boolean
+  terminate(): void
   kill(): void
 }
 
 export type ShellTermination = { status: "exited"; exitCode: number } | { status: "signaled"; signal?: string }
 
-interface ActiveRun {
-  feed(text: string): void
-  close(code: number | null, signal: NodeJS.Signals | null): void
-  fail(error: Error): void
-}
-
-interface ShellEntry {
-  proc: ShellProcess
-  workspace: string
-  dead: boolean
-  active: ActiveRun | undefined
-}
-
-const pools = new Map<string, Map<string, ShellEntry>>()
 let exitHookRegistered = false
 
 function registerExitHook(): void {
   if (exitHookRegistered) return
   exitHookRegistered = true
-  process.on("exit", () => {
-    for (const pool of pools.values()) {
-      for (const entry of pool.values()) killProcessTree(entry.proc)
-    }
-  })
+  process.on("exit", () => nativeShellManager().disposeAll())
 }
 
 export function disposeShellSession(sessionId: string): void {
-  const pool = pools.get(sessionId)
-  if (!pool) return
-  pools.delete(sessionId)
-  for (const entry of pool.values()) killProcessTree(entry.proc)
+  nativeShellManager().disposeSession(sessionId)
 }
 
-function spawnEntry(cwd: string, sandbox: SandboxAccess | undefined): ShellEntry {
-  const proc = spawnShellProcess(shellLaunch(["-s"], cwd, sandbox), processEnvironment(cwd, sandbox), cwd)
-  const entry: ShellEntry = { proc, workspace: cwd, dead: false, active: undefined }
-  const feed = (chunk: Buffer): void => entry.active?.feed(chunk.toString())
-  proc.stdout.on("data", feed)
-  proc.stderr.on("data", feed)
-  proc.stdin.on("error", (error) => {
-    entry.dead = true
-    entry.active?.fail(error)
-  })
-  proc.once("error", (error) => {
-    entry.dead = true
-    entry.active?.fail(error)
-  })
-  proc.once("close", (code, signal) => {
-    entry.dead = true
-    entry.active?.close(code, signal)
-  })
-  return entry
-}
-
-function processEnvironment(cwd: string, sandbox: SandboxAccess | undefined): NodeJS.ProcessEnv {
+function processEnvironment(cwd: string, sandbox: SandboxAccess | undefined): { name: string; value: string }[] {
   const environment = { ...process.env, PWD: cwd }
-  return sandbox ? sandboxProcessEnvironment(environment) : environment
+  const selected = sandbox ? sandboxProcessEnvironment(environment) : environment
+  return Object.entries(selected).flatMap(([name, value]) => (value === undefined ? [] : [{ name, value }]))
 }
 
-function runPersistent(
-  entry: ShellEntry,
-  command: string,
-  onOutput: (text: string) => void,
-): Promise<ShellTermination> {
-  return new Promise((resolve, reject) => {
-    const marker = `__${appInfo.name}_${randomUUID()}__`
-    const needle = `\n${marker}:`
-    const holdback = needle.length + 8
-    let pending = ""
-    let emitted = 0
-    let settled = false
-
-    const emit = (limit: number): void => {
-      if (limit <= emitted) return
-      onOutput(pending.slice(emitted, limit))
-      emitted = limit
-    }
-    const settle = (finish: () => void): void => {
-      if (settled) return
+function shellExecution(native: NativeShellExecution, onOutput: (text: string) => void): ShellExecution {
+  const decoder = new TextDecoder()
+  const nativeDone = native.wait()
+  let settled = false
+  void nativeDone.then(
+    () => {
       settled = true
-      entry.active = undefined
-      finish()
+    },
+    () => {
+      settled = true
+    },
+  )
+  const drain = (): void => {
+    const bytes = native.drain()
+    if (bytes.length === 0) return
+    const text = decoder.decode(bytes, { stream: true })
+    if (text) onOutput(text)
+  }
+  const pump = async (): Promise<void> => {
+    while (!settled || !native.outputClosed()) {
+      drain()
+      await Bun.sleep(5)
     }
-    entry.active = {
-      feed(text) {
-        pending += text
-        const found = pending.indexOf(needle)
-        if (found < 0) {
-          emit(pending.length - holdback)
-          return
-        }
-        const lineEnd = pending.indexOf("\n", found + needle.length)
-        if (lineEnd < 0) return
-        emit(found)
-        const status = Number.parseInt(pending.slice(found + needle.length, lineEnd), 10)
-        settle(() => resolve(Number.isNaN(status) ? { status: "signaled" } : { status: "exited", exitCode: status }))
-      },
-      close(code, signal) {
-        emit(pending.length)
-        settle(() =>
-          resolve(
-            code === null
-              ? { status: "signaled", ...(signal === null ? {} : { signal }) }
-              : { status: "exited", exitCode: code },
-          ),
-        )
-      },
-      fail(error) {
-        settle(() => reject(error))
-      },
-    }
-    entry.proc.stdin.write(
-      `{ eval ${shellQuote(command)}; } </dev/null 2>&1\nprintf '\\n%s:%s\\n' ${shellQuote(marker)} "$?"\n`,
-    )
-  })
-}
-
-function runIsolated(
-  command: string,
-  cwd: string,
-  sandbox: SandboxAccess | undefined,
-  onOutput: (text: string) => void,
-): ShellExecution {
-  const proc = spawnCommand(shellLaunch(["-c", command], cwd, sandbox), processEnvironment(cwd, sandbox), cwd)
-  const collect = (chunk: Buffer): void => onOutput(chunk.toString())
-  proc.stdout.on("data", collect)
-  proc.stderr.on("data", collect)
-  const done = new Promise<ShellTermination>((resolve, reject) => {
-    proc.once("error", reject)
-    proc.once("close", (code, signal) => {
-      resolve(
-        code === null
-          ? { status: "signaled", ...(signal === null ? {} : { signal }) }
-          : { status: "exited", exitCode: code },
-      )
-    })
-  })
-  return { done, kill: () => killProcessTree(proc) }
+    drain()
+    const tail = decoder.decode()
+    if (tail) onOutput(tail)
+  }
+  const pumped = pump()
+  return {
+    done: Promise.all([nativeDone, pumped]).then(([termination]) => {
+      if (termination.status === "launchFailed") throw new Error(termination.signal)
+      return termination
+    }),
+    setTimeout: (milliseconds) => native.setTimeout(milliseconds),
+    clearTimeout: () => native.clearTimeout(),
+    timedOut: () => native.timedOut(),
+    terminate: () => native.terminate(),
+    kill: () => native.kill(),
+  }
 }
 
 export function executeShellCommand(
@@ -219,27 +135,14 @@ export function executeShellCommand(
   onOutput: (text: string) => void,
 ): ShellExecution {
   registerExitHook()
-  let pool = pools.get(sessionId)
-  if (!pool) {
-    pool = new Map()
-    pools.set(sessionId, pool)
-  }
-  const key = sandbox ?? "plain"
-  let entry = pool.get(key)
-  if (entry?.dead) {
-    pool.delete(key)
-    entry = undefined
-  }
-  if (entry?.active) return runIsolated(command, cwd, sandbox, onOutput)
-  if (entry && entry.workspace !== cwd) {
-    killProcessTree(entry.proc)
-    pool.delete(key)
-    entry = undefined
-  }
-  if (!entry) {
-    entry = spawnEntry(cwd, sandbox)
-    pool.set(key, entry)
-  }
-  const target = entry
-  return { done: runPersistent(target, command, onOutput), kill: () => killProcessTree(target.proc) }
+  const native = nativeShellManager().execute({
+    sessionId,
+    sandboxId: sandbox ?? "plain",
+    command,
+    cwd,
+    persistentLaunch: shellLaunch(["-s"], cwd, sandbox),
+    isolatedLaunch: shellLaunch(["-c", command], cwd, sandbox),
+    environment: processEnvironment(cwd, sandbox),
+  })
+  return shellExecution(native, onOutput)
 }

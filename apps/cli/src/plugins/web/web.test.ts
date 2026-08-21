@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test"
 import type { ToolExecutionContext } from "../../tools/types"
-import { htmlToMarkdown, webfetchTool } from "./fetch"
+import { fetchUrl, htmlToMarkdown, webfetchTool } from "./fetch"
 
 function context(): ToolExecutionContext {
   return {
@@ -41,10 +41,10 @@ test("webfetch returns html pages as markdown and other text as-is", async () =>
         ? new Response("<h2>Guide</h2><p>Hello</p>", { headers: { "content-type": "text/html" } })
         : new Response('{"ok":true}', { headers: { "content-type": "application/json" } }),
     async (base) => {
-      const page = await webfetchTool.execute({ url: `${base}/page` }, context())
+      const page = await fetchUrl(`${base}/page`, context().signal, true)
       expect(page.output).toBe("## Guide\n\nHello")
 
-      const json = await webfetchTool.execute({ url: `${base}/data` }, context())
+      const json = await fetchUrl(`${base}/data`, context().signal, true)
       expect(json.output).toBe('{"ok":true}')
     },
   )
@@ -57,7 +57,7 @@ test("webfetch decodes the charset declared in the content type", async () => {
         headers: { "content-type": "text/plain; charset=windows-1252" },
       }),
     async (base) => {
-      const result = await webfetchTool.execute({ url: `${base}/latin` }, context())
+      const result = await fetchUrl(`${base}/latin`, context().signal, true)
       expect(result.output).toBe("café")
     },
   )
@@ -70,7 +70,7 @@ test("webfetch does not follow redirects and returns the target instead", async 
         ? new Response(null, { status: 302, headers: { location: "https://elsewhere.example/new" } })
         : new Response("nope"),
     async (base) => {
-      const result = await webfetchTool.execute({ url: `${base}/old` }, context())
+      const result = await fetchUrl(`${base}/old`, context().signal, true)
       expect(result.output).toBe("Redirected to https://elsewhere.example/new — fetch that URL to read it.")
     },
   )
@@ -85,22 +85,47 @@ test("webfetch fails on error statuses, binary content, and oversized responses"
       return new Response(Buffer.alloc(6 * 1024 * 1024, 97), { headers: { "content-type": "text/plain" } })
     },
     async (base) => {
-      await expect(webfetchTool.execute({ url: `${base}/missing` }, context())).rejects.toThrow(
+      await expect(fetchUrl(`${base}/missing`, context().signal, true)).rejects.toThrow(
         "Request failed with status 404",
       )
-      await expect(webfetchTool.execute({ url: `${base}/image` }, context())).rejects.toThrow(
+      await expect(fetchUrl(`${base}/image`, context().signal, true)).rejects.toThrow(
         "Cannot fetch binary content (image/png)",
       )
-      await expect(webfetchTool.execute({ url: `${base}/huge` }, context())).rejects.toThrow(
-        "Response exceeds the 5 MB limit",
-      )
+      await expect(fetchUrl(`${base}/huge`, context().signal, true)).rejects.toThrow("Response exceeds the 5 MB limit")
     },
   )
 })
 
-test("webfetch rejects unsupported schemes and suggests a domain-wide permission", async () => {
+test("webfetch cancels while waiting for response headers", async () => {
+  let release: (() => void) | undefined
+  const waiting = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  const server = Bun.serve({
+    port: 0,
+    async fetch() {
+      await waiting
+      return new Response("late")
+    },
+  })
+  const controller = new AbortController()
+  try {
+    const execution = fetchUrl(`${server.url.href.replace(/\/$/, "")}/slow`, controller.signal, true)
+    await Bun.sleep(30)
+    controller.abort()
+    expect((await execution).output).toBe("(interrupted by user)")
+  } finally {
+    release?.()
+    await server.stop(true)
+  }
+})
+
+test("webfetch rejects unsupported schemes and internal addresses", async () => {
   await expect(webfetchTool.execute({ url: "file:///etc/passwd" }, context())).rejects.toThrow(
     "Not a valid http or https URL",
+  )
+  await expect(webfetchTool.execute({ url: "http://127.0.0.1/private" }, context())).rejects.toThrow(
+    "URL resolves to an internal address",
   )
   expect(webfetchTool.permission?.({ url: "https://token@example.com/docs/api" }, { cwd: process.cwd() })).toEqual({
     subject: "https://example.com/docs/api",

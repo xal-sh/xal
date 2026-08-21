@@ -124,11 +124,47 @@ test("rejects a marker that does not describe the checkout holding it", async ()
   })
 })
 
+test("rejects malformed marker syntax with recovery guidance", async () => {
+  await withRepository(async ({ root }) => {
+    const worktree = await createManagedWorktree(root, "syntax")
+    await writeFile(await markerPath(worktree.path), "{broken")
+
+    await expect(managedWorktreeAt(worktree.path)).rejects.toThrow("is malformed — fix or delete it")
+  })
+})
+
 test("rejects a malformed marker instead of ignoring it", async () => {
   await withRepository(async ({ root }) => {
     const worktree = await createManagedWorktree(root, "corrupt")
     await writeFile(await markerPath(worktree.path), JSON.stringify({ version: 1, path: "relative/path" }))
 
     await expect(managedWorktreeAt(worktree.path)).rejects.toThrow("invalid managed worktree record")
+  })
+})
+
+test("honors already-aborted worktree operations", async () => {
+  await withRepository(async ({ root }) => {
+    const controller = new AbortController()
+    controller.abort()
+
+    await expect(managedWorktreeAt(root, controller.signal)).rejects.toThrow("Git command interrupted")
+    await expect(createManagedWorktree(root, "cancelled", controller.signal)).rejects.toThrow(
+      "Worktree creation interrupted",
+    )
+  })
+})
+
+test("rolls back branch and checkout when worktree checkout fails", async () => {
+  await withRepository(async ({ root }) => {
+    await writeFile(join(root, ".gitattributes"), "*.ts filter=broken\n")
+    await runGit(root, ["add", ".gitattributes"])
+    await runGit(root, ["commit", "-m", "require filter"])
+    await runGit(root, ["config", "filter.broken.clean", "cat"])
+    await runGit(root, ["config", "filter.broken.smudge", "false"])
+    await runGit(root, ["config", "filter.broken.required", "true"])
+
+    await expect(createManagedWorktree(root, "broken-checkout")).rejects.toThrow()
+    expect(await runGit(root, ["branch", "--list", `${appInfo.name}/broken-checkout-*`])).toBe("")
+    expect((await runGit(root, ["worktree", "list", "--porcelain"])).match(/^worktree /gm)).toHaveLength(1)
   })
 })

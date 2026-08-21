@@ -43,24 +43,13 @@ export const readTool: Tool = {
   },
   async execute(args, ctx) {
     const path = asString(args.file_path)
-    if (!path) throw new Error("file_path is required")
-
-    const shown = displayPath(path, ctx.cwd)
-    const offset = Math.max(1, Math.floor(asNumber(args.offset) ?? 1))
-    const limit = Math.max(1, Math.floor(asNumber(args.limit) ?? DEFAULT_LIMIT))
-    const result = await nativeReadFile(
-      resolveFilePath(path, ctx.cwd),
-      Math.min(offset, 0xffffffff),
-      Math.min(limit, 0xffffffff),
-    )
-    if (result.kind === "notFound") throw new Error(`File not found: ${shown}`)
-    if (result.kind === "directory") throw new Error(`Path is a directory, not a file: ${shown}`)
-    if (result.kind === "binary") throw new Error(`Cannot read binary file: ${shown}`)
-    if (result.kind === "empty") return { output: "(empty file)" }
-    if (result.kind === "pastEnd") {
-      throw new Error(`Offset ${offset} is past the end of the file (${result.total} lines)`)
-    }
-    if (result.kind === "completed") return { output: result.text }
-    throw new Error(`native read returned unexpected ${result.kind} outcome`)
+    const offset = asNumber(args.offset)
+    const limit = asNumber(args.limit)
+    return nativeReadFile({
+      ...(path ? { path: resolveFilePath(path, ctx.cwd) } : {}),
+      displayPath: displayPath(path ?? "", ctx.cwd),
+      ...(offset === undefined ? {} : { offset }),
+      ...(limit === undefined ? {} : { limit }),
+    })
   },
 }

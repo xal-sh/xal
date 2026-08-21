@@ -1,39 +1,15 @@
 import { join } from "node:path"
 import { appInfo } from "../app-info"
-import { formatTokens } from "../lib/format"
 import { writeSecureText } from "../lib/fs"
-import { MAX_PLAN_LENGTH, parsePlanMarkdown, type SessionPlan } from "./types"
-import type { ContextUsage } from "../providers/types"
+import { MAX_PLAN_LENGTH, parseSessionPlan, type SessionPlan } from "./types"
 import type { InteractiveTool } from "../tools/types"
-
-const APPROVE = "Approve and build"
-const RESTART = "Clear context and build"
-const REVISE = "Request changes"
+import { nativeQuestions, nativeToolRecord, nativeToolString } from "../native/tool-runtime"
 
 const RESTART_PROMPT =
   "A previous agent produced the plan below to accomplish the user's task. Implement the plan in a fresh context. Treat the plan as the source of user intent, re-read files as needed, and carry the work through implementation and verification."
 
-function markdownFrom(args: Record<string, unknown>): string {
-  const markdown = parsePlanMarkdown(args.plan)
-  if (markdown) return markdown
-  throw new Error(`plan must be non-empty Markdown of at most ${MAX_PLAN_LENGTH} characters`)
-}
-
 function draft(path: string, markdown: string, feedback?: string): SessionPlan {
   return { path, markdown, status: "draft", ...(feedback ? { feedback } : {}) }
-}
-
-function usageLabel(usage: ContextUsage | undefined): string | undefined {
-  if (!usage) return undefined
-  if (usage.window === undefined) return usage.tokens > 0 ? `${formatTokens(usage.tokens)} used` : undefined
-  const percent = Math.round((usage.tokens / usage.window) * 100)
-  return percent > 0 ? `${percent}% used` : undefined
-}
-
-function restartDescription(usage: ContextUsage | undefined): string {
-  const label = usageLabel(usage)
-  const start = "Start a new session that carries only this plan."
-  return label ? `${start} Context: ${label}.` : start
 }
 
 export const submitPlanTool: InteractiveTool = {
@@ -65,54 +41,27 @@ export const submitPlanTool: InteractiveTool = {
   },
   async execute(args, ctx) {
     if (ctx.session.mode !== "plan") throw new Error("submit_plan is available only in plan mode")
-    const markdown = markdownFrom(args)
+    const prepared = nativeToolRecord("submit_plan_prepare", args)
+    const markdown = nativeToolString(prepared, "markdown", "submit_plan")
     const path = join(ctx.session.directory, "plan.md")
     await writeSecureText(path, `${markdown}\n`)
     ctx.publish({ type: "plan_updated", plan: draft(path, markdown) })
 
-    const result = await ctx.requestInput({
-      questions: [
-        {
-          id: "plan_review",
-          header: "Plan review",
-          question: `Review the implementation plan above. What should ${appInfo.displayName} do?`,
-          options: [
-            {
-              label: APPROVE,
-              description: "Restore the previous writable mode, or normal mode, and begin implementing.",
-            },
-            {
-              label: RESTART,
-              description: restartDescription(await ctx.contextUsage()),
-            },
-            {
-              label: REVISE,
-              description: "Keep plan mode active so the proposal can be revised.",
-            },
-          ],
-        },
-      ],
+    const usage = await ctx.contextUsage()
+    const review = nativeToolRecord("submit_plan_review", {
+      displayName: appInfo.displayName,
+      ...(usage === undefined ? {} : { usage }),
     })
+    const result = await ctx.requestInput({ questions: nativeQuestions(review.questions) })
 
-    let status: "approved" | "approved_restarted" | "revision_requested" | "review_dismissed"
-    let plan: SessionPlan
-    if (result.status === "rejected") {
-      status = "review_dismissed"
-      plan = draft(path, markdown, "Plan review was dismissed. Stop and wait for user direction.")
-    } else {
-      const answer = result.answers[0]?.value
-      if (answer === APPROVE || answer === RESTART) {
-        status = answer === RESTART ? "approved_restarted" : "approved"
-        plan = { path, markdown, status: "approved" }
-        if (answer === RESTART) ctx.restartSession(`${RESTART_PROMPT}\n\n${markdown}`)
-      } else {
-        status = "revision_requested"
-        plan = draft(path, markdown, answer === REVISE ? "Revise the plan before implementation." : (answer ?? REVISE))
-      }
+    const finalized = nativeToolRecord("submit_plan_finalize", { path, markdown, result })
+    const plan = parseSessionPlan(finalized.plan)
+    if (!plan || typeof finalized.restart !== "boolean") {
+      throw new Error("native submit_plan returned an invalid value")
     }
-
+    if (finalized.restart) ctx.restartSession(`${RESTART_PROMPT}\n\n${markdown}`)
     return {
-      output: JSON.stringify({ status, path, ...(plan.feedback ? { feedback: plan.feedback } : {}) }),
+      output: nativeToolString(finalized, "output", "submit_plan"),
       events: [{ type: "plan_updated", plan }],
     }
   },

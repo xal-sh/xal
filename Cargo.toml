@@ -1,6 +1,10 @@
 [workspace]
 members = ["crates/xal-native"]
+exclude = ["vendor/rmcp"]
 resolver = "3"
+
+[patch.crates-io]
+rmcp = { path = "vendor/rmcp" }
 
 [workspace.package]
 edition = "2024"

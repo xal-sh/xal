@@ -1,13 +1,6 @@
-import { MAX_TASKS, MAX_TASK_STEP_LENGTH, parseTaskList, type TrackedTask } from "./types"
+import { MAX_TASKS, MAX_TASK_STEP_LENGTH, parseTaskList } from "./types"
 import type { Tool } from "../tools/types"
-
-function tasksFrom(args: Record<string, unknown>): TrackedTask[] {
-  const tasks = parseTaskList(args.tasks)
-  if (tasks) return tasks
-  throw new Error(
-    `tasks must contain up to ${MAX_TASKS} unique steps of at most ${MAX_TASK_STEP_LENGTH} characters, with no more than one in progress`,
-  )
-}
+import { nativeToolRecord, nativeToolString } from "../native/tool-runtime"
 
 export const updateTasksTool: Tool = {
   name: "update_tasks",
@@ -45,9 +38,11 @@ export const updateTasksTool: Tool = {
     return true
   },
   async execute(args) {
-    const tasks = tasksFrom(args)
+    const result = nativeToolRecord("update_tasks", args)
+    const tasks = parseTaskList(result.tasks)
+    if (!tasks) throw new Error("native update_tasks returned an invalid value")
     return {
-      output: JSON.stringify({ tasks }),
+      output: nativeToolString(result, "output", "update_tasks"),
       events: [{ type: "task_list_updated", tasks }],
     }
   },

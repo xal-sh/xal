@@ -18,72 +18,139 @@ use napi::bindgen_prelude::{AbortSignal, AsyncTask};
 use napi::{Env, Error, Status, Task};
 use napi_derive::napi;
 
+use crate::tool_contracts::{
+    NativeToolError, NativeToolOutcomeKind, cancellation_flag, first_line_message, normalize_path,
+};
+
 const SEARCH_TIMEOUT: Duration = Duration::from_secs(30);
 const GREP_LIMIT: usize = 250;
 const GLOB_LIMIT: usize = 100;
 const MAX_COLUMNS: usize = 500;
+const MAX_OUTPUT_CHARS: usize = 30_000;
 
 #[napi(object)]
 pub struct NativeGrepOptions {
     pub cwd: String,
     pub target: Option<String>,
     pub glob: Option<String>,
-    pub pattern: String,
-    pub content: bool,
-    pub case_insensitive: bool,
+    pub pattern: Option<String>,
+    pub output_mode: Option<String>,
+    pub case_insensitive: Option<bool>,
+    pub aborted: Option<bool>,
 }
 
 #[napi(object)]
 pub struct NativeGlobOptions {
     pub cwd: String,
     pub target: Option<String>,
-    pub pattern: String,
+    pub pattern: Option<String>,
+    pub aborted: Option<bool>,
 }
 
 #[napi(object)]
 pub struct NativeSearchResult {
-    pub kind: String,
+    pub kind: NativeToolOutcomeKind,
     pub total: u32,
     pub lines: Vec<String>,
-    pub error: Option<String>,
+    pub output: Option<String>,
+    pub error: Option<NativeToolError>,
 }
 
-fn search_result(kind: &str) -> NativeSearchResult {
+fn search_result(kind: NativeToolOutcomeKind) -> NativeSearchResult {
     NativeSearchResult {
-        kind: kind.to_owned(),
+        kind,
         total: 0,
         lines: Vec::new(),
+        output: None,
         error: None,
     }
 }
 
-fn first_line_error(prefix: &str, error: impl std::fmt::Display) -> NativeSearchResult {
-    let reason = error.to_string();
-    let first = reason.lines().next().unwrap_or("unknown error");
+fn request_error(message: &str) -> NativeSearchResult {
     NativeSearchResult {
-        kind: "error".to_owned(),
+        kind: NativeToolOutcomeKind::InvalidRequest,
         total: 0,
         lines: Vec::new(),
-        error: Some(format!("{prefix}: {first}")),
+        output: None,
+        error: Some(NativeToolError {
+            message: message.to_owned(),
+        }),
     }
 }
 
-fn normalize_path(path: &Path) -> PathBuf {
-    let mut output = PathBuf::new();
-    for component in path.components() {
-        match component {
-            Component::CurDir => {}
-            Component::ParentDir => {
-                if !output.pop() && !path.is_absolute() {
-                    output.push("..");
-                }
-            }
-            Component::Prefix(prefix) => output.push(prefix.as_os_str()),
-            Component::RootDir => output.push(component.as_os_str()),
-            Component::Normal(value) => output.push(value),
-        }
+fn search_error(
+    kind: NativeToolOutcomeKind,
+    prefix: &str,
+    error: impl std::fmt::Display,
+) -> NativeSearchResult {
+    NativeSearchResult {
+        kind,
+        total: 0,
+        lines: Vec::new(),
+        output: None,
+        error: Some(NativeToolError {
+            message: first_line_message(prefix, error),
+        }),
     }
-    output
+}
+
+fn format_results(
+    header: &str,
+    lines: &[String],
+    total: u32,
+    footer: impl FnOnce(usize) -> String,
+) -> String {
+    let mut shown = lines.to_vec();
+    let mut characters = shown
+        .iter()
+        .map(|line| line.encode_utf16().count() + 1)
+        .sum::<usize>();
+    while shown.len() > 1 && characters > MAX_OUTPUT_CHARS {
+        characters -= shown
+            .pop()
+            .map_or(0, |line| line.encode_utf16().count() + 1);
+    }
+    let mut output = Vec::with_capacity(shown.len() + 2);
+    output.push(header.to_owned());
+    output.extend(shown.iter().cloned());
+    if usize::try_from(total).is_ok_and(|total| total > shown.len()) {
+        output.push(footer(shown.len()));
+    }
+    output.join("\n")
+}
+
+fn complete_grep(mut result: NativeSearchResult, content: bool) -> NativeSearchResult {
+    result.output = Some(if result.total == 0 {
+        "No matches found".to_owned()
+    } else {
+        let header = if content {
+            format!("Found {} matching lines", result.total)
+        } else {
+            format!("Found {} files", result.total)
+        };
+        format_results(&header, &result.lines, result.total, |shown| {
+            format!(
+                "(Showing first {shown} of {}. Narrow your pattern or path.)",
+                result.total
+            )
+        })
+    });
+    result
+}
+
+fn complete_glob(mut result: NativeSearchResult) -> NativeSearchResult {
+    result.output = Some(if result.total == 0 {
+        "No files found".to_owned()
+    } else {
+        let header = format!("Found {} files", result.total);
+        format_results(&header, &result.lines, result.total, |shown| {
+            format!(
+                "(Showing first {shown} of {}. Narrow the pattern to see the rest.)",
+                result.total
+            )
+        })
+    });
+    result
 }
 
 fn absolute_target(cwd: &Path, target: Option<&str>) -> PathBuf {
@@ -170,7 +237,13 @@ fn path_for_glob(path: &Path, cwd: &Path, root: &Path) -> String {
 fn compile_glob(pattern: &str) -> Result<GlobMatcher, NativeSearchResult> {
     Glob::new(pattern)
         .map(|glob| glob.compile_matcher())
-        .map_err(|error| first_line_error("ripgrep error", error))
+        .map_err(|error| {
+            search_error(
+                NativeToolOutcomeKind::InvalidRequest,
+                "ripgrep error",
+                error,
+            )
+        })
 }
 
 enum SearchFile {
@@ -234,14 +307,32 @@ impl Task for GrepTask {
     type JsValue = NativeSearchResult;
 
     fn compute(&mut self) -> napi::Result<Self::Output> {
+        if self.options.aborted.unwrap_or(false) {
+            return Ok(search_result(NativeToolOutcomeKind::Interrupted));
+        }
         let deadline = Instant::now() + SEARCH_TIMEOUT;
         let cwd = PathBuf::from(&self.options.cwd);
         let root = absolute_target(&cwd, self.options.target.as_deref());
+        let Some(pattern) = self
+            .options
+            .pattern
+            .as_deref()
+            .filter(|pattern| !pattern.is_empty())
+        else {
+            return Ok(request_error("pattern is required"));
+        };
+        let content = self.options.output_mode.as_deref() != Some("files");
         let mut regex = RegexMatcherBuilder::new();
-        regex.case_insensitive(self.options.case_insensitive);
-        let matcher = match regex.build(&self.options.pattern) {
+        regex.case_insensitive(self.options.case_insensitive.unwrap_or(false));
+        let matcher = match regex.build(pattern) {
             Ok(matcher) => matcher,
-            Err(error) => return Ok(first_line_error("ripgrep error", error)),
+            Err(error) => {
+                return Ok(search_error(
+                    NativeToolOutcomeKind::InvalidRequest,
+                    "ripgrep error",
+                    error,
+                ));
+            }
         };
         let glob = match self.options.glob.as_deref().map(compile_glob).transpose() {
             Ok(glob) => glob,
@@ -249,24 +340,30 @@ impl Task for GrepTask {
         };
         let files = match walk_files(&root, &self.cancelled, Some(deadline)) {
             Ok(files) => files,
-            Err(error) => return Ok(first_line_error("ripgrep error", error)),
+            Err(error) => {
+                return Ok(search_error(
+                    NativeToolOutcomeKind::Failed,
+                    "ripgrep error",
+                    error,
+                ));
+            }
         };
         if self.cancelled.load(Ordering::Relaxed) {
-            return Ok(search_result("interrupted"));
+            return Ok(search_result(NativeToolOutcomeKind::Interrupted));
         }
         if Instant::now() >= deadline {
-            return Ok(search_result("timedOut"));
+            return Ok(search_result(NativeToolOutcomeKind::TimedOut));
         }
-        let mut result = search_result("completed");
+        let mut result = search_result(NativeToolOutcomeKind::Completed);
         for path in files {
             if self.cancelled.load(Ordering::Relaxed) {
-                result.kind = "interrupted".to_owned();
+                result.kind = NativeToolOutcomeKind::Interrupted;
                 result.total = 0;
                 result.lines.clear();
                 return Ok(result);
             }
             if Instant::now() >= deadline {
-                result.kind = "timedOut".to_owned();
+                result.kind = NativeToolOutcomeKind::TimedOut;
                 result.total = 0;
                 result.lines.clear();
                 return Ok(result);
@@ -280,9 +377,19 @@ impl Task for GrepTask {
             let bytes = match read_search_file(&path, &self.cancelled, deadline) {
                 Ok(SearchFile::Bytes(bytes)) => bytes,
                 Ok(SearchFile::Binary) => continue,
-                Ok(SearchFile::Interrupted) => return Ok(search_result("interrupted")),
-                Ok(SearchFile::TimedOut) => return Ok(search_result("timedOut")),
-                Err(error) => return Ok(first_line_error("ripgrep error", error)),
+                Ok(SearchFile::Interrupted) => {
+                    return Ok(search_result(NativeToolOutcomeKind::Interrupted));
+                }
+                Ok(SearchFile::TimedOut) => {
+                    return Ok(search_result(NativeToolOutcomeKind::TimedOut));
+                }
+                Err(error) => {
+                    return Ok(search_error(
+                        NativeToolOutcomeKind::Failed,
+                        "ripgrep error",
+                        error,
+                    ));
+                }
             };
             let shown_path = display_path(&path, &cwd);
             let mut file_matched = false;
@@ -300,7 +407,7 @@ impl Task for GrepTask {
                 },
                 sinks::Lossy(|line_number, line| {
                     file_matched = true;
-                    if !self.options.content {
+                    if !content {
                         return Ok(false);
                     }
                     result.total = result.total.saturating_add(1);
@@ -324,31 +431,35 @@ impl Task for GrepTask {
             );
             if let Err(error) = search {
                 if self.cancelled.load(Ordering::Relaxed) {
-                    return Ok(search_result("interrupted"));
+                    return Ok(search_result(NativeToolOutcomeKind::Interrupted));
                 }
                 if Instant::now() >= deadline {
-                    return Ok(search_result("timedOut"));
+                    return Ok(search_result(NativeToolOutcomeKind::TimedOut));
                 }
-                return Ok(first_line_error("ripgrep error", error));
+                return Ok(search_error(
+                    NativeToolOutcomeKind::Failed,
+                    "ripgrep error",
+                    error,
+                ));
             }
             if interrupted {
                 if self.cancelled.load(Ordering::Relaxed) {
-                    result.kind = "interrupted".to_owned();
+                    result.kind = NativeToolOutcomeKind::Interrupted;
                 } else {
-                    result.kind = "timedOut".to_owned();
+                    result.kind = NativeToolOutcomeKind::TimedOut;
                 }
                 result.total = 0;
                 result.lines.clear();
                 return Ok(result);
             }
-            if file_matched && !self.options.content {
+            if file_matched && !content {
                 result.total = result.total.saturating_add(1);
                 if result.lines.len() < GREP_LIMIT {
                     result.lines.push(shown_path);
                 }
             }
         }
-        Ok(result)
+        Ok(complete_grep(result, content))
     }
 
     fn resolve(&mut self, _env: Env, output: Self::Output) -> napi::Result<Self::JsValue> {
@@ -358,12 +469,10 @@ impl Task for GrepTask {
 
 #[napi(js_name = "nativeGrep", catch_unwind)]
 pub fn native_grep(options: NativeGrepOptions, signal: Option<AbortSignal>) -> AsyncTask<GrepTask> {
-    let cancelled = Arc::new(AtomicBool::new(false));
-    if let Some(signal) = signal {
-        let task_cancelled = cancelled.clone();
-        signal.on_abort(move || task_cancelled.store(true, Ordering::Relaxed));
-    }
-    AsyncTask::new(GrepTask { options, cancelled })
+    AsyncTask::new(GrepTask {
+        options,
+        cancelled: cancellation_flag(signal),
+    })
 }
 
 struct GlobMatch {
@@ -388,38 +497,61 @@ impl Task for GlobTask {
     type JsValue = NativeSearchResult;
 
     fn compute(&mut self) -> napi::Result<Self::Output> {
+        if self.options.aborted.unwrap_or(false) {
+            return Ok(search_result(NativeToolOutcomeKind::Interrupted));
+        }
         let deadline = Instant::now() + SEARCH_TIMEOUT;
         let cwd = PathBuf::from(&self.options.cwd);
         let root = absolute_target(&cwd, self.options.target.as_deref());
-        let matcher = match compile_glob(&self.options.pattern) {
+        let Some(pattern) = self
+            .options
+            .pattern
+            .as_deref()
+            .filter(|pattern| !pattern.is_empty())
+        else {
+            return Ok(request_error("pattern is required"));
+        };
+        let matcher = match compile_glob(pattern) {
             Ok(matcher) => matcher,
             Err(error) => return Ok(error),
         };
         let files = match walk_files(&root, &self.cancelled, Some(deadline)) {
             Ok(files) => files,
-            Err(error) => return Ok(first_line_error("ripgrep error", error)),
+            Err(error) => {
+                return Ok(search_error(
+                    NativeToolOutcomeKind::Failed,
+                    "ripgrep error",
+                    error,
+                ));
+            }
         };
         if self.cancelled.load(Ordering::Relaxed) {
-            return Ok(search_result("interrupted"));
+            return Ok(search_result(NativeToolOutcomeKind::Interrupted));
         }
         if Instant::now() >= deadline {
-            return Ok(search_result("timedOut"));
+            return Ok(search_result(NativeToolOutcomeKind::TimedOut));
         }
         let mut retained = Vec::<GlobMatch>::new();
         let mut total = 0_u32;
         for path in files {
             if self.cancelled.load(Ordering::Relaxed) {
-                return Ok(search_result("interrupted"));
+                return Ok(search_result(NativeToolOutcomeKind::Interrupted));
             }
             if Instant::now() >= deadline {
-                return Ok(search_result("timedOut"));
+                return Ok(search_result(NativeToolOutcomeKind::TimedOut));
             }
             if !matcher.is_match(path_for_glob(&path, &cwd, &root)) {
                 continue;
             }
             let modified = match fs::metadata(&path).and_then(|metadata| metadata.modified()) {
                 Ok(modified) => modified,
-                Err(error) => return Ok(first_line_error("ripgrep error", error)),
+                Err(error) => {
+                    return Ok(search_error(
+                        NativeToolOutcomeKind::Failed,
+                        "ripgrep error",
+                        error,
+                    ));
+                }
             };
             total = total.saturating_add(1);
             let entry = GlobMatch {
@@ -441,12 +573,13 @@ impl Task for GlobTask {
             }
         }
         retained.sort_by(compare_glob);
-        Ok(NativeSearchResult {
-            kind: "completed".to_owned(),
+        Ok(complete_glob(NativeSearchResult {
+            kind: NativeToolOutcomeKind::Completed,
             total,
             lines: retained.into_iter().map(|entry| entry.path).collect(),
+            output: None,
             error: None,
-        })
+        }))
     }
 
     fn resolve(&mut self, _env: Env, output: Self::Output) -> napi::Result<Self::JsValue> {
@@ -456,12 +589,10 @@ impl Task for GlobTask {
 
 #[napi(js_name = "nativeGlob", catch_unwind)]
 pub fn native_glob(options: NativeGlobOptions, signal: Option<AbortSignal>) -> AsyncTask<GlobTask> {
-    let cancelled = Arc::new(AtomicBool::new(false));
-    if let Some(signal) = signal {
-        let task_cancelled = cancelled.clone();
-        signal.on_abort(move || task_cancelled.store(true, Ordering::Relaxed));
-    }
-    AsyncTask::new(GlobTask { options, cancelled })
+    AsyncTask::new(GlobTask {
+        options,
+        cancelled: cancellation_flag(signal),
+    })
 }
 
 #[cfg(test)]

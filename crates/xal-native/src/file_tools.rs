@@ -9,24 +9,39 @@ use napi::{Env, Error, Status, Task};
 use napi_derive::napi;
 
 use crate::diff::{DiffOutput, unified_diff};
+use crate::tool_contracts::{checked_count, truncate_utf16, utf16_lossy};
 
+const DEFAULT_READ_LIMIT: u32 = 2000;
 const MAX_OUTPUT_UNITS: usize = 50_000;
 const MAX_LINE_UNITS: usize = 2000;
 
 #[napi(object)]
-pub struct NativeReadResult {
-    pub kind: String,
-    pub text: Option<Utf16String>,
-    pub total: u32,
+pub struct NativeReadRequest {
+    pub path: Option<String>,
+    pub display_path: String,
+    pub offset: Option<f64>,
+    pub limit: Option<f64>,
 }
 
 #[napi(object)]
-pub struct NativeFileResult {
-    pub kind: String,
-    pub hunks: Option<Utf16String>,
-    pub added: u32,
-    pub removed: u32,
-    pub matches: u32,
+pub struct NativeEditRequest {
+    pub path: Option<String>,
+    pub display_path: String,
+    pub old_string: Option<Utf16String>,
+    pub new_string: Option<Utf16String>,
+    pub replace_all: Option<bool>,
+}
+
+#[napi(object)]
+pub struct NativeWriteRequest {
+    pub path: Option<String>,
+    pub display_path: String,
+    pub content: Option<Utf16String>,
+}
+
+#[napi(object)]
+pub struct NativeToolOutput {
+    pub output: Utf16String,
 }
 
 #[napi(object)]
@@ -46,69 +61,66 @@ impl From<DiffOutput> for NativeDiffResult {
     }
 }
 
-fn read_kind(kind: &str) -> NativeReadResult {
-    NativeReadResult {
-        kind: kind.to_owned(),
-        text: None,
-        total: 0,
-    }
+fn invalid(message: impl Into<String>) -> Error {
+    Error::new(Status::InvalidArg, message.into())
 }
 
-fn file_kind(kind: &str) -> NativeFileResult {
-    NativeFileResult {
-        kind: kind.to_owned(),
-        hunks: None,
-        added: 0,
-        removed: 0,
-        matches: 0,
-    }
-}
-
-fn file_diff(kind: &str, diff: DiffOutput) -> NativeFileResult {
-    NativeFileResult {
-        kind: kind.to_owned(),
-        hunks: Some(diff.hunks.into()),
-        added: diff.added,
-        removed: diff.removed,
-        matches: 0,
-    }
+fn failed(message: impl Into<String>) -> Error {
+    Error::new(Status::GenericFailure, message.into())
 }
 
 fn io_error(error: impl std::fmt::Display) -> Error {
-    Error::new(Status::GenericFailure, error.to_string())
+    failed(error.to_string())
 }
 
-fn units_to_string(units: &[u16]) -> String {
-    String::from_utf16_lossy(units)
+fn required_path(path: Option<String>) -> napi::Result<PathBuf> {
+    let path = path
+        .filter(|path| !path.is_empty())
+        .ok_or_else(|| invalid("file_path is required"))?;
+    Ok(PathBuf::from(path))
+}
+
+fn normalized_count(value: Option<f64>, default: u32) -> u32 {
+    let value = value.unwrap_or(f64::from(default));
+    if !value.is_finite() || value < 1.0 {
+        return 1;
+    }
+    value.floor().min(f64::from(u32::MAX)) as u32
 }
 
 fn truncate_line(line: &str) -> Vec<u16> {
-    let units = line.encode_utf16().collect::<Vec<_>>();
-    if units.len() <= MAX_LINE_UNITS {
-        return units;
+    truncate_utf16(line, MAX_LINE_UNITS, "… (line truncated)")
+}
+
+fn with_diff(header: String, hunks: &[u16]) -> Vec<u16> {
+    let mut output = header.encode_utf16().collect::<Vec<_>>();
+    if hunks.is_empty() {
+        return output;
     }
-    let mut truncated = units[..MAX_LINE_UNITS].to_vec();
-    truncated.extend("… (line truncated)".encode_utf16());
-    truncated
+    output.push(b'\n' as u16);
+    output.extend_from_slice(hunks);
+    output
 }
 
 pub struct ReadTask {
     path: PathBuf,
+    display_path: String,
     offset: usize,
     limit: usize,
 }
 
 impl Task for ReadTask {
-    type Output = NativeReadResult;
-    type JsValue = NativeReadResult;
+    type Output = NativeToolOutput;
+    type JsValue = NativeToolOutput;
 
     fn compute(&mut self) -> napi::Result<Self::Output> {
-        let metadata = match fs::metadata(&self.path) {
-            Ok(metadata) => metadata,
-            Err(_) => return Ok(read_kind("notFound")),
-        };
+        let metadata = fs::metadata(&self.path)
+            .map_err(|_| failed(format!("File not found: {}", self.display_path)))?;
         if metadata.is_dir() {
-            return Ok(read_kind("directory"));
+            return Err(failed(format!(
+                "Path is a directory, not a file: {}",
+                self.display_path
+            )));
         }
         let file = fs::File::open(&self.path).map_err(io_error)?;
         let mut reader = BufReader::new(file);
@@ -125,7 +137,10 @@ impl Task for ReadTask {
                 break;
             }
             if buffer.contains(&0) {
-                return Ok(read_kind("binary"));
+                return Err(failed(format!(
+                    "Cannot read binary file: {}",
+                    self.display_path
+                )));
             }
             if buffer.last() == Some(&b'\n') {
                 buffer.pop();
@@ -146,16 +161,17 @@ impl Task for ReadTask {
             shown += 1;
             end = total;
         }
-        let total_output = u32::try_from(total).unwrap_or(u32::MAX);
+        let total_output = checked_count(total, "read line")?;
         if total == 0 {
-            let mut result = read_kind("empty");
-            result.total = total_output;
-            return Ok(result);
+            return Ok(NativeToolOutput {
+                output: "(empty file)".to_owned().into(),
+            });
         }
         if self.offset > total {
-            let mut result = read_kind("pastEnd");
-            result.total = total_output;
-            return Ok(result);
+            return Err(failed(format!(
+                "Offset {} is past the end of the file ({total_output} lines)",
+                self.offset
+            )));
         }
         let footer = if end >= total {
             format!("(End of file - {total} lines)")
@@ -167,10 +183,8 @@ impl Task for ReadTask {
             )
         };
         output.extend(footer.encode_utf16());
-        Ok(NativeReadResult {
-            kind: "completed".to_owned(),
-            text: Some(output.into()),
-            total: total_output,
+        Ok(NativeToolOutput {
+            output: output.into(),
         })
     }
 
@@ -180,12 +194,13 @@ impl Task for ReadTask {
 }
 
 #[napi(js_name = "nativeReadFile", catch_unwind)]
-pub fn native_read_file(path: String, offset: u32, limit: u32) -> AsyncTask<ReadTask> {
-    AsyncTask::new(ReadTask {
-        path: PathBuf::from(path),
-        offset: offset as usize,
-        limit: limit as usize,
-    })
+pub fn native_read_file(request: NativeReadRequest) -> napi::Result<AsyncTask<ReadTask>> {
+    Ok(AsyncTask::new(ReadTask {
+        path: required_path(request.path)?,
+        display_path: request.display_path,
+        offset: normalized_count(request.offset, 1) as usize,
+        limit: normalized_count(request.limit, DEFAULT_READ_LIMIT) as usize,
+    }))
 }
 
 fn match_positions(haystack: &[u16], needle: &[u16]) -> Vec<usize> {
@@ -229,37 +244,46 @@ fn replace_matches(
 
 pub struct EditTask {
     path: PathBuf,
+    display_path: String,
     old: Vec<u16>,
     new: Vec<u16>,
     replace_all: bool,
 }
 
 impl Task for EditTask {
-    type Output = NativeFileResult;
-    type JsValue = NativeFileResult;
+    type Output = NativeToolOutput;
+    type JsValue = NativeToolOutput;
 
     fn compute(&mut self) -> napi::Result<Self::Output> {
-        let metadata = match fs::metadata(&self.path) {
-            Ok(metadata) => metadata,
-            Err(_) => return Ok(file_kind("notFound")),
-        };
+        let metadata = fs::metadata(&self.path)
+            .map_err(|_| failed(format!("File not found: {}", self.display_path)))?;
         if metadata.is_dir() {
-            return Ok(file_kind("directory"));
+            return Err(failed(format!(
+                "Path is a directory, not a file: {}",
+                self.display_path
+            )));
         }
-        let previous_text = String::from_utf8(fs::read(&self.path).map_err(io_error)?)
-            .map_err(|error| Error::new(Status::InvalidArg, error.to_string()))?;
+        let previous_text =
+            String::from_utf8(fs::read(&self.path).map_err(io_error)?).map_err(|error| {
+                invalid(format!(
+                    "Cannot edit binary file {}: {error}",
+                    self.display_path
+                ))
+            })?;
         let previous = previous_text.encode_utf16().collect::<Vec<_>>();
         let positions = match_positions(&previous, &self.old);
-        let matches = u32::try_from(positions.len()).unwrap_or(u32::MAX);
+        let matches = checked_count(positions.len(), "edit match")?;
         if positions.is_empty() {
-            let mut result = file_kind("noMatch");
-            result.matches = matches;
-            return Ok(result);
+            return Err(failed(format!(
+                "old_string not found in {}. It must match the file text exactly, including whitespace and indentation.",
+                self.display_path
+            )));
         }
         if positions.len() > 1 && !self.replace_all {
-            let mut result = file_kind("ambiguous");
-            result.matches = matches;
-            return Ok(result);
+            return Err(failed(format!(
+                "old_string matches {matches} locations in {}. Add surrounding lines to make it unique, or set replace_all to true.",
+                self.display_path
+            )));
         }
         let next = replace_matches(
             &previous,
@@ -269,11 +293,17 @@ impl Task for EditTask {
             self.replace_all,
         );
         let diff = unified_diff(&previous, &next);
-        let next_text = units_to_string(&next);
-        fs::write(&self.path, next_text.as_bytes()).map_err(io_error)?;
-        let mut result = file_diff("updated", diff);
-        result.matches = matches;
-        Ok(result)
+        fs::write(&self.path, utf16_lossy(&next).as_bytes()).map_err(io_error)?;
+        Ok(NativeToolOutput {
+            output: with_diff(
+                format!(
+                    "Updated {} (+{} -{})",
+                    self.display_path, diff.added, diff.removed
+                ),
+                &diff.hunks,
+            )
+            .into(),
+        })
     }
 
     fn resolve(&mut self, _env: Env, output: Self::Output) -> napi::Result<Self::JsValue> {
@@ -282,65 +312,83 @@ impl Task for EditTask {
 }
 
 #[napi(js_name = "nativeEditFile", catch_unwind)]
-pub fn native_edit_file(
-    path: String,
-    old: Utf16String,
-    new: Utf16String,
-    replace_all: bool,
-) -> napi::Result<AsyncTask<EditTask>> {
+pub fn native_edit_file(request: NativeEditRequest) -> napi::Result<AsyncTask<EditTask>> {
+    let old = request
+        .old_string
+        .ok_or_else(|| invalid("old_string is required and must be non-empty"))?;
     if old.is_empty() {
-        return Err(Error::new(
-            Status::InvalidArg,
-            "old string must be non-empty".to_owned(),
+        return Err(invalid("old_string is required and must be non-empty"));
+    }
+    let new = request
+        .new_string
+        .ok_or_else(|| invalid("new_string is required"))?;
+    if old.to_vec() == new.to_vec() {
+        return Err(invalid(
+            "old_string and new_string are identical; nothing to change",
         ));
     }
     Ok(AsyncTask::new(EditTask {
-        path: PathBuf::from(path),
+        path: required_path(request.path)?,
+        display_path: request.display_path,
         old: old.to_vec(),
         new: new.to_vec(),
-        replace_all,
+        replace_all: request.replace_all.unwrap_or(false),
     }))
 }
 
 pub struct WriteTask {
     path: PathBuf,
+    display_path: String,
     content: Vec<u16>,
 }
 
 impl Task for WriteTask {
-    type Output = NativeFileResult;
-    type JsValue = NativeFileResult;
+    type Output = NativeToolOutput;
+    type JsValue = NativeToolOutput;
 
     fn compute(&mut self) -> napi::Result<Self::Output> {
         let metadata = fs::metadata(&self.path).ok();
         if metadata.as_ref().is_some_and(fs::Metadata::is_dir) {
-            return Ok(file_kind("directory"));
+            return Err(failed(format!(
+                "Path is a directory, not a file: {}",
+                self.display_path
+            )));
         }
         let previous = match metadata {
             Some(_) => Some(
-                String::from_utf8_lossy(&fs::read(&self.path).map_err(io_error)?)
+                String::from_utf8(fs::read(&self.path).map_err(io_error)?)
+                    .map_err(|error| {
+                        invalid(format!(
+                            "Cannot write to binary file {}: {error}",
+                            self.display_path
+                        ))
+                    })?
                     .encode_utf16()
                     .collect::<Vec<_>>(),
             ),
             None => None,
         };
         if previous.as_deref() == Some(&self.content) {
-            return Ok(file_kind("unchanged"));
+            return Ok(NativeToolOutput {
+                output: format!("Unchanged {}", self.display_path).into(),
+            });
         }
         let diff = unified_diff(previous.as_deref().unwrap_or(&[]), &self.content);
         if let Some(parent) = self.path.parent() {
             fs::create_dir_all(parent).map_err(io_error)?;
         }
-        let content = units_to_string(&self.content);
-        fs::write(&self.path, content.as_bytes()).map_err(io_error)?;
-        Ok(file_diff(
-            if previous.is_some() {
-                "updated"
-            } else {
-                "created"
-            },
-            diff,
-        ))
+        fs::write(&self.path, utf16_lossy(&self.content).as_bytes()).map_err(io_error)?;
+        let header = if previous.is_some() {
+            format!(
+                "Updated {} (+{} -{})",
+                self.display_path, diff.added, diff.removed
+            )
+        } else {
+            format!("Created {} ({} lines)", self.display_path, diff.added)
+        };
+        Ok(NativeToolOutput {
+            output: with_diff(header, &diff.hunks).into(),
+        })
     }
 
     fn resolve(&mut self, _env: Env, output: Self::Output) -> napi::Result<Self::JsValue> {
@@ -349,11 +397,15 @@ impl Task for WriteTask {
 }
 
 #[napi(js_name = "nativeWriteFile", catch_unwind)]
-pub fn native_write_file(path: String, content: Utf16String) -> AsyncTask<WriteTask> {
-    AsyncTask::new(WriteTask {
-        path: PathBuf::from(path),
+pub fn native_write_file(request: NativeWriteRequest) -> napi::Result<AsyncTask<WriteTask>> {
+    let content = request
+        .content
+        .ok_or_else(|| invalid("content is required"))?;
+    Ok(AsyncTask::new(WriteTask {
+        path: required_path(request.path)?,
+        display_path: request.display_path,
         content: content.to_vec(),
-    })
+    }))
 }
 
 #[napi(js_name = "nativeUnifiedDiff", catch_unwind)]
@@ -363,7 +415,11 @@ pub fn native_unified_diff(old_text: Utf16String, new_text: Utf16String) -> Nati
 
 #[cfg(test)]
 mod tests {
-    use super::{match_positions, replace_matches};
+    use std::fs;
+
+    use napi::Task;
+
+    use super::{WriteTask, match_positions, normalized_count, replace_matches};
 
     fn units(value: &str) -> Vec<u16> {
         value.encode_utf16().collect()
@@ -380,5 +436,31 @@ mod tests {
             units("next next next")
         );
         assert!(match_positions(&previous, &[]).is_empty());
+    }
+
+    #[test]
+    fn rejects_non_utf8_files_in_write_comparisons() {
+        let path =
+            std::env::temp_dir().join(format!("xal-native-write-test-{}.bin", std::process::id()));
+        fs::write(&path, [0xff]).expect("fixture should write");
+        let mut task = WriteTask {
+            path: path.clone(),
+            display_path: path.display().to_string(),
+            content: units("�"),
+        };
+        assert!(task.compute().is_err());
+        fs::remove_file(path).expect("fixture should clean up");
+    }
+
+    #[test]
+    fn normalizes_read_counts() {
+        assert_eq!(normalized_count(None, 2000), 2000);
+        assert_eq!(normalized_count(Some(-4.0), 2000), 1);
+        assert_eq!(normalized_count(Some(3.9), 2000), 3);
+        assert_eq!(normalized_count(Some(f64::INFINITY), 2000), 1);
+        assert_eq!(
+            normalized_count(Some(f64::from(u32::MAX) * 2.0), 2000),
+            u32::MAX
+        );
     }
 }

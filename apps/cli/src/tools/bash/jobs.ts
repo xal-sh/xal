@@ -9,7 +9,6 @@ import {
 import { createJobLog } from "../../background/log"
 import { registerBackgroundTask } from "../../background/registry"
 import { describeError } from "../../lib/error"
-import { killProcessTree } from "../../lib/process"
 import type { CommandProcess } from "./process"
 import type { ShellExecution } from "./shell"
 
@@ -20,7 +19,7 @@ function registerExitHook(): void {
   if (exitHookRegistered) return
   exitHookRegistered = true
   process.on("exit", () => {
-    for (const proc of runningProcs) killProcessTree(proc)
+    for (const proc of runningProcs) proc.kill()
   })
 }
 
@@ -70,27 +69,41 @@ export function startJob(
     "bash",
     ownerId,
     command,
-    () => killProcessTree(proc, "SIGTERM"),
-    () => killProcessTree(proc),
+    () => proc.terminate(),
+    () => proc.kill(),
   )
   attachJobLog(job, createJobLog(directory, job.id))
-  const collect = (chunk: Buffer): void => {
-    appendProcessOutput(job, chunk.toString())
-  }
-  proc.stdout.on("data", collect)
-  proc.stderr.on("data", collect)
-  proc.once("error", (error) => {
-    runningProcs.delete(proc)
-    appendProcessOutput(job, `${job.history.text() ? "\n" : ""}failed to launch: ${error.message}`)
-    void finishProcessJob(job, { status: "launch_failed", message: error.message })
+  const decoder = new TextDecoder()
+  proc.onOutput((chunk) => {
+    const text = decoder.decode(chunk, { stream: true })
+    if (text) appendProcessOutput(job, text)
   })
-  proc.once("close", (code, signal) => {
-    runningProcs.delete(proc)
-    void finishProcessJob(
-      job,
-      code === null ? { status: "signaled", signal: signal ?? "unknown signal" } : { status: "exited", exitCode: code },
-    )
-  })
+  void proc.done.then(
+    (termination) => {
+      const tail = decoder.decode()
+      if (tail) appendProcessOutput(job, tail)
+      runningProcs.delete(proc)
+      if (termination.status === "launch_failed") {
+        appendProcessOutput(job, `${job.history.text() ? "\n" : ""}failed to launch: ${termination.message}`)
+        void finishProcessJob(job, termination)
+        return
+      }
+      void finishProcessJob(
+        job,
+        termination.status === "signaled"
+          ? { status: "signaled", signal: termination.signal ?? "unknown signal" }
+          : termination,
+      )
+    },
+    (error: unknown) => {
+      const tail = decoder.decode()
+      if (tail) appendProcessOutput(job, tail)
+      runningProcs.delete(proc)
+      const message = describeError(error)
+      appendProcessOutput(job, `${job.history.text() ? "\n" : ""}process failed: ${message}`)
+      void finishProcessJob(job, { status: "launch_failed", message })
+    },
+  )
   registerProcessTask(job, command, cwd, ownerId)
   return job
 }
@@ -103,7 +116,13 @@ export function adoptJob(
   ownerId: string,
   directory: string,
 ): { job: BackgroundProcessJob; sink(text: string): void } {
-  const job = createProcessJob("bash", ownerId, command, () => execution.kill())
+  const job = createProcessJob(
+    "bash",
+    ownerId,
+    command,
+    () => execution.terminate(),
+    () => execution.kill(),
+  )
   attachJobLog(job, createJobLog(directory, job.id))
   if (initialOutput) appendProcessOutput(job, initialOutput)
   execution.done.then(
