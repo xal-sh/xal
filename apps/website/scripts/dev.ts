@@ -1,6 +1,6 @@
 import { Glob } from "bun"
 import index from "../src/index.html"
-import { DOCS_PATH } from "../src/content/sections.ts"
+import { DOCS_PATH } from "../src/site.ts"
 import { loadDocuments } from "../src/docs/load.ts"
 import { documentPage, indexPage, type Shell } from "../src/docs/page.ts"
 import { navigation } from "../src/navigation.ts"

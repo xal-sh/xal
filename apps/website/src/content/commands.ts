@@ -59,6 +59,36 @@ export const commands: Command[] = [
     run: (context) => context.print(...content.agents),
   },
   {
+    name: "/contact",
+    routable: true,
+    describe: "official support and contact channels",
+    run: (context) => context.print(...content.contact),
+  },
+  {
+    name: "/privacy",
+    routable: true,
+    describe: "website and application privacy practices",
+    run: (context) => context.print(...content.privacy),
+  },
+  {
+    name: "/developers",
+    routable: true,
+    describe: "API, OpenAPI, CLI, plugins, and MCP",
+    run: (context) => context.print(...content.developers),
+  },
+  {
+    name: "/cli",
+    routable: true,
+    describe: "official Xal command-line tool",
+    run: (context) => context.print(...content.cli),
+  },
+  {
+    name: "/mcp",
+    routable: true,
+    describe: "connect Xal to MCP servers",
+    run: (context) => context.print(...content.mcp),
+  },
+  {
     name: "/install",
     routable: true,
     route: "/get",

@@ -7,6 +7,7 @@
   "scripts": {
     "dev": "bun scripts/dev.ts",
     "build": "rm -rf dist && bun build src/index.html --outdir dist --minify --public-path=/ && bun scripts/prerender.ts",
+    "test": "bun test",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix"

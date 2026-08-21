@@ -2,9 +2,12 @@
   "$schema": "../../node_modules/wrangler/config-schema.json",
   "name": "xal-website",
   "compatibility_date": "2026-08-15",
+  "main": "./src/worker.ts",
   "assets": {
     "directory": "./dist",
+    "binding": "ASSETS",
     "html_handling": "drop-trailing-slash",
+    "run_worker_first": true,
   },
   "routes": [
     {

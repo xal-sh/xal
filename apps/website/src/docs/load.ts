@@ -12,6 +12,7 @@ export async function loadDocuments(): Promise<Document[]> {
       "permissions",
       "providers",
       "integrations",
+      "api",
       "plugins",
       "commands-and-skills",
       "goals",

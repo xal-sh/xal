@@ -43,7 +43,7 @@ There is no stable installation channel during the beta rollout. See the [instal
 
 ## Documentation
 
-The [documentation](https://xal.sh/docs) covers configuration, the TUI, permissions, providers, integrations, plugins, reusable instructions, commands and skills, goals, and background work. The Markdown sources live in [`docs`](docs).
+The [documentation](https://xal.sh/docs) covers configuration, the TUI, permissions, providers, integrations, plugins, reusable instructions, commands and skills, goals, and background work. [Developer resources](https://xal.sh/developers) include the public product API, [OpenAPI specification](https://xal.sh/openapi.json), CLI automation, and MCP guidance. The Markdown sources live in [`docs`](docs).
 
 ## Run with Profiler
 

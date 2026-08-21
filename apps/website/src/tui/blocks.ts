@@ -3,6 +3,7 @@ import { el, svgEl } from "./dom.ts"
 import { inline } from "./inline.ts"
 
 export type Doc =
+  | { kind: "title"; text: string }
   | { kind: "heading"; text: string }
   | { kind: "paragraph"; text: string }
   | { kind: "list"; items: string[] }
@@ -96,6 +97,8 @@ function doc(nodes: Doc[]): HTMLElement {
 
 function docNode(node: Doc): HTMLElement {
   switch (node.kind) {
+    case "title":
+      return el("h1", undefined, node.text)
     case "heading":
       return el("h2", undefined, node.text)
     case "paragraph":

@@ -2,7 +2,14 @@ import { parseBlocks, parseInline, type ListItem, type MarkdownBlock } from "xal
 
 export type Section = { id: string; text: string; level: number }
 
-export type Document = { slug: string; title: string; intro: string; sections: Section[]; html: string }
+export type Document = {
+  slug: string
+  title: string
+  intro: string
+  sections: Section[]
+  html: string
+  markdown: string
+}
 
 export function escape(text: string): string {
   return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;")
@@ -103,5 +110,6 @@ export function toDocument(slug: string, source: string): Document {
         level: block.kind === "heading" ? block.level : 2,
       })),
     html: body.map(blockHtml).join("\n"),
+    markdown: source.endsWith("\n") ? source : `${source}\n`,
   }
 }

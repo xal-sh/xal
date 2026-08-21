@@ -1,7 +1,11 @@
 import { Glob } from "bun"
 import { GlobalRegistrator } from "@happy-dom/global-registrator"
-import type { Block } from "../src/tui/blocks.ts"
+import { docsIndexMarkdown, jsonLd, llmsFullText, llmsText } from "../src/agent-resources.ts"
+import { blocksMarkdown } from "../src/content/markdown.ts"
 import type { Shell } from "../src/docs/page.ts"
+import { openApi } from "../src/public-api.ts"
+import { DOCS_PATH, REPOSITORY, SITE_URL } from "../src/site.ts"
+import type { Block } from "../src/tui/blocks.ts"
 
 GlobalRegistrator.register()
 
@@ -19,7 +23,7 @@ const headers: Record<string, string> = {
 }
 if (Bun.env.GITHUB_TOKEN) headers.Authorization = `Bearer ${Bun.env.GITHUB_TOKEN}`
 
-const repository = new URL(content.REPOSITORY)
+const repository = new URL(REPOSITORY)
 const response = await fetch(`https://api.github.com/repos${repository.pathname}`, { headers })
 if (!response.ok) throw new Error(`GitHub repository request failed with ${response.status}`)
 
@@ -45,13 +49,27 @@ function meta(html: string, selector: string, key: string, value: string): strin
   return html.replace(pattern, `<meta ${selector}="${key}" content="${attribute(value)}" />`)
 }
 
+const structuredData = jsonLd()
+
+function markdownPath(path: string): string {
+  if (path === "/") return "/index.md"
+  return `${path}/index.md`
+}
+
 const shell: Shell = ({ title, description, path, body }) => {
   let html = source.replace(/<title>[^<]*<\/title>/, `<title>${attribute(title)}</title>`)
   html = meta(html, "name", "description", description)
   html = meta(html, "property", "og:title", title)
   html = meta(html, "property", "og:description", description)
+  html = meta(html, "property", "og:url", `${SITE_URL}${path}`)
+  const links = [
+    `<link rel="canonical" href="${SITE_URL}${path}" />`,
+    `<link rel="alternate" type="text/markdown" href="${markdownPath(path)}" />`,
+    '<link rel="describedby" href="/llms.txt" />',
+    `<script type="application/ld+json">${structuredData}</script>`,
+  ].join("\n    ")
   return html
-    .replace("</head>", `<link rel="canonical" href="${content.SITE_URL}${path}" />\n  </head>`)
+    .replace("</head>", `${links}\n  </head>`)
     .replace("<body>", `<body>${navigation(path, githubStars)}`)
     .replace('<div id="app"></div>', body)
 }
@@ -61,27 +79,31 @@ function stream(blocks: Block[]): string {
   return `<div id="app"><div class="scrollback"><div class="stream">${nodes}</div></div></div>`
 }
 
-async function write(path: string, html: string): Promise<void> {
-  const file = path === "/" ? new URL("index.html", dist) : new URL(`.${path}/index.html`, dist)
-  await Bun.write(file, html)
+async function writePage(path: string, html: string, markdown: string): Promise<void> {
+  const directory = path === "/" ? "" : `.${path}/`
+  await Promise.all([
+    Bun.write(new URL(`${directory}index.html`, dist), html),
+    Bun.write(new URL(`${directory}index.md`, dist), markdown),
+  ])
 }
 
 const routes: string[] = []
 
-async function emit(path: string, html: string): Promise<void> {
-  await write(path, html)
+async function emit(path: string, html: string, markdown: string): Promise<void> {
+  await writePage(path, html, markdown)
   routes.push(path)
 }
 
 await emit(
   "/",
   shell({
-    title: "xal — a terminal coding harness",
+    title: "Xal terminal coding harness",
     description:
-      "A terminal coding harness with a headless agent core, where every capability — including the interface — is a plugin. One compiled binary.",
+      "Xal is an open-source terminal coding harness with a headless agent core and independent plugins for tools, interfaces, providers, language servers, MCP, skills, and workflows.",
     path: "/",
     body: stream(content.landing),
   }),
+  blocksMarkdown(content.landing),
 )
 
 for (const command of commands) {
@@ -107,21 +129,23 @@ for (const command of commands) {
 
   const label = command.name.slice(1)
   const path = command.route ?? command.name
+  const pageBlocks: Block[] = [content.banner, { kind: "user", text: command.name, at: "" }, ...blocks]
   await emit(
     path,
     shell({
-      title: `${label} · xal`,
-      description: `${command.describe} — xal, a terminal coding harness with a headless agent core.`,
+      title: `${label} | Xal terminal coding harness`,
+      description: `${command.describe}. Xal is an open-source terminal coding harness with a headless agent core.`,
       path,
-      body: stream([content.banner, { kind: "user", text: command.name, at: "" }, ...blocks]),
+      body: stream(pageBlocks),
     }),
+    blocksMarkdown(pageBlocks),
   )
 }
 
 const documents = await loadDocuments()
-await emit(content.DOCS_PATH, indexPage(shell, documents))
+await emit(DOCS_PATH, indexPage(shell, documents), docsIndexMarkdown(documents))
 for (const document of documents) {
-  await emit(`${content.DOCS_PATH}/${document.slug}`, documentPage(shell, documents, document))
+  await emit(`${DOCS_PATH}/${document.slug}`, documentPage(shell, documents, document), document.markdown)
 }
 
 const publicDir = new URL("../public/", import.meta.url)
@@ -130,14 +154,20 @@ for (const asset of assets) {
   await Bun.write(new URL(asset, dist), Bun.file(new URL(asset, publicDir)))
 }
 
+await Promise.all([
+  Bun.write(new URL("openapi.json", dist), `${JSON.stringify(openApi, null, 2)}\n`),
+  Bun.write(new URL("llms.txt", dist), llmsText(documents)),
+  Bun.write(new URL("llms-full.txt", dist), llmsFullText(documents)),
+])
+
 const sitemap = [
   '<?xml version="1.0" encoding="UTF-8"?>',
   '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">',
-  ...routes.map((path) => `  <url><loc>${content.SITE_URL}${path}</loc></url>`),
+  ...routes.map((path) => `  <url><loc>${SITE_URL}${path}</loc></url>`),
   "</urlset>",
 ].join("\n")
 
 await Bun.write(new URL("sitemap.xml", dist), sitemap)
-await Bun.write(new URL("robots.txt", dist), `User-agent: *\nAllow: /\nSitemap: ${content.SITE_URL}/sitemap.xml\n`)
+await Bun.write(new URL("robots.txt", dist), `User-agent: *\nAllow: /\nSitemap: ${SITE_URL}/sitemap.xml\n`)
 
 console.log(`prerendered ${routes.length} routes: ${routes.join(" ")}`)

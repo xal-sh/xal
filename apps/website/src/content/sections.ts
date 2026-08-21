@@ -1,9 +1,7 @@
+import { INSTALL_COMMAND } from "../site.ts"
 import type { Block } from "../tui/blocks.ts"
 
-export const SITE_URL = "https://xal.sh"
-export const DOCS_PATH = "/docs"
-export const REPOSITORY = "https://github.com/xal-sh/xal"
-export const INSTALL_COMMAND = "curl -fsSL https://xal.sh/install | sh -s -- --beta"
+export { DOCS_PATH, INSTALL_COMMAND, REPOSITORY, SITE_URL } from "../site.ts"
 
 export const MODEL = "gpt-5.6-sol"
 export const THINKING = "xhigh"
@@ -27,11 +25,27 @@ export const about: Block[] = [
   {
     kind: "doc",
     nodes: [
+      { kind: "title", text: "Xal terminal coding harness" },
       {
         kind: "paragraph",
-        text: "A terminal coding harness with a headless agent core — where every capability, is a plugin.",
+        text: "Xal is an open-source terminal coding harness with a headless agent core where every capability, including the interface, is a plugin. It gives coding agents the tools to inspect repositories, edit files, run commands, use language servers, connect to MCP servers, and complete real development work from a terminal.",
       },
-      { kind: "paragraph", text: "One compiled binary. Your providers, your rules, your terminal." },
+      {
+        kind: "paragraph",
+        text: "The default terminal interface ships as one compiled binary for macOS, Linux, and Windows. Xal supports multiple AI providers, reusable skills and commands, persistent sessions, background jobs, sub-agents, worktree isolation, code review, and project-specific instructions without requiring a JavaScript runtime after installation.",
+      },
+      {
+        kind: "paragraph",
+        text: "Xal starts with a small headless agent loop. Everything around it is a plugin: the terminal interface, AI providers, tools, language servers, MCP bridge, memory, skills, code review, and workflow hooks. Built-in features use the same plugin API available to project and user extensions, so the default harness is a starting point rather than a fixed product boundary.",
+      },
+      {
+        kind: "paragraph",
+        text: "Teams can add or replace individual capabilities, define custom modes and commands, register a different interface, and shape Xal around their own development process. Plugins remain independent by design and may not depend on one another, which keeps each customization removable and prevents the harness from turning into a tightly coupled framework.",
+      },
+      {
+        kind: "paragraph",
+        text: "Xal is currently in beta and is developed in public under the MIT License. Read the [Xal documentation](/docs), inspect the [source code](https://github.com/xal-sh/xal), review [developer resources](/developers), or use the [official CLI installation guide](/cli) to get started.",
+      },
     ],
   },
   {
@@ -245,6 +259,128 @@ export const agents: Block[] = [
       {
         kind: "paragraph",
         text: "Sessions persist through all of it: `xal resume` reopens yesterday mid-thought, `/fork` branches an experiment, `/export` writes the whole exchange to markdown.",
+      },
+    ],
+  },
+]
+
+export const contact: Block[] = [
+  {
+    kind: "doc",
+    nodes: [
+      { kind: "title", text: "Contact Xal" },
+      {
+        kind: "paragraph",
+        text: "Xal is an open-source project developed in public. For product questions, installation help, bug reports, and feature requests, use the [Xal GitHub issue tracker](https://github.com/xal-sh/xal/issues). Search existing issues first, then open a new issue with the Xal version, operating system, installation method, expected behavior, and the smallest reproduction you can provide.",
+      },
+      {
+        kind: "paragraph",
+        text: "For implementation questions, include relevant configuration with credentials removed, the command that failed, and the complete error output. Public issues are the preferred support channel because answers remain searchable for other users and maintainers can connect a report directly to code, documentation, or a release milestone.",
+      },
+      {
+        kind: "paragraph",
+        text: "Do not post API keys, access tokens, private repository content, personal data, or unredacted logs in a public issue. If a report describes a security vulnerability, do not publish exploit details. Open an issue that asks the maintainers to establish a private reporting channel, but leave all sensitive technical details out of that issue.",
+      },
+      {
+        kind: "paragraph",
+        text: "Xal does not currently offer paid support, a sales line, or a public telephone number. The canonical website is [xal.sh](https://xal.sh), the source repository is [xal-sh/xal](https://github.com/xal-sh/xal), and project documentation is available at [xal.sh/docs](/docs).",
+      },
+    ],
+  },
+]
+
+export const privacy: Block[] = [
+  {
+    kind: "doc",
+    nodes: [
+      { kind: "title", text: "Xal privacy notice" },
+      {
+        kind: "paragraph",
+        text: "The xal.sh website is a public documentation and download site for Xal. It does not provide user accounts, accept payments, or ask visitors to submit personal information. The interactive terminal demonstration runs in your browser. It stores only your selected light or dark theme in browser localStorage so that the preference can be restored on a later visit.",
+      },
+      {
+        kind: "paragraph",
+        text: "The website does not include first-party analytics, advertising trackers, or marketing cookies in this codebase. Hosting infrastructure may process standard request data such as IP address, user agent, requested URL, timestamp, and security signals to deliver the site, prevent abuse, and operate network logs. Requests for releases, issues, and source code follow links to GitHub and are then governed by GitHub's privacy terms.",
+      },
+      {
+        kind: "paragraph",
+        text: "The Xal command-line application runs on your machine and reads project files only through tools available to the active agent session and its permission rules. When you configure an AI provider, MCP server, or another external integration, data sent to that service is governed by your configuration and that service's terms. Review provider settings before sending private source code or personal data.",
+      },
+      {
+        kind: "paragraph",
+        text: "You can remove the website theme preference at any time by clearing site data for xal.sh. Privacy questions and correction requests can be raised through the [public contact channel](/contact). This notice applies to the xal.sh website and the official Xal project resources it describes; third-party plugins and services may have separate practices.",
+      },
+    ],
+  },
+]
+
+export const developers: Block[] = [
+  {
+    kind: "doc",
+    nodes: [
+      { kind: "title", text: "Xal developer resources" },
+      {
+        kind: "paragraph",
+        text: "Build integrations against Xal using its public website API, OpenAPI schema, terminal CLI, plugin system, and MCP client support. The website API is versioned under `/api/v1` and returns JSON. It currently exposes canonical product and integration metadata through `GET /api/v1/product`, with no account or API key required.",
+      },
+      { kind: "heading", text: "Public API" },
+      {
+        kind: "paragraph",
+        text: "Fetch [the product endpoint](/api/v1/product) for the current Xal version, support status, install command, supported platforms, capabilities, and canonical resource links. Use the machine-readable [Xal OpenAPI specification](/openapi.json) to generate a client or an LLM function definition. API errors use a stable JSON object with an error code, message, and resolution hint.",
+      },
+      { kind: "code", lines: ["curl -s https://xal.sh/api/v1/product", "curl -s https://xal.sh/openapi.json"] },
+      { kind: "heading", text: "Authentication and webhooks" },
+      {
+        kind: "paragraph",
+        text: "The public read-only API does not require authentication. Xal does not currently publish a hosted account API or webhook service, so agents should not invent credentials or webhook endpoints. The API is cacheable public metadata and is subject to normal edge abuse protection.",
+      },
+      { kind: "heading", text: "CLI, plugins, and MCP" },
+      {
+        kind: "paragraph",
+        text: "Install and automate the [official Xal CLI](/cli), read the [plugin guide](/docs/plugins), or configure external Model Context Protocol servers with the [MCP integration guide](/mcp). Xal is an MCP client and can consume tools, resources, and prompts from connected servers; xal.sh does not claim to host a public Xal MCP server.",
+      },
+    ],
+  },
+]
+
+export const cli: Block[] = [
+  {
+    kind: "doc",
+    nodes: [
+      { kind: "title", text: "Official Xal CLI" },
+      {
+        kind: "paragraph",
+        text: "The official Xal command-line tool is the `xal` native binary. It starts the terminal coding harness in the current project and can be scripted from POSIX-compatible shells. The beta installer selects the correct x64 or arm64 build for macOS, Linux, or Windows environments using Git Bash, MSYS2, or Cygwin.",
+      },
+      { kind: "code", lines: [INSTALL_COMMAND, "xal", "xal --mode plan", "xal update"] },
+      {
+        kind: "paragraph",
+        text: "The default install location is `~/.local/bin`. Pass installer options to select another path, and make sure that path is present in `PATH`. Xal ships as one compiled binary, so the installed CLI does not require Node.js, Bun, Python, or a package manager at runtime.",
+      },
+      {
+        kind: "paragraph",
+        text: "Use plan mode when an agent should investigate without modifying files, normal mode for approval-gated development, and yolo mode only when unattended writes are intentional. The [installation guide](/docs/install) documents supported targets, checksums, custom paths, beta channels, and release behavior. Source and release history are available in the [official repository](https://github.com/xal-sh/xal).",
+      },
+    ],
+  },
+]
+
+export const mcp: Block[] = [
+  {
+    kind: "doc",
+    nodes: [
+      { kind: "title", text: "Xal and MCP servers" },
+      {
+        kind: "paragraph",
+        text: "Xal can connect to Model Context Protocol servers and expose their tools, resources, and prompts to an agent session. Configure each server independently in Xal configuration using a local stdio command or a remote streamable HTTP URL. MCP capabilities remain separate from built-in plugins and from every other MCP integration.",
+      },
+      {
+        kind: "paragraph",
+        text: "Use MCP when a coding task needs an external system such as an issue tracker, design tool, cloud platform, database, or internal documentation service. Apply narrow permissions to imported tools, keep credentials outside committed project files, and verify a server's trust boundary before allowing mutating calls.",
+      },
+      {
+        kind: "paragraph",
+        text: "The [Xal integrations documentation](/docs/integrations) contains configuration shapes and transport guidance. Xal acts as an MCP client; the xal.sh domain does not currently host a public MCP endpoint. Agents looking for Xal developer interfaces should use the [public REST API](/developers), the [OpenAPI specification](/openapi.json), or the local plugin API instead of guessing an MCP server URL.",
       },
     ],
   },

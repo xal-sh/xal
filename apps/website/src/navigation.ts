@@ -1,4 +1,4 @@
-import { REPOSITORY } from "./content/sections.ts"
+import { REPOSITORY } from "./site.ts"
 
 function normalizedPath(pathname: string): string {
   return pathname.replace(/\/+$/, "") || "/"
