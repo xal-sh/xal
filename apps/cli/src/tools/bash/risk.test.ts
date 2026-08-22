@@ -51,6 +51,7 @@ describe("commandEscapesWorkspace", () => {
       "sort < input.txt > /etc/out",
       "bash -c -- 'rm /etc/hosts'",
       "bash -c 'rm /etc/hosts'",
+      "bash -c -x -- 'rm /etc/hosts'",
       "bash -c",
     ]) {
       expect(commandEscapesWorkspace(command, cwd)).toBe(true)
