@@ -1,7 +1,16 @@
-import { asNumber, asString, isJsonObject, isRecord, type JsonObject } from "../../lib/json"
-import { replayMatches, type ConversationTarget } from "../../providers/conversation"
-import { parseToolArgs } from "../../providers/transport"
-import type { ConversationItem, ProviderReplay, ToolDefinition, Usage } from "../../providers/types"
+import { asNumber, asString, isJsonObject, isRecord, type JsonObject } from "../lib/json"
+import { replayMatches, type ConversationTarget } from "./conversation"
+import { ProviderError } from "./errors"
+import { parseToolArgs, sseEvents, streamError } from "./transport"
+import type {
+  ConversationItem,
+  ProviderOutputItem,
+  ProviderReplay,
+  StreamEvent,
+  StreamRequest,
+  ToolDefinition,
+  Usage,
+} from "./types"
 
 export type WireEvent =
   | { type: "block_start"; index: number; block: JsonObject }
@@ -102,13 +111,13 @@ export function parseSseEvent(providerName: string, raw: unknown): WireEvent | u
   }
 }
 
-export interface WireTool {
+interface WireTool {
   name: string
   description: string
   input_schema: Record<string, unknown>
 }
 
-export function buildTools(tools: ToolDefinition[]): WireTool[] {
+function buildTools(tools: ToolDefinition[]): WireTool[] {
   return tools.map((tool) => ({
     name: tool.name,
     description: tool.description,
@@ -116,7 +125,7 @@ export function buildTools(tools: ToolDefinition[]): WireTool[] {
   }))
 }
 
-export function parseToolInput(providerName: string, name: string, partial: string): JsonObject {
+function parseToolInput(providerName: string, name: string, partial: string): JsonObject {
   return parseToolArgs(providerName, name, partial.trim() === "" ? "{}" : partial)
 }
 
@@ -143,11 +152,11 @@ export function cacheBreakpoint(messages: JsonObject[]): JsonObject[] {
   return [...messages.slice(0, -1), { ...last, content: [...content.slice(0, -1), marked] }]
 }
 
-export function buildSystem(instructions: string): JsonObject[] {
+function buildSystem(instructions: string): JsonObject[] {
   return [{ type: "text", text: instructions, cache_control: CACHE_CONTROL }]
 }
 
-export function buildMessages(items: ConversationItem[], target: ConversationTarget): JsonObject[] {
+function buildMessages(items: ConversationItem[], target: ConversationTarget): JsonObject[] {
   const messages: JsonObject[] = []
   let assistant: JsonObject[] = []
 
@@ -197,4 +206,159 @@ export function buildMessages(items: ConversationItem[], target: ConversationTar
 
   flushAssistant()
   return messages
+}
+
+export interface AnthropicMessagesProvider {
+  id: string
+  name: string
+  maxTokens(model: string): number
+  requestOptions(request: StreamRequest): JsonObject
+  fetch(body: string, signal?: AbortSignal): Promise<Response>
+}
+
+export function buildAnthropicBody(provider: AnthropicMessagesProvider, request: StreamRequest): string {
+  const target: ConversationTarget = {
+    provider: provider.id,
+    model: request.conversationModel ?? request.model,
+  }
+  return JSON.stringify({
+    model: request.model,
+    max_tokens: provider.maxTokens(request.model),
+    stream: true,
+    system: buildSystem(request.instructions),
+    messages: cacheBreakpoint(buildMessages(request.input, target)),
+    ...provider.requestOptions(request),
+    ...(request.tools.length === 0
+      ? {}
+      : { tools: buildTools(request.tools), tool_choice: { type: request.toolChoice } }),
+  })
+}
+
+interface OpenBlock {
+  block: JsonObject
+  text: string
+  signature: string
+  partialJson: string
+}
+
+function finishBlock(
+  provider: AnthropicMessagesProvider,
+  open: OpenBlock,
+  model: string,
+): ProviderOutputItem | undefined {
+  const replay = { provider: provider.id, model, data: open.block }
+  switch (asString(open.block.type)) {
+    case "text": {
+      const text = open.text
+      if (!text) return undefined
+      open.block.text = text
+      return { type: "assistant_message", text, replay }
+    }
+    case "thinking": {
+      open.block.thinking = open.text
+      if (open.signature) open.block.signature = open.signature
+      return { type: "reasoning", summary: open.text, replay }
+    }
+    case "redacted_thinking":
+      return { type: "reasoning", summary: "", replay }
+    case "tool_use": {
+      const callId = asString(open.block.id)
+      const toolName = asString(open.block.name)
+      if (!callId || !toolName) throw new Error(`${provider.name} tool call was incomplete`)
+      const args = parseToolInput(provider.name, toolName, open.partialJson)
+      open.block.input = args
+      return { type: "tool_call", callId, name: toolName, args, replay }
+    }
+    default:
+      return undefined
+  }
+}
+
+function stopReasonError(name: string, stopReason: string | undefined): ProviderError | undefined {
+  if (stopReason === "refusal") {
+    return new ProviderError(`${name} declined to answer this request`, { retryable: false })
+  }
+  if (stopReason === "model_context_window_exceeded") {
+    return new ProviderError(`${name} ran out of context window`, { retryable: false })
+  }
+  if (stopReason === "max_tokens") {
+    return new ProviderError(`${name} stopped at the model output limit before finishing`, { retryable: false })
+  }
+  return undefined
+}
+
+export async function* streamAnthropicMessages(
+  request: StreamRequest,
+  provider: AnthropicMessagesProvider,
+): AsyncGenerator<StreamEvent> {
+  const response = await provider.fetch(buildAnthropicBody(provider, request), request.signal)
+  if (!response.body) throw new ProviderError(`${provider.name} response had no body`, { retryable: true })
+
+  const open = new Map<number, OpenBlock>()
+  let usage: Usage | undefined
+  let stopReason: string | undefined
+  let terminal = false
+
+  try {
+    for await (const raw of sseEvents(response.body)) {
+      if (raw.done) continue
+      const event = parseSseEvent(provider.name, raw.data)
+      if (!event) continue
+      switch (event.type) {
+        case "usage":
+          usage = event.usage
+          break
+        case "block_start":
+          open.set(event.index, { block: event.block, text: "", signature: "", partialJson: "" })
+          break
+        case "text_delta": {
+          const block = open.get(event.index)
+          if (block) block.text += event.text
+          yield { type: "text_delta", text: event.text }
+          break
+        }
+        case "thinking_delta": {
+          const block = open.get(event.index)
+          if (block) block.text += event.text
+          yield { type: "reasoning_summary_delta", text: event.text }
+          break
+        }
+        case "signature_delta": {
+          const block = open.get(event.index)
+          if (block) block.signature += event.signature
+          break
+        }
+        case "input_json_delta": {
+          const block = open.get(event.index)
+          if (block) block.partialJson += event.partial
+          break
+        }
+        case "block_stop": {
+          const block = open.get(event.index)
+          open.delete(event.index)
+          if (!block) break
+          const item = finishBlock(provider, block, request.model)
+          if (item) yield { type: "item_done", item }
+          break
+        }
+        case "terminal":
+          stopReason = event.stopReason
+          if (event.outputTokens !== undefined) usage = { ...usage, outputTokens: event.outputTokens }
+          break
+        case "message_stop":
+          terminal = true
+          break
+        case "failure":
+          throw new ProviderError(event.message, { retryable: event.retryable })
+      }
+      if (terminal) break
+    }
+  } catch (error) {
+    streamError(provider.name, error, request.signal)
+  }
+
+  const failure = stopReasonError(provider.name, stopReason)
+  if (failure) throw failure
+  if (!terminal) throw new ProviderError(`${provider.name} stream ended unexpectedly`, { retryable: true })
+  yield { type: "done", usage }
 }

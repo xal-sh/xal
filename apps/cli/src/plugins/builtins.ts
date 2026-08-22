@@ -10,6 +10,7 @@ import githubCopilot from "./github-copilot/plugin"
 import memory from "./memory/plugin"
 import minimax from "./minimax/plugin"
 import openai from "./openai/plugin"
+import opencodeGo from "./opencode-go/plugin"
 import openrouter from "./openrouter/plugin"
 import promptCommands from "./prompt-commands/plugin"
 import projectInstructions from "./project-instructions/plugin"
@@ -38,6 +39,7 @@ export const builtinPlugins: Plugin[] = [
   githubCopilot,
   openai,
   openrouter,
+  opencodeGo,
   xai,
   ask,
   tui,

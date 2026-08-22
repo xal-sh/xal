@@ -4,7 +4,7 @@ Connect a built-in or plugin-provided model service, select a model, and configu
 
 ## Built-in providers
 
-Built-in provider IDs are `anthropic`, `google`, `openai`, `openai-chatgpt`, `openrouter`, `github-copilot`, `xai`, `deepseek`, `alibaba-cloud`, `minimax`, and `minimax-coding-plan`. `claude` is an alias for `anthropic`, `gemini` is an alias for `google`, `chatgpt` is an alias for `openai-chatgpt`, `copilot` is an alias for `github-copilot`, `grok` is an alias for `xai`, and `dashscope` is an alias for `alibaba-cloud`.
+Built-in provider IDs are `anthropic`, `google`, `openai`, `openai-chatgpt`, `openrouter`, `github-copilot`, `xai`, `deepseek`, `alibaba-cloud`, `minimax`, `minimax-coding-plan`, and `opencode-go`. `claude` is an alias for `anthropic`, `gemini` is an alias for `google`, `chatgpt` is an alias for `openai-chatgpt`, `copilot` is an alias for `github-copilot`, `grok` is an alias for `xai`, and `dashscope` is an alias for `alibaba-cloud`.
 
 The only built-in UI ID is `tui`. Plugins may register more providers, aliases, and UIs.
 
@@ -29,7 +29,7 @@ GitHub Copilot discovers the models enabled for each connected subscription and 
 
 Anthropic discovers models from its authenticated `/models` endpoint and layers bundled context windows, output limits, and thinking options over the result because that endpoint reports none of them. Google Gemini discovers models from `/models`, keeps the ones that support `generateContent`, and reads each context window from the reported input token limit. OpenRouter discovers its full catalog from `/models` and reads context window, input modalities, and reasoning support directly from the response, so no bundled metadata is layered over it. Each of the three falls back to a small bundled catalog and reports the failure when live discovery is unavailable.
 
-xAI discovers models from its authenticated `/models` endpoint, hides the image, speech, and voice models that the chat endpoint rejects, and layers bundled context windows and thinking options over the result because that endpoint reports neither. The account's credential decides what the endpoint returns, so a Grok subscription and an API key each see their own catalog. DeepSeek discovers models from its authenticated `/models` endpoint and reports when it must use bundled model metadata. Alibaba Cloud uses a bundled catalog of Qwen models shared by Model Studio and Coding Plan. MiniMax and MiniMax Coding Plan use the bundled minimax.io catalog.
+xAI discovers models from its authenticated `/models` endpoint, hides the image, speech, and voice models that the chat endpoint rejects, and layers bundled context windows and thinking options over the result because that endpoint reports neither. The account's credential decides what the endpoint returns, so a Grok subscription and an API key each see their own catalog. DeepSeek discovers models from its authenticated `/models` endpoint and reports when it must use bundled model metadata. Alibaba Cloud uses a bundled catalog of Qwen models shared by Model Studio and Coding Plan. MiniMax and MiniMax Coding Plan use the bundled minimax.io catalog. OpenCode Go discovers the account-visible catalog from its `/models` endpoint, which reports only IDs, so bundled metadata supplies names, context windows, input modalities, thinking controls, and each model's wire protocol; unknown IDs are served over Chat Completions with conservative defaults.
 
 ## Anthropic
 
@@ -117,3 +117,11 @@ Run `xal connect chatgpt` and choose browser login, pasted callback, or headless
 ## DeepSeek
 
 `pluginConfig.deepseek.clientName` is a non-empty string used in the provider request user agent. It defaults to the package application name. DeepSeek currently has no other configuration options.
+
+## OpenCode Go
+
+`pluginConfig.opencode-go.clientName` is a non-empty string used in the provider request user agent. It defaults to the package application name. OpenCode Go currently has no other configuration options.
+
+OpenCode Go is opencode's low-cost subscription for popular open coding models, served from `https://opencode.ai/zen/go/v1`. Run `xal connect opencode-go`, then paste the API key from [opencode.ai/auth](https://opencode.ai/auth). Connection stores the key without making a billable model request; the first turn validates that the key and subscription cover the selected model.
+
+Each model streams over the protocol its family advertises: Grok 4.5, GPT-5.6 Luna, and Muse Spark use OpenAI Responses; MiniMax M3/M2.x and Qwen3.x use an Anthropic-compatible endpoint; GLM, Kimi, MiMo, Hy3, DeepSeek, and Ox Alpha Free use Chat Completions. GPT-5.6 Luna exposes the full `none` through `max` effort range and Grok 4.5 `low` through `xhigh`; MiniMax M3 offers a thinking on/off control that Xal maps onto adaptive or disabled thinking. Other models reason natively without a dial.
