@@ -35,7 +35,6 @@ import {
   type NativeProcessRequest,
   type NativeShellManager,
   type NativeReadRequest,
-  type NativeReviewDiffRequest,
   type NativeSearchOutcome,
   type NativeSkillRequest,
   type NativeToolOutput,
@@ -75,7 +74,6 @@ export type {
   NativeShellManager,
   NativeShellRequest,
   NativeReadRequest,
-  NativeReviewDiffRequest,
   NativeSearchOutcome,
   NativeSkillRequest,
   NativeToolOutput,
@@ -110,7 +108,6 @@ interface NativeBinding {
   ): Promise<NativeWorkspaceIndex>
   grep(options: NativeGrepOptions, signal?: AbortSignal): Promise<NativeSearchOutcome>
   glob(options: NativeGlobOptions, signal?: AbortSignal): Promise<NativeSearchOutcome>
-  reviewDiff(request: NativeReviewDiffRequest, signal?: AbortSignal): Promise<NativeToolOutput>
   createManagedWorktree(request: NativeWorktreeRequest, signal?: AbortSignal): Promise<NativeManagedWorktree>
   managedWorktreeAt(request: NativeWorktreeRequest, signal?: AbortSignal): Promise<NativeManagedWorktree | undefined>
   removeManagedWorktree(request: NativeWorktreeRequest, signal?: AbortSignal): Promise<void>
@@ -257,7 +254,6 @@ function createBinding(value: unknown): NativeBinding {
   const createWorkspaceIndex = requiredFunction(value, "createWorkspaceIndex")
   const nativeGrep = requiredFunction(value, "nativeGrep")
   const nativeGlob = requiredFunction(value, "nativeGlob")
-  const nativeReviewDiff = requiredFunction(value, "nativeReviewDiff")
   const nativeCreateManagedWorktree = requiredFunction(value, "nativeCreateManagedWorktree")
   const nativeManagedWorktreeAt = requiredFunction(value, "nativeManagedWorktreeAt")
   const nativeRemoveManagedWorktree = requiredFunction(value, "nativeRemoveManagedWorktree")
@@ -335,12 +331,6 @@ function createBinding(value: unknown): NativeBinding {
     },
     async glob(options, signal) {
       return parseSearchOutcome(await Promise.resolve(Reflect.apply(nativeGlob, value, [options, signal])))
-    },
-    async reviewDiff(request, signal) {
-      return parseToolOutput(
-        await Promise.resolve(Reflect.apply(nativeReviewDiff, value, [request, signal])),
-        "native review diff returned an invalid value",
-      )
     },
     async createManagedWorktree(request, signal) {
       const result = parseWorktreeResult(
@@ -491,10 +481,6 @@ export function nativeGrep(options: NativeGrepOptions, signal?: AbortSignal): Pr
 
 export function nativeGlob(options: NativeGlobOptions, signal?: AbortSignal): Promise<NativeSearchOutcome> {
   return nativeBinding().glob(options, signal)
-}
-
-export function nativeReviewDiff(request: NativeReviewDiffRequest, signal?: AbortSignal): Promise<NativeToolOutput> {
-  return nativeBinding().reviewDiff(request, signal)
 }
 
 export function nativeCreateManagedWorktree(

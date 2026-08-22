@@ -176,12 +176,6 @@ export interface NativeGitRepository {
   applySnapshot(request: { snapshot: NativeGitSnapshot; reverse: boolean }): Promise<void>
 }
 
-export interface NativeReviewDiffRequest {
-  cwd: string
-  base?: string
-  aborted?: boolean
-}
-
 export interface NativeManagedWorktree {
   version: 1
   repositoryRoot: string

@@ -1,13 +1,13 @@
 import { expect, test } from "bun:test"
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
+import { mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { appInfo } from "../../app-info"
 import { runGit } from "../../git/command"
-import { nativeReviewDiff } from "../../native"
+import { reviewPrompt, workingTreeScope } from "./plugin"
 
 async function repository(run: (root: string) => Promise<void>): Promise<void> {
-  const root = await mkdtemp(join(tmpdir(), `${appInfo.name}-review-diff-test-`))
+  const root = await mkdtemp(join(tmpdir(), `${appInfo.name}-review-test-`))
   try {
     await runGit(root, ["init", "--initial-branch=main"])
     await runGit(root, ["config", "user.email", "test@example.com"])
@@ -21,34 +21,19 @@ async function repository(run: (root: string) => Promise<void>): Promise<void> {
   }
 }
 
-test("formats native working-tree and branch review diffs", async () => {
+test("directs working-tree reviews through normal Git and file tools", async () => {
   await repository(async (root) => {
-    await writeFile(join(root, "tracked.txt"), "staged\n")
-    await runGit(root, ["add", "tracked.txt"])
-    await writeFile(join(root, "tracked.txt"), "unstaged\n")
-    await mkdir(join(root, "untracked"))
-    await writeFile(join(root, "untracked", "note.txt"), "note\n")
+    await writeFile(join(root, "tracked.txt"), "after\n")
+    await writeFile(join(root, "untracked.txt"), "new\n")
 
-    const working = await nativeReviewDiff({ cwd: root })
-    expect(working.output).toContain("Git status:")
-    expect(working.output).toContain("Staged diff:")
-    expect(working.output).toContain("Unstaged diff:")
-    expect(working.output).toContain("?? untracked/note.txt")
+    const scope = await workingTreeScope(root)
+    expect(scope).toBeDefined()
+    if (!scope) throw new Error("expected review scope")
 
-    const branch = await nativeReviewDiff({ cwd: root, base: "HEAD" })
-    expect(branch.output).toContain("Base:")
-    expect(branch.output).toContain("Merge base:")
-    expect(branch.output).toContain("Diff:")
-  })
-})
-
-test("rejects invalid or already-aborted native review requests", async () => {
-  await repository(async (root) => {
-    await expect(nativeReviewDiff({ cwd: root, base: "missing" })).rejects.toThrow("git rev-parse failed")
-    const controller = new AbortController()
-    controller.abort()
-    await expect(nativeReviewDiff({ cwd: root, aborted: true }, controller.signal)).rejects.toThrow(
-      "Git command interrupted",
-    )
+    const prompt = reviewPrompt(scope)
+    expect(prompt).toContain("`git diff --cached --no-ext-diff --find-renames --`")
+    expect(prompt).toContain("`git diff --no-ext-diff --find-renames --`")
+    expect(prompt).toContain("?? untracked.txt")
+    expect(prompt).not.toContain("review_diff")
   })
 })

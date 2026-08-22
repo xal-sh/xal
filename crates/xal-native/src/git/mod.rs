@@ -19,7 +19,6 @@ use crate::tool_contracts::cancellation_flag;
 
 mod command;
 mod repository;
-mod review;
 mod snapshot;
 mod support;
 
