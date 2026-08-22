@@ -142,6 +142,34 @@ fn scope(header: &str) -> Option<String> {
     None
 }
 
+fn check_authentication(
+    response: &reqwest13::Response,
+) -> Result<(), StreamableHttpError<reqwest13::Error>> {
+    if !matches!(
+        response.status(),
+        reqwest13::StatusCode::UNAUTHORIZED | reqwest13::StatusCode::FORBIDDEN
+    ) {
+        return Ok(());
+    }
+    let Some(header) = response.headers().get(WWW_AUTHENTICATE) else {
+        return Ok(());
+    };
+    let header = header.to_str().map_err(|_| {
+        StreamableHttpError::UnexpectedServerResponse(Cow::Borrowed(
+            "invalid www-authenticate header value",
+        ))
+    })?;
+    match response.status() {
+        reqwest13::StatusCode::UNAUTHORIZED => Err(StreamableHttpError::AuthRequired(
+            AuthRequiredError::new(header.to_owned()),
+        )),
+        reqwest13::StatusCode::FORBIDDEN => Err(StreamableHttpError::InsufficientScope(
+            InsufficientScopeError::new(header.to_owned(), scope(header)),
+        )),
+        _ => Ok(()),
+    }
+}
+
 async fn body(
     response: reqwest13::Response,
     duration: Duration,
@@ -343,30 +371,7 @@ impl StreamableHttpClient for HttpClient {
         let response = self.send(request.json(&message)).await?;
         self.last_post_status
             .store(response.status().as_u16(), Ordering::Relaxed);
-        if response.status() == reqwest13::StatusCode::UNAUTHORIZED
-            && let Some(header) = response.headers().get(WWW_AUTHENTICATE)
-        {
-            let header = header.to_str().map_err(|_| {
-                StreamableHttpError::UnexpectedServerResponse(Cow::Borrowed(
-                    "invalid www-authenticate header value",
-                ))
-            })?;
-            return Err(StreamableHttpError::AuthRequired(AuthRequiredError::new(
-                header.to_owned(),
-            )));
-        }
-        if response.status() == reqwest13::StatusCode::FORBIDDEN
-            && let Some(header) = response.headers().get(WWW_AUTHENTICATE)
-        {
-            let header = header.to_str().map_err(|_| {
-                StreamableHttpError::UnexpectedServerResponse(Cow::Borrowed(
-                    "invalid www-authenticate header value",
-                ))
-            })?;
-            return Err(StreamableHttpError::InsufficientScope(
-                InsufficientScopeError::new(header.to_owned(), scope(header)),
-            ));
-        }
+        check_authentication(&response)?;
         let status = response.status();
         if matches!(
             status,
@@ -501,30 +506,7 @@ impl StreamableHttpClient for HttpClient {
         }
         request = apply_headers(request, custom_headers)?;
         let response = self.send(request).await?;
-        if response.status() == reqwest13::StatusCode::UNAUTHORIZED
-            && let Some(header) = response.headers().get(WWW_AUTHENTICATE)
-        {
-            let header = header.to_str().map_err(|_| {
-                StreamableHttpError::UnexpectedServerResponse(Cow::Borrowed(
-                    "invalid www-authenticate header value",
-                ))
-            })?;
-            return Err(StreamableHttpError::AuthRequired(AuthRequiredError::new(
-                header.to_owned(),
-            )));
-        }
-        if response.status() == reqwest13::StatusCode::FORBIDDEN
-            && let Some(header) = response.headers().get(WWW_AUTHENTICATE)
-        {
-            let header = header.to_str().map_err(|_| {
-                StreamableHttpError::UnexpectedServerResponse(Cow::Borrowed(
-                    "invalid www-authenticate header value",
-                ))
-            })?;
-            return Err(StreamableHttpError::InsufficientScope(
-                InsufficientScopeError::new(header.to_owned(), scope(header)),
-            ));
-        }
+        check_authentication(&response)?;
         let response = response
             .error_for_status()
             .map_err(StreamableHttpError::Client)?;

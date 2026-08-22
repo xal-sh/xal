@@ -278,6 +278,9 @@ async fn terminate_process_tree(pid: Option<u32>, force: bool) {
     }
 }
 
+#[cfg(not(any(unix, windows)))]
+async fn terminate_process_tree(_pid: Option<u32>, _force: bool) {}
+
 #[cfg(windows)]
 async fn terminate_process_tree(pid: Option<u32>, force: bool) {
     let Some(pid) = pid else {
@@ -304,6 +307,9 @@ fn terminate_process_tree_now(pid: Option<u32>) {
         libc::kill(-(pid as i32), libc::SIGKILL);
     }
 }
+
+#[cfg(not(any(unix, windows)))]
+fn terminate_process_tree_now(_pid: Option<u32>) {}
 
 #[cfg(windows)]
 fn terminate_process_tree_now(pid: Option<u32>) {

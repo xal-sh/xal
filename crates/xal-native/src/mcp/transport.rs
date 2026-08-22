@@ -107,6 +107,7 @@ struct LegacySseTransport {
     client: reqwest13::Client,
     endpoint: reqwest13::Url,
     headers: reqwest13::header::HeaderMap,
+    timeout: Duration,
     receiver: tokio::sync::mpsc::Receiver<RxJsonRpcMessage<RoleClient>>,
     reader: tokio::task::JoinHandle<()>,
     reader_error: Arc<Mutex<Option<String>>>,
@@ -117,6 +118,7 @@ impl LegacySseTransport {
         client: reqwest13::Client,
         url: &str,
         headers: reqwest13::header::HeaderMap,
+        timeout: Duration,
     ) -> napi::Result<Self> {
         let response = client
             .get(url)
@@ -173,6 +175,7 @@ impl LegacySseTransport {
             client,
             endpoint,
             headers,
+            timeout,
             receiver,
             reader,
             reader_error,
@@ -190,14 +193,17 @@ impl Transport<RoleClient> for LegacySseTransport {
         let client = self.client.clone();
         let endpoint = self.endpoint.clone();
         let headers = self.headers.clone();
+        let timeout = self.timeout;
         async move {
-            client
+            let request = client
                 .post(endpoint)
                 .headers(headers)
                 .header(reqwest13::header::CONTENT_TYPE, "application/json")
                 .json(&item)
-                .send()
+                .send();
+            tokio::time::timeout(timeout, request)
                 .await
+                .map_err(std::io::Error::other)?
                 .map_err(std::io::Error::other)?
                 .error_for_status()
                 .map_err(std::io::Error::other)?;
@@ -304,7 +310,7 @@ pub(super) async fn connect_service(
                         config.timeout(),
                         "legacy MCP connection",
                         cancelled,
-                        LegacySseTransport::connect(client, url, parsed_headers),
+                        LegacySseTransport::connect(client, url, parsed_headers, config.timeout()),
                     )
                     .await
                     .map_err(|sse_error| {

@@ -235,8 +235,8 @@ describe("native MCP manager", () => {
       expect(redirectedAuthorization).toBeUndefined()
     } finally {
       await manager.close()
-      source.stop(true)
-      destination.stop(true)
+      await source.stop(true)
+      await destination.stop(true)
     }
   })
 
@@ -330,7 +330,7 @@ describe("native MCP manager", () => {
 
     try {
       await manager.connectAll()
-      const previousNames = [...registry.tools.keys()]
+      const previousNames = [...registry.tools.keys()].sort()
       const tool = [...registry.tools.values()].find((candidate) => candidate.name.includes("echo_tool"))
       if (!tool) throw new Error("MCP tool was not registered")
       registry.rejectName = "mcp__rollback__added"
@@ -347,7 +347,7 @@ describe("native MCP manager", () => {
       )
 
       await waitFor(() => manager.statusLines()[0]?.includes("rejected mcp__rollback__added") ?? false)
-      expect([...registry.tools.keys()]).toEqual(previousNames)
+      expect([...registry.tools.keys()].sort()).toEqual(previousNames)
     } finally {
       await manager.close()
     }

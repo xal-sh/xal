@@ -56,16 +56,19 @@ impl Task for ManagerTask {
                             .cloned()
                             .collect::<Vec<_>>()
                     };
-                    if !cancelled.load(Ordering::Relaxed) {
+                    let results = if cancelled.load(Ordering::Relaxed) {
+                        Vec::new()
+                    } else {
                         let connections = ids
                             .into_iter()
                             .map(|id| connect_entry(state.clone(), id, cancelled.clone()));
-                        for result in futures_util::future::join_all(connections).await {
-                            result?;
-                        }
-                    }
+                        futures_util::future::join_all(connections).await
+                    };
                     if cancelled.load(Ordering::Relaxed) {
                         close_all(state.clone()).await?;
+                    }
+                    for result in results {
+                        result?;
                     }
                     Ok(None)
                 }
