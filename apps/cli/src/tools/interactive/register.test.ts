@@ -41,15 +41,25 @@ describe("interactive shell policy", () => {
     ).toBe("ask")
     expect(
       await evaluatePolicy(
+        request({
+          tool: writeStdinTool.name,
+          args: { session_id: 1, chars: "", cols: 120 },
+          subject: "resize terminal",
+        }),
+      ),
+    ).toBe("ask")
+    expect(
+      await evaluatePolicy(
         request({ tool: writeStdinTool.name, args: { session_id: 1, chars: "" }, subject: "", readOnly: true }),
       ),
     ).toBe("allow")
   })
 
-  test("preserves nested deny rules for scripts beginning with a dash", async () => {
+  test("preserves nested deny rules across shell option layouts", async () => {
     setUserRules({ deny: ["exec_command(rm *)"] })
-    const command = "bash -c -- '-x; rm /etc/hosts' argv0"
-    expect(await evaluatePolicy(request({ args: { cmd: command }, subject: command, mode: "yolo" }))).toBe("deny")
+    for (const command of ["bash -c -- '-x; rm /etc/hosts' argv0", "bash -c -O extglob -- 'rm /etc/hosts' argv0"]) {
+      expect(await evaluatePolicy(request({ args: { cmd: command }, subject: command, mode: "yolo" }))).toBe("deny")
+    }
     setUserRules({})
   })
 })
@@ -62,6 +72,10 @@ describe("interactive tool state tracking", () => {
     expect(writeStdinTool.undo?.({ session_id: 1, chars: "input" }, { cwd: process.cwd() })).toEqual({
       type: "invalidate",
     })
+    expect(writeStdinTool.undo?.({ session_id: 1, chars: "", rows: 40 }, { cwd: process.cwd() })).toEqual({
+      type: "invalidate",
+    })
+    expect(writeStdinTool.readOnly?.({ session_id: 1, chars: "", rows: 40 }, { cwd: process.cwd() })).toBe(false)
     expect(writeStdinTool.undo?.({ session_id: 1, chars: "" }, { cwd: process.cwd() })).toEqual({ type: "none" })
     expect(writeStdinTool.readOnly?.({ session_id: 1, chars: "" }, { cwd: process.cwd() })).toBe(true)
   })

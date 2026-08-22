@@ -51,6 +51,7 @@ describe("commandEscapesWorkspace", () => {
       "sort < input.txt > /etc/out",
       "bash -c -- 'rm /etc/hosts'",
       "bash -c -- '-x; rm /etc/hosts' argv0",
+      "bash -c -O extglob -- 'rm /etc/hosts' argv0",
       "bash -c 'rm /etc/hosts'",
       "bash -c -x -- 'rm /etc/hosts'",
       "bash -c",

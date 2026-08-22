@@ -25,6 +25,8 @@ const WRAPPERS = new Set(["builtin", "command", "env", "exec", "nohup", "nice", 
 
 const SUPPORTED_SHELLS = new Set(["sh", "bash", "dash", "ksh", "mksh", "zsh"])
 
+const SHELL_VALUE_OPTIONS = new Set(["-O", "+O", "-o", "+o", "--init-file", "--rcfile"])
+
 const XARGS_VALUE_OPTIONS = new Set([
   "-a",
   "--arg-file",
@@ -248,11 +250,23 @@ function embeddedCommands(words: Word[]): EmbeddedCommands {
         const word = words[option]!
         if (!commandStringOption(word.text)) continue
         let operand = option + 1
-        while (words[operand]?.text.startsWith("-")) {
-          if (words[operand]!.text === "--") {
+        while (operand < words.length) {
+          const candidate = words[operand]!.text
+          if (candidate === "--") {
             operand += 1
             break
           }
+          if (SHELL_VALUE_OPTIONS.has(candidate)) {
+            if (!words[operand + 1]) return { segments, unsafe: true }
+            operand += 2
+            continue
+          }
+          if (candidate.startsWith("--init-file=") || candidate.startsWith("--rcfile=")) {
+            operand += 1
+            continue
+          }
+          if (candidate.startsWith("--")) return { segments, unsafe: true }
+          if (!candidate.startsWith("-") && !candidate.startsWith("+")) break
           operand += 1
         }
         script = words[operand]

@@ -55,6 +55,16 @@ function dimensionOf(args: Record<string, unknown>, name: "cols" | "rows"): numb
   return Math.min(Math.max(Math.round(requested), 1), MAX_DIMENSION)
 }
 
+function resizeOf(args: Record<string, unknown>): { cols?: number; rows?: number } | undefined {
+  const cols = dimensionOf(args, "cols")
+  const rows = dimensionOf(args, "rows")
+  return cols === undefined && rows === undefined ? undefined : { cols, rows }
+}
+
+function changesInteractiveSession(args: Record<string, unknown>): boolean {
+  return charsOf(args) !== "" || resizeOf(args) !== undefined
+}
+
 function sessionIdOf(args: Record<string, unknown>): number | undefined {
   const requested = asNumber(args.session_id)
   if (requested === undefined || !Number.isSafeInteger(requested) || requested <= 0) return undefined
@@ -240,16 +250,17 @@ export const writeStdinTool: Tool = {
     return id === undefined ? "write_stdin" : `session ${id}${chars ? ` · ${chars}` : ""}`
   },
   readOnly(args) {
-    return charsOf(args) === ""
+    return !changesInteractiveSession(args)
   },
   undo(args) {
-    return charsOf(args) === "" ? { type: "none" } : { type: "invalidate" }
+    return changesInteractiveSession(args) ? { type: "invalidate" } : { type: "none" }
   },
   concurrency() {
     return "exclusive"
   },
   permission(args) {
-    return { subject: charsOf(args) }
+    const chars = charsOf(args)
+    return { subject: chars || (resizeOf(args) ? "resize terminal" : "") }
   },
   async execute(args, ctx) {
     const id = sessionIdOf(args)
@@ -266,9 +277,8 @@ export const writeStdinTool: Tool = {
     if (ctx.signal.aborted) onAbort()
 
     try {
-      const cols = dimensionOf(args, "cols")
-      const rows = dimensionOf(args, "rows")
-      if (cols !== undefined || rows !== undefined) session.resize(cols, rows)
+      const resize = resizeOf(args)
+      if (resize) session.resize(resize.cols, resize.rows)
       const chars = charsOf(args)
       if (chars) session.write(chars)
       const outputChunks: string[] = []
