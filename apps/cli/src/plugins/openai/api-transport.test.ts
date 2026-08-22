@@ -169,6 +169,22 @@ describe("OpenAI Responses transport", () => {
     }
   })
 
+  test("rejects incomplete responses instead of accepting truncated output", async () => {
+    responses.push(
+      sse([
+        {
+          type: "response.incomplete",
+          response: { incomplete_details: { reason: "max_output_tokens" } },
+        },
+      ]),
+    )
+
+    await expect(collect(streamResponse("profile-1", request()))).rejects.toMatchObject({
+      message: "response incomplete: max_output_tokens",
+      retryable: false,
+    })
+  })
+
   test("surfaces OpenAI HTTP errors before reading the stream", async () => {
     responses.push(Response.json({ error: { message: "invalid request" } }, { status: 400 }))
 

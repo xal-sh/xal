@@ -50,9 +50,14 @@ export function parseSseEvent(raw: unknown): WireSseEvent | undefined {
       if (!isJsonObject(raw.item)) return failure("response item was not valid JSON")
       return { type: "item_done", item: raw.item }
     }
-    case "response.completed":
-    case "response.done":
     case "response.incomplete": {
+      const response = isRecord(raw.response) ? raw.response : undefined
+      const details = response && isRecord(response.incomplete_details) ? response.incomplete_details : undefined
+      const reason = details ? asString(details.reason) : undefined
+      return failure(reason ? `response incomplete: ${reason}` : "response incomplete")
+    }
+    case "response.completed":
+    case "response.done": {
       const usageRaw = isRecord(raw.response) ? raw.response.usage : undefined
       if (!isRecord(usageRaw)) return { type: "terminal" }
       const inputDetails = isRecord(usageRaw.input_tokens_details) ? usageRaw.input_tokens_details : undefined
