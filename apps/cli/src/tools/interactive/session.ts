@@ -7,6 +7,7 @@ import { shellEnvironment, shellLaunch } from "../shell/shell"
 import type { SandboxAccess } from "../shell/sandbox"
 
 const SESSION_TIMEOUT_MS = 600_000
+const COMPLETED_RETENTION_MS = 600_000
 const MAX_RAW_CHARS = 256 * 1024
 
 export interface InteractiveSession {
@@ -16,15 +17,15 @@ export interface InteractiveSession {
   finished(): boolean
   timedOut(): boolean
   write(text: string): void
-  resize(cols: number, rows: number): void
+  resize(cols: number | undefined, rows: number | undefined): void
   drain(): string
-  terminate(): void
   kill(): void
 }
 
 interface SessionEntry {
   session: InteractiveSession
   ownerId: string
+  expiry?: ReturnType<typeof setTimeout>
 }
 
 const sessions = new Map<number, SessionEntry>()
@@ -33,19 +34,23 @@ let nextSessionId = 1
 export function startInteractiveSession(
   command: string,
   cwd: string,
+  workspace: string,
   sandbox: SandboxAccess | undefined,
   ownerId: string,
+  cols = 80,
+  rows = 24,
 ): InteractiveSession {
   const id = nextSessionId++
-  const launch = shellLaunch(["-c", command], cwd, sandbox)
+  const launch = shellLaunch(["-c", command], workspace, sandbox)
   const environment = shellEnvironment(cwd, sandbox)
-  const proc = spawnPtyCommand(launch, environment, cwd, 80, 24)
+  const proc = spawnPtyCommand(launch, environment, cwd, cols, rows)
   proc.setTimeout(SESSION_TIMEOUT_MS)
 
   const decoder = new TextDecoder()
   const raw = createJobBuffer(0, MAX_RAW_CHARS)
-  let normalizedCursor = 0
-  let lastOmitted = 0
+  let rawCursor = 0
+  let currentCols = cols
+  let currentRows = rows
   let finished = false
 
   proc.onOutput((chunk) => {
@@ -53,12 +58,16 @@ export function startInteractiveSession(
     if (text) raw.append(text)
   })
 
-  const done = proc.done.then((termination) => {
+  const done = proc.done.finally(() => {
     finished = true
     const tail = decoder.decode()
     if (tail) raw.append(tail)
-    sessions.delete(id)
-    return termination
+    const entry = sessions.get(id)
+    if (!entry) return
+    entry.expiry = setTimeout(() => {
+      if (sessions.get(id) === entry) sessions.delete(id)
+    }, COMPLETED_RETENTION_MS)
+    entry.expiry.unref()
   })
 
   const session: InteractiveSession = {
@@ -68,19 +77,29 @@ export function startInteractiveSession(
     finished: () => finished,
     timedOut: () => proc.timedOut(),
     write: (text) => proc.write(text),
-    resize: (cols, rows) => proc.resize(cols, rows),
+    resize: (cols, rows) => {
+      currentCols = cols ?? currentCols
+      currentRows = rows ?? currentRows
+      proc.resize(currentCols, currentRows)
+    },
     drain: () => {
       const omitted = raw.omitted()
-      if (omitted !== lastOmitted) {
-        lastOmitted = omitted
-        normalizedCursor = 0
+      const retained = raw.tail()
+      const total = omitted + retained.length
+      if (rawCursor >= total) return ""
+      if (rawCursor < omitted) {
+        const missed = omitted - rawCursor
+        rawCursor = total
+        return `\n... ${missed} characters omitted ...\n${nativeNormalizeProcessOutput(retained)}`
       }
-      const normalized = nativeNormalizeProcessOutput(raw.text())
-      const start = Math.min(normalizedCursor, normalized.length)
-      normalizedCursor = normalized.length
-      return normalized.slice(start)
+      const start = rawCursor - omitted
+      rawCursor = total
+      const normalized = nativeNormalizeProcessOutput(retained)
+      const prefix = nativeNormalizeProcessOutput(retained.slice(0, start))
+      return normalized.startsWith(prefix)
+        ? normalized.slice(prefix.length)
+        : nativeNormalizeProcessOutput(retained.slice(start))
     },
-    terminate: () => proc.terminate(),
     kill: () => proc.kill(),
   }
 
@@ -94,6 +113,8 @@ export function interactiveSession(id: number, ownerId: string): InteractiveSess
 }
 
 export function dropInteractiveSession(id: number): void {
+  const entry = sessions.get(id)
+  if (entry?.expiry) clearTimeout(entry.expiry)
   sessions.delete(id)
 }
 
@@ -101,7 +122,7 @@ export function disposeInteractiveSessions(ownerId: string): void {
   for (const [id, entry] of sessions) {
     if (entry.ownerId !== ownerId) continue
     entry.session.kill()
-    sessions.delete(id)
+    dropInteractiveSession(id)
   }
 }
 

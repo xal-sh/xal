@@ -1,16 +1,17 @@
-import { contributeRules } from "../../permissions/rules"
+import { contributeRules, matchRules } from "../../permissions/rules"
 import { registerPolicyRule } from "../../permissions/service"
 import { registerTool } from "../registry"
 import { registerToolSessionDisposer } from "../session"
 import { commandRiskRules, commandSegmentPolicy } from "../shell/policy"
 import { sandboxRequested } from "../shell/sandbox"
 import { commandSegments } from "../shell/split"
-import { disposeInteractiveToolSessions, execCommandTool, writeStdinTool } from "./tool"
-
-function commandOf(args: Record<string, unknown>): string {
-  const command = args.cmd
-  return typeof command === "string" ? command.trim() : ""
-}
+import {
+  commandOf,
+  disposeInteractiveToolSessions,
+  execCommandTool,
+  workdirEscapesWorkspace,
+  writeStdinTool,
+} from "./tool"
 
 export function registerInteractiveShell(): void {
   registerTool(execCommandTool)
@@ -19,7 +20,12 @@ export function registerInteractiveShell(): void {
   contributeRules({ ask: commandRiskRules(execCommandTool.name) })
   registerPolicyRule({
     evaluate(request) {
+      if (request.tool === writeStdinTool.name) {
+        if (!request.subject) return undefined
+        return matchRules(request) ?? "ask"
+      }
       if (request.tool !== execCommandTool.name || sandboxRequested(request.args)) return undefined
+      if (workdirEscapesWorkspace(request.args, request.cwd)) return "ask"
       const command = commandOf(request.args)
       if (!command) return undefined
       const segments = commandSegments(command)

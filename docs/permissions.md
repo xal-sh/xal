@@ -26,6 +26,16 @@ Xal ships three modes, cycled while the session is idle with the `session.next-m
 - `plan` is read-only. Tools that mutate anything are refused before they run.
 - `yolo` converts every ask into an allow. Deny rules still block actions.
 
+## Interactive terminal tools
+
+`exec_command` starts a command in a PTY on macOS and Linux. It returns completed output when the command exits within its yield period, or a session ID that `write_stdin` can use to send input, poll output, and resize the terminal. These tools are not exposed by native Windows builds because the native PTY backend is Unix-only.
+
+`exec_command` applies the same command-risk rules as `bash`. An unsandboxed `workdir` outside the workspace asks before execution. `sandbox: "read"` prevents filesystem writes, while `sandbox: "workspace"` permits writes only inside the session workspace and system temporary directories, regardless of the selected `workdir`. Both sandbox modes block network access and run without approval.
+
+Nonempty `write_stdin` input asks by default because input sent to a shell or REPL can perform arbitrary mutations. Empty input only polls output and is read-only. Explicit permission rules can override the prompt, for example `"allow": ["write_stdin(*)"]`, while deny rules still take precedence.
+
+Interactive processes can outlive an individual tool call, so starting one that can write or sending nonempty input invalidates workspace undo history. Starting a read-sandboxed command and polling with empty input do not invalidate undo history. Completed sessions retain their final output for ten minutes or until it is polled, and all remaining sessions are terminated when their owning Xal session ends.
+
 Set the default for new TUI and headless sessions in `config.json`:
 
 ```json

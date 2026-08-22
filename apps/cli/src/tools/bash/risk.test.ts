@@ -50,6 +50,7 @@ describe("commandEscapesWorkspace", () => {
       "tee /etc/hosts",
       "sort < input.txt > /etc/out",
       "bash -c -- 'rm /etc/hosts'",
+      "bash -c -- '-x; rm /etc/hosts' argv0",
       "bash -c 'rm /etc/hosts'",
       "bash -c -x -- 'rm /etc/hosts'",
       "bash -c",

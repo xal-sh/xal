@@ -1,4 +1,5 @@
-import { isAbsolute, resolve } from "node:path"
+import { realpathSync } from "node:fs"
+import { isAbsolute, relative, resolve, sep } from "node:path"
 import { asNumber, asString } from "../../lib/json"
 import type { Tool } from "../types"
 import { sandboxAccessOf, sandboxAvailable, sandboxRequested, type SandboxAccess } from "../shell/sandbox"
@@ -16,20 +17,42 @@ const DEFAULT_YIELD_MS = 10_000
 const MIN_YIELD_MS = 250
 const MAX_YIELD_MS = 30_000
 const SESSION_TIMEOUT_S = 600
+const DEFAULT_COLS = 80
+const DEFAULT_ROWS = 24
+const MAX_DIMENSION = 65_535
 
-function commandOf(args: Record<string, unknown>): string {
+export function commandOf(args: Record<string, unknown>): string {
   return asString(args.cmd)?.trim() ?? ""
 }
 
-function workdirOf(args: Record<string, unknown>, cwd: string): string {
+export function workdirOf(args: Record<string, unknown>, cwd: string): string {
   const workdir = asString(args.workdir)?.trim()
   if (!workdir) return cwd
-  return isAbsolute(workdir) ? workdir : resolve(cwd, workdir)
+  return isAbsolute(workdir) ? resolve(workdir) : resolve(cwd, workdir)
+}
+
+export function workdirEscapesWorkspace(args: Record<string, unknown>, cwd: string): boolean {
+  let workspace: string
+  let workdir: string
+  try {
+    workspace = realpathSync(cwd)
+    workdir = realpathSync(workdirOf(args, cwd))
+  } catch {
+    return true
+  }
+  const rel = relative(workspace, workdir)
+  return rel !== "" && (rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel))
 }
 
 function yieldTimeOf(args: Record<string, unknown>): number {
   const requested = asNumber(args.yield_time_ms) ?? DEFAULT_YIELD_MS
   return Math.min(Math.max(Math.round(requested), MIN_YIELD_MS), MAX_YIELD_MS)
+}
+
+function dimensionOf(args: Record<string, unknown>, name: "cols" | "rows"): number | undefined {
+  const requested = asNumber(args[name])
+  if (requested === undefined) return undefined
+  return Math.min(Math.max(Math.round(requested), 1), MAX_DIMENSION)
 }
 
 function sessionIdOf(args: Record<string, unknown>): number | undefined {
@@ -91,10 +114,21 @@ export const execCommandTool: Tool = {
         type: "number",
         description: `Milliseconds to wait for the command to finish before returning a session ID. Defaults to ${DEFAULT_YIELD_MS}; effective range is ${MIN_YIELD_MS}-${MAX_YIELD_MS}`,
       },
+      cols: {
+        type: "number",
+        description: `Initial terminal columns. Defaults to ${DEFAULT_COLS}; effective range is 1-${MAX_DIMENSION}`,
+      },
+      rows: {
+        type: "number",
+        description: `Initial terminal rows. Defaults to ${DEFAULT_ROWS}; effective range is 1-${MAX_DIMENSION}`,
+      },
       ...sandboxAvailableProperties(),
     },
     required: ["cmd"],
     additionalProperties: false,
+  },
+  available() {
+    return process.platform !== "win32"
   },
   title(args) {
     return commandOf(args)
@@ -103,7 +137,7 @@ export const execCommandTool: Tool = {
     return sandboxAccessOf(args) === "read"
   },
   undo(args) {
-    return sandboxAccessOf(args) === "read" ? { type: "none" } : { type: "workspace" }
+    return sandboxAccessOf(args) === "read" ? { type: "none" } : { type: "invalidate" }
   },
   sandboxed(args) {
     return sandboxRequested(args)
@@ -124,7 +158,15 @@ export const execCommandTool: Tool = {
     if (!command) return { output: "(no command provided)" }
     const cwd = workdirOf(args, ctx.cwd)
     const sandbox = sandboxAccessOf(args)
-    const session = startInteractiveSession(command, cwd, sandbox, ctx.sessionId)
+    const session = startInteractiveSession(
+      command,
+      cwd,
+      ctx.cwd,
+      sandbox,
+      ctx.sessionId,
+      dimensionOf(args, "cols") ?? DEFAULT_COLS,
+      dimensionOf(args, "rows") ?? DEFAULT_ROWS,
+    )
     const emitter = createSessionEmitter(ctx.update)
     const onAbort = (): void => {
       session.kill()
@@ -177,23 +219,37 @@ export const writeStdinTool: Tool = {
         type: "number",
         description: `Milliseconds to wait for new output before returning. Defaults to ${DEFAULT_YIELD_MS}; effective range is ${MIN_YIELD_MS}-${MAX_YIELD_MS}`,
       },
+      cols: {
+        type: "number",
+        description: `New terminal columns. Effective range is 1-${MAX_DIMENSION}`,
+      },
+      rows: {
+        type: "number",
+        description: `New terminal rows. Effective range is 1-${MAX_DIMENSION}`,
+      },
     },
     required: ["session_id"],
     additionalProperties: false,
+  },
+  available() {
+    return process.platform !== "win32"
   },
   title(args) {
     const id = sessionIdOf(args)
     const chars = charsOf(args)
     return id === undefined ? "write_stdin" : `session ${id}${chars ? ` · ${chars}` : ""}`
   },
-  readOnly() {
-    return false
+  readOnly(args) {
+    return charsOf(args) === ""
   },
-  undo() {
-    return { type: "none" }
+  undo(args) {
+    return charsOf(args) === "" ? { type: "none" } : { type: "invalidate" }
   },
   concurrency() {
     return "exclusive"
+  },
+  permission(args) {
+    return { subject: charsOf(args) }
   },
   async execute(args, ctx) {
     const id = sessionIdOf(args)
@@ -210,6 +266,9 @@ export const writeStdinTool: Tool = {
     if (ctx.signal.aborted) onAbort()
 
     try {
+      const cols = dimensionOf(args, "cols")
+      const rows = dimensionOf(args, "rows")
+      if (cols !== undefined || rows !== undefined) session.resize(cols, rows)
       const chars = charsOf(args)
       if (chars) session.write(chars)
       const outputChunks: string[] = []
