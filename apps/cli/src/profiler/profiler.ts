@@ -9,6 +9,7 @@ import { describeError } from "../lib/error"
 import type { StreamEvent, ThinkingEffort, Usage } from "../providers/types"
 import { redactText } from "../secrets/redactor"
 import type { ProcessExecution } from "../tools/types"
+import { recordProviderUsage, type UsageOutcome, type UsagePhase } from "../usage/recorder"
 
 type AnonymousExecution =
   | { status: "exited"; exitCode: number; sandbox?: "read" | "workspace" }
@@ -139,14 +140,17 @@ type ProfileRecord =
   | { type: "job_created"; job: string }
   | { type: "job_finished"; job: string; outcome: JobOutcome }
 
-export type ProviderPhase = "turn" | "compaction" | "goal_evaluation"
-type ProfileOutcome = "completed" | "failed" | "interrupted"
+export type ProviderPhase = UsagePhase
+type ProfileOutcome = UsageOutcome
 type JobOutcome = "completed" | "failed" | "interrupted" | "timed_out"
 type ToolConcurrency = "shared" | "exclusive"
 
 export interface ProviderRequestProfile {
   requestId: string
   startedAt: number
+  phase: ProviderPhase
+  provider: string
+  model: string
 }
 
 export interface ToolBatchProfile {
@@ -460,7 +464,7 @@ export function profileProviderRequestStarted(
   thinking: ThinkingEffort | undefined,
   attempt: number,
 ): ProviderRequestProfile {
-  const profile = { requestId: nextLabel("request"), startedAt: Date.now() }
+  const profile = { requestId: nextLabel("request"), startedAt: Date.now(), phase, provider, model }
   record({
     type: "provider_request_started",
     request: profile.requestId,
@@ -489,6 +493,15 @@ export function profileProviderRequestFinished(
   outcome: ProfileOutcome,
   usage?: Usage,
 ): void {
+  if (usage) {
+    recordProviderUsage({
+      provider: profile.provider,
+      model: profile.model,
+      phase: profile.phase,
+      outcome,
+      usage,
+    })
+  }
   record({
     type: "provider_request_finished",
     request: profile.requestId,

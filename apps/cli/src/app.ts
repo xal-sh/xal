@@ -25,6 +25,7 @@ import { startProfiler, stopProfiler } from "./profiler/profiler"
 import { registerProviderClis } from "./providers/cli"
 import { refreshModelCatalogs } from "./providers/catalog"
 import { registerProviderCommands } from "./providers/commands"
+import { flushProviderUsage, startProviderUsageRecording } from "./usage/recorder"
 import { registerTrustClis } from "./project/cli"
 import { findProjectRoot } from "./project/root"
 import { ensureWorkspaceTrust } from "./project/trust"
@@ -89,6 +90,7 @@ async function initializeApp(args: string[], profile: boolean) {
     choose: args.length === 0 && process.stdin.isTTY ? chooseOption : undefined,
   })
   if (!trusted) return
+  startProviderUsageRecording()
   const root = await findProjectRoot(process.cwd())
   let settings = await loadSettings()
   settings = await prepareProjectMcp(root, settings, {
@@ -166,6 +168,12 @@ export async function finishApp(): Promise<void> {
   for (const failure of stopped.failures) {
     if (failure.phase !== "shutdown") continue
     console.error(redactText(`plugin shutdown failed: ${failure.plugin}: ${failure.reason}`))
+    if (process.exitCode === undefined || process.exitCode === 0) process.exitCode = 1
+  }
+  try {
+    await flushProviderUsage()
+  } catch (error) {
+    console.error(redactText(`usage not saved: ${describeError(error)}`))
     if (process.exitCode === undefined || process.exitCode === 0) process.exitCode = 1
   }
   const profile = await stopProfiler()

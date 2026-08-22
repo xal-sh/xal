@@ -55,6 +55,10 @@ export function profilerDir(): string {
   return join(agentHome(), "profiler")
 }
 
+export function usageDir(): string {
+  return join(agentHome(), "usage")
+}
+
 function projectSlug(cwd: string): string {
   const redacted = redactText(cwd)
   const slug = redacted.replace(/[^a-zA-Z0-9]+/g, "-")

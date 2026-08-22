@@ -1,6 +1,30 @@
 # Integrations
 
-Connect Xal to language servers for semantic code intelligence and MCP servers for external tools, resources, and prompts.
+Connect Xal to local usage dashboards, language servers for semantic code intelligence, and MCP servers for external tools, resources, and prompts.
+
+## Local usage dashboards
+
+Xal writes one prompt-free usage record after each provider request that reports token counts. Records are JSONL files under `$XAL_HOME/usage/`, or `~/.xal/usage/` by default. Each Xal process owns a separate file so concurrent sessions never contend for the same log.
+
+```json
+{
+  "type": "provider_usage",
+  "version": 1,
+  "id": "…",
+  "timestamp": "2026-08-22T12:34:56.000Z",
+  "provider": "openai-chatgpt",
+  "model": "gpt-5.6-sol",
+  "phase": "turn",
+  "outcome": "completed",
+  "usage": { "totalInputTokens": 120, "cacheReadInputTokens": 80, "cacheWriteInputTokens": 0, "outputTokens": 15 }
+}
+```
+
+`totalInputTokens` includes cached input. The cache-read and cache-write fields identify the subsets that may be priced differently. `outputTokens` is the provider-reported output total. `phase` distinguishes normal turns from compaction and goal-evaluation requests, while `outcome` preserves requests that reported billable usage before failing or being interrupted.
+
+The ledger contains no prompts, responses, working directories, profile names, credentials, or account identifiers. Files and directories are created with user-only permissions. Xal flushes pending records during shutdown and exits with an error if the ledger could not be written. Existing session transcripts are not backfilled, so collection starts with the first run of a Xal version that supports the ledger.
+
+Usage dashboards should read this native ledger instead of treating Xal as Codex or asking Xal to write into another tool's home directory. The `provider` field lets a dashboard attribute ChatGPT usage to Codex, Anthropic usage to Claude, xAI usage to Grok, and other supported providers without coupling to Xal's full session format.
 
 ## Language servers
 
