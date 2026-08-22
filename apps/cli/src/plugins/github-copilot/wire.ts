@@ -15,8 +15,14 @@ export type DeviceTokenResult =
   | { type: "slow_down"; intervalSeconds?: number }
   | { type: "failed"; message: string }
 
+export type CopilotEndpoint = "/chat/completions" | "/responses"
+
+export interface CopilotModel extends ModelInfo {
+  endpoint: CopilotEndpoint
+}
+
 interface ModelCandidate {
-  model: ModelInfo
+  model: CopilotModel
   pickerEnabled: boolean
   policyEnabled: boolean
 }
@@ -81,17 +87,19 @@ function candidate(raw: unknown): ModelCandidate | undefined {
   if (!isRecord(raw)) return undefined
   const id = asString(raw.id)?.trim()
   const name = asString(raw.name)?.trim()
+  if (!id || !name) return undefined
+
   const hasEndpoints = Object.hasOwn(raw, "supported_endpoints")
   const endpoints = asStringArray(raw.supported_endpoints)
-  if (
-    !id ||
-    !name ||
-    (hasEndpoints &&
-      (!Array.isArray(raw.supported_endpoints) ||
-        endpoints.length !== raw.supported_endpoints.length ||
-        !endpoints.includes("/chat/completions")))
-  )
+  if (hasEndpoints && (!Array.isArray(raw.supported_endpoints) || endpoints.length !== raw.supported_endpoints.length))
     return undefined
+  const endpoint = endpoints.includes("/responses")
+    ? "/responses"
+    : !hasEndpoints || endpoints.includes("/chat/completions")
+      ? "/chat/completions"
+      : undefined
+  if (!endpoint) return undefined
+
   const capabilities = isRecord(raw.capabilities) ? raw.capabilities : undefined
   const supports = capabilities && isRecord(capabilities.supports) ? capabilities.supports : undefined
   if (supports?.tool_calls === false) return undefined
@@ -106,13 +114,14 @@ function candidate(raw: unknown): ModelCandidate | undefined {
       ...(contextWindow === undefined ? {} : { contextWindow }),
       inputModalities: ["text"],
       thinking: thinking(supports?.reasoning_effort),
+      endpoint,
     },
     pickerEnabled: raw.model_picker_enabled === true,
     policyEnabled: policy?.state === "enabled",
   }
 }
 
-export function parseCopilotModels(raw: unknown, allowPolicyFallback: boolean): ModelInfo[] {
+export function parseCopilotModels(raw: unknown, allowPolicyFallback: boolean): CopilotModel[] {
   if (!isRecord(raw) || !Array.isArray(raw.data)) throw new Error("GitHub Copilot models response was invalid")
   const candidates = raw.data.flatMap((entry) => {
     const parsed = candidate(entry)
@@ -129,7 +138,7 @@ export function parseCopilotModels(raw: unknown, allowPolicyFallback: boolean): 
         hasEndpoints &&
         (!Array.isArray(entry.supported_endpoints) ||
           endpoints.length !== entry.supported_endpoints.length ||
-          !endpoints.includes("/chat/completions"))
+          (!endpoints.includes("/chat/completions") && !endpoints.includes("/responses")))
       )
         continue
       protocolCompatible += 1
@@ -142,10 +151,10 @@ export function parseCopilotModels(raw: unknown, allowPolicyFallback: boolean): 
     )
   }
   const pickerModels = candidates.filter((entry) => entry.pickerEnabled)
-  if (pickerModels.length > 0) return pickerModels.map((entry) => entry.model)
   if (!allowPolicyFallback) {
+    if (pickerModels.length > 0) return pickerModels.map((entry) => entry.model)
     throw new Error("GitHub Copilot has no compatible agent models enabled in the Enterprise model picker")
   }
-  const policyModels = candidates.filter((entry) => entry.policyEnabled)
-  return (policyModels.length > 0 ? policyModels : candidates).map((entry) => entry.model)
+  const visibleModels = candidates.filter((entry) => entry.pickerEnabled || entry.policyEnabled)
+  return (visibleModels.length > 0 ? visibleModels : candidates).map((entry) => entry.model)
 }

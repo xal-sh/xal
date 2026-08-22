@@ -4,7 +4,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { appEnvVar, appInfo } from "../../app-info"
 import { createProfile, saveCredential } from "../../config/credentials"
-import type { ModelInfo } from "../../providers/types"
+import type { CopilotModel } from "./wire"
 import { replaceSecretValues } from "../../secrets/redactor"
 import { setDomain } from "./api"
 import { cacheDiscoveredModels, listModels } from "./models"
@@ -47,8 +47,14 @@ async function createTestProfile(accessToken: string): Promise<string> {
 
 test("Copilot model caches are bound to the credential that discovered them", async () => {
   await withHome(async () => {
-    const cached: ModelInfo[] = [
-      { id: "account-a-model", name: "Account A Model", contextWindow: 128_000, inputModalities: ["text"] },
+    const cached: CopilotModel[] = [
+      {
+        id: "account-a-model",
+        name: "Account A Model",
+        contextWindow: 128_000,
+        inputModalities: ["text"],
+        endpoint: "/chat/completions",
+      },
     ]
     const profileId = await createTestProfile("token-a")
     await cacheDiscoveredModels(profileId, "token-a", cached)
@@ -75,6 +81,7 @@ test("Copilot model caches are bound to the credential that discovered them", as
             contextWindow: 128_000,
             inputModalities: ["text"],
             thinking: undefined,
+            endpoint: "/chat/completions",
           },
         ],
         source: "runtime",

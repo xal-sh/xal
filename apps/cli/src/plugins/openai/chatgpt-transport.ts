@@ -1,12 +1,11 @@
 import { appEnvVar, appInfo } from "../../app-info"
 import { ProviderError } from "../../providers/errors"
+import { buildResponseInput, responseEvents } from "../../providers/responses"
 import { errorDetail, httpError } from "../../providers/transport"
 import type { StreamEvent, StreamRequest } from "../../providers/types"
 import { chatGptFetch } from "./chatgpt-client"
 import { resolveModel } from "./chatgpt-models"
 import { PROVIDER_ID, PROVIDER_NAME } from "./chatgpt-oauth"
-import { responseEvents } from "./responses-stream"
-import { buildInput } from "./wire"
 
 function buildHeaders(sessionId: string): Record<string, string> {
   return {
@@ -26,7 +25,10 @@ function buildBody(request: StreamRequest): string {
     store: false,
     stream: true,
     instructions: request.instructions,
-    input: buildInput(request.input, { provider: PROVIDER_ID, model: request.conversationModel ?? request.model }),
+    input: buildResponseInput(request.input, {
+      provider: PROVIDER_ID,
+      model: request.conversationModel ?? request.model,
+    }),
     tools: request.tools.map((tool) => ({
       type: "function",
       name: tool.name,

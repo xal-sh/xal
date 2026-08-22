@@ -3,12 +3,15 @@ import { cacheDir } from "../../config/paths"
 import { describeError } from "../../lib/error"
 import { readJsonFile, writeSecureJson } from "../../lib/fs"
 import { asNumber, asString, asStringArray, isRecord } from "../../lib/json"
-import { isThinkingEffort, type ModelCatalog, type ModelInfo, type ThinkingOptions } from "../../providers/types"
+import { isThinkingEffort, type ModelCatalog, type ThinkingOptions } from "../../providers/types"
 import { copilotFetch, githubDomain, isPersonalCopilotEndpoint } from "./api"
 import { token } from "./credential"
-import { parseCopilotModels } from "./wire"
+import { parseCopilotModels, type CopilotEndpoint, type CopilotModel } from "./wire"
 
-const CACHE_VERSION = 1
+const CACHE_VERSION = 2
+const modelEndpoints = new Map<string, Map<string, CopilotEndpoint>>()
+
+type CopilotModelCatalog = Omit<ModelCatalog, "models"> & { models: CopilotModel[] }
 
 function cachePath(profileId: string): string {
   return join(cacheDir(), `github-copilot-models-${encodeURIComponent(profileId)}.json`)
@@ -33,11 +36,12 @@ function cachedThinking(raw: unknown): ThinkingOptions | undefined {
   return { options, default: preferred }
 }
 
-function cachedModel(raw: unknown): ModelInfo | undefined {
+function cachedModel(raw: unknown): CopilotModel | undefined {
   if (!isRecord(raw)) return undefined
   const id = asString(raw.id)?.trim()
   const name = asString(raw.name)?.trim()
-  if (!id || !name) return undefined
+  const endpoint = asString(raw.endpoint)
+  if (!id || !name || (endpoint !== "/chat/completions" && endpoint !== "/responses")) return undefined
   const modalities = asStringArray(raw.inputModalities)
   if (modalities.length !== 1 || modalities[0] !== "text") return undefined
   return {
@@ -46,10 +50,15 @@ function cachedModel(raw: unknown): ModelInfo | undefined {
     contextWindow: positiveInteger(raw.contextWindow),
     inputModalities: ["text"],
     thinking: cachedThinking(raw.thinking),
+    endpoint,
   }
 }
 
-async function readCache(profileId: string, githubToken: string): Promise<ModelInfo[] | undefined> {
+function rememberEndpoints(profileId: string, models: CopilotModel[]): void {
+  modelEndpoints.set(profileId, new Map(models.map((model) => [model.id, model.endpoint])))
+}
+
+async function readCache(profileId: string, githubToken: string): Promise<CopilotModel[] | undefined> {
   const raw = await readJsonFile(cachePath(profileId))
   if (raw === undefined) return undefined
   if (!isRecord(raw)) throw new Error(`${cachePath(profileId)} is malformed; fix or delete it`)
@@ -60,19 +69,21 @@ async function readCache(profileId: string, githubToken: string): Promise<ModelI
     throw new Error(`${cachePath(profileId)} is malformed; fix or delete it`)
   }
   if (domain !== githubDomain() || storedCredentialId !== (await credentialId(githubToken))) return undefined
-  const models: ModelInfo[] = []
+  const models: CopilotModel[] = []
   for (const entry of raw.models) {
     const model = cachedModel(entry)
     if (!model) throw new Error(`${cachePath(profileId)} is malformed; fix or delete it`)
     models.push(model)
   }
-  return models.length > 0 ? models : undefined
+  if (models.length === 0) return undefined
+  rememberEndpoints(profileId, models)
+  return models
 }
 
 export async function cacheDiscoveredModels(
   profileId: string,
   githubToken: string,
-  models: ModelInfo[],
+  models: CopilotModel[],
 ): Promise<void> {
   await writeSecureJson(cachePath(profileId), {
     version: CACHE_VERSION,
@@ -82,14 +93,16 @@ export async function cacheDiscoveredModels(
   })
 }
 
-async function discoverModels(accessToken: string): Promise<ModelInfo[]> {
+async function discoverModels(profileId: string, accessToken: string): Promise<CopilotModel[]> {
   const response = await copilotFetch("/models", accessToken, { signal: AbortSignal.timeout(5_000) })
-  return parseCopilotModels(await response.json(), isPersonalCopilotEndpoint())
+  const models = parseCopilotModels(await response.json(), isPersonalCopilotEndpoint())
+  rememberEndpoints(profileId, models)
+  return models
 }
 
-async function refreshModels(profileId: string, accessToken: string): Promise<ModelCatalog> {
+async function refreshModels(profileId: string, accessToken: string): Promise<CopilotModelCatalog> {
   try {
-    const models = await discoverModels(accessToken)
+    const models = await discoverModels(profileId, accessToken)
     try {
       await cacheDiscoveredModels(profileId, accessToken, models)
       return { models, source: "runtime" }
@@ -101,7 +114,7 @@ async function refreshModels(profileId: string, accessToken: string): Promise<Mo
       }
     }
   } catch (discoveryError) {
-    let cached: ModelInfo[] | undefined
+    let cached: CopilotModel[] | undefined
     try {
       cached = await readCache(profileId, accessToken)
     } catch (cacheError) {
@@ -124,7 +137,7 @@ async function refreshModels(profileId: string, accessToken: string): Promise<Mo
   }
 }
 
-export async function listModels(profileId: string, refresh: boolean): Promise<ModelCatalog> {
+export async function listModels(profileId: string, refresh: boolean): Promise<CopilotModelCatalog> {
   const accessToken = await token(profileId)
   if (refresh) return refreshModels(profileId, accessToken)
   try {
@@ -139,6 +152,15 @@ export async function listModels(profileId: string, refresh: boolean): Promise<M
     }
   }
   return refreshModels(profileId, accessToken)
+}
+
+export async function modelEndpoint(profileId: string, model: string): Promise<CopilotEndpoint> {
+  const remembered = modelEndpoints.get(profileId)?.get(model)
+  if (remembered) return remembered
+  await listModels(profileId, false)
+  const endpoint = modelEndpoints.get(profileId)?.get(model)
+  if (!endpoint) throw new Error(`GitHub Copilot model ${model} is not available`)
+  return endpoint
 }
 
 export async function defaultModel(profileId: string): Promise<string> {

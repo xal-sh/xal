@@ -1,10 +1,9 @@
 import type { JsonObject } from "../../lib/json"
+import { buildResponseInput, responseEvents } from "../../providers/responses"
 import type { StreamEvent, StreamRequest, ThinkingEffort } from "../../providers/types"
 import { apiKey } from "./api-auth"
 import { openAiFetch, PROVIDER_ID, PROVIDER_NAME, raiseForStatus } from "./api-client"
 import { resolveLargeContextModel } from "./model-variants"
-import { responseEvents } from "./responses-stream"
-import { buildInput } from "./wire"
 
 function requestReasoning(effort: ThinkingEffort | undefined): JsonObject {
   switch (effort) {
@@ -27,7 +26,7 @@ function buildBody(request: StreamRequest): string {
     store: false,
     stream: true,
     instructions: request.instructions,
-    input: buildInput(request.input, {
+    input: buildResponseInput(request.input, {
       provider: PROVIDER_ID,
       model: request.conversationModel ?? request.model,
     }),

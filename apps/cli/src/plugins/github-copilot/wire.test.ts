@@ -59,7 +59,7 @@ describe("GitHub Copilot wire parsing", () => {
     expect(() => parseDeviceToken({})).toThrow("device token response was incomplete")
   })
 
-  test("keeps picker-enabled, tool-capable chat models and their reasoning metadata", () => {
+  test("keeps picker-enabled tool models across both supported protocols", () => {
     const models = parseCopilotModels(
       {
         data: [
@@ -78,6 +78,15 @@ describe("GitHub Copilot wire parsing", () => {
         contextWindow: 128_000,
         inputModalities: ["text"],
         thinking: { options: ["low", "medium"], default: "medium" },
+        endpoint: "/chat/completions",
+      },
+      {
+        id: "responses-model",
+        name: "RESPONSES-MODEL",
+        contextWindow: 128_000,
+        inputModalities: ["text"],
+        thinking: { options: ["low", "medium"], default: "medium" },
+        endpoint: "/responses",
       },
     ])
   })
@@ -90,10 +99,30 @@ describe("GitHub Copilot wire parsing", () => {
         model("disabled-tools", "/chat/completions", { policy: "enabled", toolCalls: false }),
       ],
     }
-    expect(parseCopilotModels(response, true).map((entry) => entry.id)).toEqual(["omitted-metadata"])
+    expect(parseCopilotModels(response, true).map((entry) => entry.id)).toEqual(["omitted-metadata", "responses-only"])
     expect(() => parseCopilotModels(response, false)).toThrow(
       "no compatible agent models enabled in the Enterprise model picker",
     )
+  })
+
+  test("includes policy-enabled Personal models when other picker models exist", () => {
+    const responseModel = model("gpt-5.6-luna", "/responses", { picker: true })
+    const claudeModel = model("claude-opus-4.5", "/chat/completions")
+    claudeModel.model_picker_enabled = false
+
+    expect(parseCopilotModels({ data: [responseModel, claudeModel] }, true).map((entry) => entry.id)).toEqual([
+      "gpt-5.6-luna",
+      "claude-opus-4.5",
+    ])
+    expect(parseCopilotModels({ data: [responseModel, claudeModel] }, false).map((entry) => entry.id)).toEqual([
+      "gpt-5.6-luna",
+    ])
+  })
+
+  test("prefers Responses when a model advertises both protocols", () => {
+    const dualProtocol = model("gpt-5.4", "/chat/completions", { picker: true })
+    dualProtocol.supported_endpoints = ["/chat/completions", "/responses"]
+    expect(parseCopilotModels({ data: [dualProtocol] }, true)[0]?.endpoint).toBe("/responses")
   })
 
   test("accepts Personal Copilot catalogs that omit endpoint, picker, and policy metadata", () => {
@@ -121,7 +150,7 @@ describe("GitHub Copilot wire parsing", () => {
   })
 
   test("fails when the subscription exposes no compatible models", () => {
-    expect(() => parseCopilotModels({ data: [model("responses", "/responses", { picker: true })] }, true)).toThrow(
+    expect(() => parseCopilotModels({ data: [model("messages", "/v1/messages", { picker: true })] }, true)).toThrow(
       "no compatible tool-capable agent models (1 advertised, 0 protocol-compatible, 0 tool-compatible)",
     )
   })
