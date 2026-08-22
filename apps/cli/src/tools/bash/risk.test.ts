@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { homedir } from "node:os"
-import { commandEscapesWorkspace } from "./risk"
+import { commandEscapesWorkspace } from "../shell/risk"
 
 const cwd = "/workspace/project"
 
@@ -49,6 +49,11 @@ describe("commandEscapesWorkspace", () => {
       "echo pwned > /etc/hosts",
       "tee /etc/hosts",
       "sort < input.txt > /etc/out",
+      "bash -c -- 'rm /etc/hosts'",
+      "bash -c -- '-x; rm /etc/hosts' argv0",
+      "bash -c 'rm /etc/hosts'",
+      "bash -c -x -- 'rm /etc/hosts'",
+      "bash -c",
     ]) {
       expect(commandEscapesWorkspace(command, cwd)).toBe(true)
     }

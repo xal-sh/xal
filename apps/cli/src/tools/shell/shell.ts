@@ -80,10 +80,18 @@ export function disposeShellSession(sessionId: string): void {
   nativeShellManager().disposeSession(sessionId)
 }
 
-function processEnvironment(cwd: string, sandbox: SandboxAccess | undefined): { name: string; value: string }[] {
+export function shellEnvironment(cwd: string, sandbox: SandboxAccess | undefined): NodeJS.ProcessEnv {
   const environment = { ...process.env, PWD: cwd }
-  const selected = sandbox ? sandboxProcessEnvironment(environment) : environment
-  return Object.entries(selected).flatMap(([name, value]) => (value === undefined ? [] : [{ name, value }]))
+  return sandbox ? sandboxProcessEnvironment(environment) : environment
+}
+
+export function shellProcessEnvironment(
+  cwd: string,
+  sandbox: SandboxAccess | undefined,
+): { name: string; value: string }[] {
+  return Object.entries(shellEnvironment(cwd, sandbox)).flatMap(([name, value]) =>
+    value === undefined ? [] : [{ name, value }],
+  )
 }
 
 function shellExecution(native: NativeShellExecution, onOutput: (text: string) => void): ShellExecution {
@@ -142,7 +150,7 @@ export function executeShellCommand(
     cwd,
     persistentLaunch: shellLaunch(["-s"], cwd, sandbox),
     isolatedLaunch: shellLaunch(["-c", command], cwd, sandbox),
-    environment: processEnvironment(cwd, sandbox),
+    environment: shellProcessEnvironment(cwd, sandbox),
   })
   return shellExecution(native, onOutput)
 }

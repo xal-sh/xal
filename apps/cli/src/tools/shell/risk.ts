@@ -247,7 +247,16 @@ function embeddedCommands(words: Word[]): EmbeddedCommands {
       for (let option = index + 1; option < words.length; option++) {
         const word = words[option]!
         if (!commandStringOption(word.text)) continue
-        script = words[option + 1]
+        let operand = option + 1
+        while (words[operand]?.text.startsWith("-")) {
+          if (words[operand]!.text === "--") {
+            operand += 1
+            break
+          }
+          operand += 1
+        }
+        script = words[operand]
+        if (!script) return { segments, unsafe: true }
         break
       }
     }

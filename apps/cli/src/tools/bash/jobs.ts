@@ -9,8 +9,8 @@ import {
 import { createJobLog } from "../../background/log"
 import { registerBackgroundTask } from "../../background/registry"
 import { describeError } from "../../lib/error"
-import type { CommandProcess } from "./process"
-import type { ShellExecution } from "./shell"
+import type { CommandProcess } from "../shell/process"
+import type { ShellExecution } from "../shell/shell"
 
 const runningProcs = new Set<CommandProcess>()
 let exitHookRegistered = false

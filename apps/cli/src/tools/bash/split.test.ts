@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { splitCommand } from "./split"
+import { splitCommand } from "../shell/split"
 
 describe("splitCommand", () => {
   test("splits every supported command separator", () => {
@@ -42,6 +42,7 @@ describe("splitCommand", () => {
       "(echo grouped)",
       "{ echo grouped; }",
       "echo first & echo second",
+      "echo 'unterminated",
     ]) {
       expect(splitCommand(command)).toBeUndefined()
     }
