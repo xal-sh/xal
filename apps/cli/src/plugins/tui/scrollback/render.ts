@@ -70,6 +70,7 @@ export function renderBlock(
     case "user":
       return frame(ctx, bubble(ctx, block, userBackground))
     case "info":
+    case "hook":
       return frame(ctx, paragraph(ctx, { content: block.text, attributes: TextAttributes.DIM }))
     case "error":
       return frame(ctx, paragraph(ctx, { content: `x ${block.text}`, color: COLORS.error }))

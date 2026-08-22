@@ -19,6 +19,11 @@ export interface InfoBlock {
   text: string
 }
 
+export interface HookBlock {
+  kind: "hook"
+  text: string
+}
+
 export interface ErrorBlock {
   kind: "error"
   text: string
@@ -84,6 +89,7 @@ export type Block =
   | BannerBlock
   | UserBlock
   | InfoBlock
+  | HookBlock
   | ErrorBlock
   | NoticeBlock
   | CompactionBlock
@@ -91,3 +97,25 @@ export type Block =
   | PlanBlock
   | StreamBlock
   | ToolBlock
+
+export function blockVisible(block: Block, expanded: boolean, reasoningVisible: boolean): boolean {
+  switch (block.kind) {
+    case "hook":
+      return expanded
+    case "reasoning":
+      return reasoningVisible
+    case "banner":
+    case "user":
+    case "info":
+    case "error":
+    case "notice":
+    case "compaction":
+    case "background":
+    case "plan":
+    case "text":
+    case "tool":
+      return true
+  }
+  const exhaustive: never = block
+  return exhaustive
+}

@@ -2,7 +2,7 @@ import type { CliRenderer, RGBA, ScrollbackSurface, TextRenderable } from "@open
 import { createRedactedStream, redactText, type RedactedStream } from "../../../secrets/redactor"
 import type { TuiPreferences } from "../config"
 import { COLORS, userMessageBackground } from "../theme/colors"
-import type { Block, HeaderBlock, StreamBlock, StreamKind } from "./blocks"
+import { blockVisible, type Block, type HeaderBlock, type StreamBlock, type StreamKind } from "./blocks"
 import { contentWidth, renderBlock, streamContent, streamView } from "./render"
 
 const FLUSH_MS = 50
@@ -33,6 +33,7 @@ function redactBlock(block: Block): Block {
       return { ...block, model: redactText(block.model), cwd: redactText(block.cwd) }
     case "user":
     case "info":
+    case "hook":
     case "error":
     case "text":
     case "reasoning":
@@ -317,6 +318,6 @@ export class Scrollback {
   }
 
   private visible(block: Block): boolean {
-    return block.kind !== "reasoning" || this.reasoningVisible
+    return blockVisible(block, this.expanded, this.reasoningVisible)
   }
 }

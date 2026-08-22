@@ -157,7 +157,7 @@ export class AgentEventController {
         break
       case "hook_finished":
         scrollback.append({
-          kind: "info",
+          kind: "hook",
           text: `hook: ${event.hook} · ${event.event} · ${event.action} · ${event.elapsedMs}ms`,
         })
         break
