@@ -42,6 +42,7 @@ describe("splitCommand", () => {
       "(echo grouped)",
       "{ echo grouped; }",
       "echo first & echo second",
+      "echo 'unterminated",
     ]) {
       expect(splitCommand(command)).toBeUndefined()
     }

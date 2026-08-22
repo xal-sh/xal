@@ -37,6 +37,7 @@ export function splitCommand(command: string): string[] | undefined {
       continue
     }
     if (char === "'") {
+      if (command.indexOf("'", index + 1) < 0) return undefined
       const quoted = readSingleQuoted(command, index)
       current += quoted.text
       index = quoted.end
@@ -361,8 +362,8 @@ function readCompound(command: string, start: number, terminator?: ")" | "`" | "
       }
     }
     if (char === "'") {
+      if (command.indexOf("'", index + 1) < 0) return undefined
       const quoted = readSingleQuoted(command, index)
-      if (quoted.end > command.length) return undefined
       current += quoted.text
       index = quoted.end
       continue

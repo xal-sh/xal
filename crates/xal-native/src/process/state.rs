@@ -88,12 +88,12 @@ fn read_stream(state: Arc<ProcessState>, mut stream: impl Read, pty: bool) {
     state.output_changed.notify_all();
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(unix)]
 fn pty_read_eof(error: &std::io::Error) -> bool {
     error.raw_os_error() == Some(libc::EIO)
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(unix))]
 fn pty_read_eof(_error: &std::io::Error) -> bool {
     false
 }
@@ -582,12 +582,12 @@ pub(super) fn wait_process(state: &ProcessState) -> napi::Result<NativeProcessTe
     Ok(termination)
 }
 
-#[cfg(all(test, target_os = "linux"))]
+#[cfg(all(test, unix))]
 mod tests {
     use super::pty_read_eof;
 
     #[test]
-    fn maps_linux_pty_eio_to_eof() {
+    fn maps_unix_pty_eio_to_eof() {
         let error = std::io::Error::from_raw_os_error(libc::EIO);
         assert!(pty_read_eof(&error));
     }
