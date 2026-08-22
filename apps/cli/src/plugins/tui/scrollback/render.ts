@@ -39,6 +39,7 @@ const GUTTER = 2
 interface StreamView {
   view: Renderable
   text: TextRenderable
+  rendered: RenderedMarkdown
 }
 
 export function contentWidth(ctx: RenderContext): number {
@@ -49,11 +50,19 @@ export function streamContent(block: StreamBlock, width: number): RenderedMarkdo
   return renderMarkdown(block.text, width, block.kind === "reasoning")
 }
 
+export function streamRowColumns(rendered: RenderedMarkdown, height: number): number[] {
+  const contentStart = height - rendered.rows
+  return Array.from({ length: height }, (_, row) => {
+    const width = rendered.widths[row - contentStart]
+    return width ? GUTTER + width : 0
+  })
+}
+
 export function streamView(ctx: RenderContext, block: StreamBlock): StreamView {
   const rendered = streamContent(block, contentWidth(ctx))
   const text = paragraph(ctx, { content: rendered.content, height: rendered.rows, wrapMode: "none" })
   text.truncate = false
-  return { view: frame(ctx, text), text }
+  return { view: frame(ctx, text), text, rendered }
 }
 
 export function renderBlock(

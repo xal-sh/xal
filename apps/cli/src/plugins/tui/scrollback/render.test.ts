@@ -1,7 +1,9 @@
 import { expect, test } from "bun:test"
+import { createTestRenderer } from "@opentui/core/testing"
 import { displayWidth, terminalGlyph } from "../lib/text"
 import type { BackgroundBlock } from "./blocks"
 import { backgroundResultHeading } from "./render"
+import { Scrollback } from "./scrollback"
 
 const completed: BackgroundBlock = {
   kind: "background",
@@ -37,4 +39,43 @@ test("normal background results keep failures visible and stay on one row", () =
   expect(longId).toEndWith(" · failed")
   expect([heading, narrow, longId].every((value) => displayWidth(value) <= 48)).toBe(true)
   expect(displayWidth(narrow)).toBeLessThanOrEqual(30)
+})
+
+test("assistant markdown commits only its visible columns", async () => {
+  const setup = await createTestRenderer({
+    width: 80,
+    height: 24,
+    footerHeight: 1,
+    screenMode: "split-footer",
+    externalOutputMode: "capture-stdout",
+  })
+
+  try {
+    const scrollback = new Scrollback(
+      setup.renderer,
+      0,
+      () => {},
+      { showOutputs: false, showThinking: false },
+      undefined,
+    )
+    scrollback.appendStream(
+      "text",
+      "```sh\n./benchmark.sh \\\n    --attempts 5 \\\n    --model gpt-5.6-luna \\\n    --job-name xal-gpt-5.6-luna-xhigh-k5\n```",
+    )
+    scrollback.endStream()
+
+    const commits = setup.externalOutput.take()
+    const rows = commits.flatMap((commit) => commit.rows)
+    expect(rows).toEqual([
+      "",
+      "  ./benchmark.sh \\",
+      "      --attempts 5 \\",
+      "      --model gpt-5.6-luna \\",
+      "      --job-name xal-gpt-5.6-luna-xhigh-k5",
+    ])
+    expect(commits.every((commit) => commit.height === 1)).toBe(true)
+    expect(commits.map((commit) => commit.rowColumns)).toEqual(rows.map(displayWidth))
+  } finally {
+    setup.renderer.destroy()
+  }
 })

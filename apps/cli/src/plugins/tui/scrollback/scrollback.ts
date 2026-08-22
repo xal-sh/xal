@@ -1,9 +1,10 @@
 import type { CliRenderer, RGBA, ScrollbackSurface, TextRenderable } from "@opentui/core"
 import { createRedactedStream, redactText, type RedactedStream } from "../../../secrets/redactor"
 import type { TuiPreferences } from "../config"
+import type { RenderedMarkdown } from "../markdown/render"
 import { COLORS, userMessageBackground } from "../theme/colors"
 import { blockVisible, type Block, type HeaderBlock, type StreamBlock, type StreamKind } from "./blocks"
-import { contentWidth, renderBlock, streamContent, streamView } from "./render"
+import { contentWidth, renderBlock, streamContent, streamRowColumns, streamView } from "./render"
 
 const FLUSH_MS = 50
 
@@ -296,13 +297,17 @@ export class Scrollback {
     if (target <= stream.committed) return
     const rows = target - stream.committed
     this.onCommit(rows)
-    stream.surface.commitRows(stream.committed, target)
+    this.commitStreamRows(stream.surface, rendered, stream.committed, target)
     this.committed += rows
     stream.committed = target
   }
 
   private emit(block: Block, previous: Block | undefined): void {
     if (!this.visible(block)) return
+    if (block.kind === "text" || block.kind === "reasoning") {
+      this.emitStream(block)
+      return
+    }
     const surface = this.renderer.createScrollbackSurface()
     try {
       surface.root.add(
@@ -314,6 +319,32 @@ export class Scrollback {
       this.committed += surface.height
     } finally {
       surface.destroy()
+    }
+  }
+
+  private emitStream(block: StreamBlock): void {
+    const surface = this.renderer.createScrollbackSurface()
+    try {
+      const { view, rendered } = streamView(surface.renderContext, block)
+      surface.root.add(view)
+      surface.render()
+      this.onCommit(surface.height)
+      this.commitStreamRows(surface, rendered, 0, surface.height)
+      this.committed += surface.height
+    } finally {
+      surface.destroy()
+    }
+  }
+
+  private commitStreamRows(
+    surface: ScrollbackSurface,
+    rendered: RenderedMarkdown,
+    startRow: number,
+    endRowExclusive: number,
+  ): void {
+    const columns = streamRowColumns(rendered, surface.height)
+    for (let row = startRow; row < endRowExclusive; row += 1) {
+      surface.commitRows(row, row + 1, { rowColumns: columns[row] })
     }
   }
 

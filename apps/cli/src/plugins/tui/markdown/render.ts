@@ -8,6 +8,7 @@ import { highlightCode, type CodeToken, type CodeTokenKind } from "./syntax"
 
 export interface RenderedMarkdown {
   content: StyledText
+  widths: number[]
   rows: number
   stable: number
   flowing: boolean
@@ -53,6 +54,7 @@ export function renderMarkdown(source: string, width: number, muted = false): Re
 
   return {
     content: new StyledText(chunks),
+    widths: lines.map(lineWidth),
     rows: Math.max(1, lines.length),
     stable,
     flowing: blocks[blocks.length - 1]?.kind !== "table",
