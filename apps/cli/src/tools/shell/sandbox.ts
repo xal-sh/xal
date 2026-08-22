@@ -1,5 +1,6 @@
 import { existsSync, realpathSync } from "node:fs"
 import { tmpdir } from "node:os"
+import { asString } from "../../lib/json"
 import type { ProcessSandbox } from "../types"
 
 const available = process.platform === "darwin" && existsSync("/usr/bin/sandbox-exec")
@@ -8,6 +9,17 @@ export type SandboxAccess = ProcessSandbox
 
 export function sandboxAvailable(): boolean {
   return available
+}
+
+export function sandboxAccessOf(args: Record<string, unknown>): SandboxAccess | undefined {
+  if (!sandboxAvailable()) return undefined
+  const access = asString(args.sandbox)
+  if (access === "read" || access === "workspace") return access
+  return undefined
+}
+
+export function sandboxRequested(args: Record<string, unknown>): boolean {
+  return sandboxAccessOf(args) !== undefined
 }
 
 function profilePath(path: string): string {

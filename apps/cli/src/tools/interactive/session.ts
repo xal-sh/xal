@@ -1,10 +1,10 @@
 import { createJobBuffer } from "../../background/buffer"
 import { nativeNormalizeProcessOutput } from "../../native"
 import { createRedactedStream } from "../../secrets/redactor"
-import type { ProcessTermination } from "../bash/process"
-import { spawnPtyCommand } from "../bash/process"
-import { shellEnvironment, shellLaunch } from "../bash/shell"
-import type { SandboxAccess } from "../bash/sandbox"
+import type { ProcessTermination } from "../shell/process"
+import { spawnPtyCommand } from "../shell/process"
+import { shellEnvironment, shellLaunch } from "../shell/shell"
+import type { SandboxAccess } from "../shell/sandbox"
 
 const SESSION_TIMEOUT_MS = 600_000
 const MAX_RAW_CHARS = 256 * 1024
@@ -45,6 +45,7 @@ export function startInteractiveSession(
   const decoder = new TextDecoder()
   const raw = createJobBuffer(0, MAX_RAW_CHARS)
   let normalizedCursor = 0
+  let lastOmitted = 0
   let finished = false
 
   proc.onOutput((chunk) => {
@@ -56,6 +57,7 @@ export function startInteractiveSession(
     finished = true
     const tail = decoder.decode()
     if (tail) raw.append(tail)
+    sessions.delete(id)
     return termination
   })
 
@@ -68,6 +70,11 @@ export function startInteractiveSession(
     write: (text) => proc.write(text),
     resize: (cols, rows) => proc.resize(cols, rows),
     drain: () => {
+      const omitted = raw.omitted()
+      if (omitted !== lastOmitted) {
+        lastOmitted = omitted
+        normalizedCursor = 0
+      }
       const normalized = nativeNormalizeProcessOutput(raw.text())
       const start = Math.min(normalizedCursor, normalized.length)
       normalizedCursor = normalized.length
@@ -81,8 +88,9 @@ export function startInteractiveSession(
   return session
 }
 
-export function interactiveSession(id: number): InteractiveSession | undefined {
-  return sessions.get(id)?.session
+export function interactiveSession(id: number, ownerId: string): InteractiveSession | undefined {
+  const entry = sessions.get(id)
+  return entry?.ownerId === ownerId ? entry.session : undefined
 }
 
 export function dropInteractiveSession(id: number): void {

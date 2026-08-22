@@ -65,13 +65,14 @@ fn push_output(state: &ProcessState, bytes: Vec<u8>) {
     output.chunks.push_back(bytes);
 }
 
-fn read_stream(state: Arc<ProcessState>, mut stream: impl Read) {
+fn read_stream(state: Arc<ProcessState>, mut stream: impl Read, pty: bool) {
     let mut buffer = [0_u8; 8192];
     loop {
         match stream.read(&mut buffer) {
             Ok(0) => break,
             Ok(read) => push_output(&state, buffer[..read].to_vec()),
             Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(error) if pty && pty_read_eof(&error) => break,
             Err(error) => {
                 let mut reader_error = lock(&state.reader_error);
                 if reader_error.is_none() {
@@ -85,6 +86,16 @@ fn read_stream(state: Arc<ProcessState>, mut stream: impl Read) {
         .readers
         .fetch_sub(1, std::sync::atomic::Ordering::Release);
     state.output_changed.notify_all();
+}
+
+#[cfg(target_os = "linux")]
+fn pty_read_eof(error: &std::io::Error) -> bool {
+    error.raw_os_error() == Some(libc::EIO)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn pty_read_eof(_error: &std::io::Error) -> bool {
+    false
 }
 
 #[cfg(unix)]
@@ -270,9 +281,9 @@ fn spawn_pipe_process(request: NativeProcessRequest) -> napi::Result<Arc<Process
         timed_out: AtomicBool::new(false),
     });
     let stdout_state = state.clone();
-    thread::spawn(move || read_stream(stdout_state, stdout));
+    thread::spawn(move || read_stream(stdout_state, stdout, false));
     let stderr_state = state.clone();
-    thread::spawn(move || read_stream(stderr_state, stderr));
+    thread::spawn(move || read_stream(stderr_state, stderr, false));
     let watch_state = state.clone();
     thread::spawn(move || watch_process(watch_state));
     Ok(state)
@@ -317,6 +328,13 @@ fn spawn_pty_process(request: NativeProcessRequest) -> napi::Result<Arc<ProcessS
             format!("failed to clone interactive terminal: {error}"),
         )
     })?;
+    let reader = master;
+    let writer = reader.try_clone().map_err(|error| {
+        Error::new(
+            Status::GenericFailure,
+            format!("failed to clone interactive terminal: {error}"),
+        )
+    })?;
     let mut command = Command::new(executable);
     command
         .args(&request.launch[1..])
@@ -346,13 +364,6 @@ fn spawn_pty_process(request: NativeProcessRequest) -> napi::Result<Arc<ProcessS
         Error::new(Status::GenericFailure, format!("failed to launch: {error}"))
     })?;
     drop(slave);
-    let reader = master;
-    let writer = reader.try_clone().map_err(|error| {
-        Error::new(
-            Status::GenericFailure,
-            format!("failed to clone interactive terminal: {error}"),
-        )
-    })?;
     let state = Arc::new(ProcessState {
         pid: child.id(),
         child: Mutex::new(Some(child)),
@@ -373,7 +384,7 @@ fn spawn_pty_process(request: NativeProcessRequest) -> napi::Result<Arc<ProcessS
         timed_out: AtomicBool::new(false),
     });
     let read_state = state.clone();
-    thread::spawn(move || read_stream(read_state, reader));
+    thread::spawn(move || read_stream(read_state, reader, true));
     let watch_state = state.clone();
     thread::spawn(move || watch_process(watch_state));
     Ok(state)
@@ -569,4 +580,15 @@ pub(super) fn wait_process(state: &ProcessState) -> napi::Result<NativeProcessTe
         ));
     }
     Ok(termination)
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    use super::pty_read_eof;
+
+    #[test]
+    fn maps_linux_pty_eio_to_eof() {
+        let error = std::io::Error::from_raw_os_error(libc::EIO);
+        assert!(pty_read_eof(&error));
+    }
 }

@@ -1,6 +1,7 @@
 export interface JobBuffer {
   append(text: string): void
   text(): string
+  omitted(): number
 }
 
 export function createJobBuffer(headChars: number, tailChars: number): JobBuffer {
@@ -38,6 +39,9 @@ export function createJobBuffer(headChars: number, tailChars: number): JobBuffer
     text() {
       cached ??= omitted > 0 ? `${head}\n... ${omitted} characters omitted ...\n${tail.join("")}` : head + tail.join("")
       return cached
+    },
+    omitted() {
+      return omitted
     },
   }
 }

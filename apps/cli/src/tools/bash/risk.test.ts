@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { homedir } from "node:os"
-import { commandEscapesWorkspace } from "./risk"
+import { commandEscapesWorkspace } from "../shell/risk"
 
 const cwd = "/workspace/project"
 

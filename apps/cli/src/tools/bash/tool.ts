@@ -4,11 +4,11 @@ import { createRedactedStream } from "../../secrets/redactor"
 import { asBoolean, asNumber, asString } from "../../lib/json"
 import type { ProcessExecution, Tool } from "../types"
 import { adoptJob, startJob } from "./jobs"
-import { spawnCommand } from "./process"
+import { spawnCommand } from "../shell/process"
 import { armPromotion } from "./promote"
-import { sandboxAvailable, sandboxProcessEnvironment, type SandboxAccess } from "./sandbox"
-import { executeShellCommand, shellLaunch } from "./shell"
-import { splitCommand } from "./split"
+import { sandboxAccessOf, sandboxAvailable, sandboxProcessEnvironment, sandboxRequested } from "../shell/sandbox"
+import { executeShellCommand, shellLaunch } from "../shell/shell"
+import { splitCommand } from "../shell/split"
 
 const DEFAULT_TIMEOUT_S = 120
 const MAX_TIMEOUT_S = 600
@@ -16,17 +16,6 @@ const MAX_RESULT_BYTES = 20 * 1024
 
 export function commandOf(args: Record<string, unknown>): string {
   return asString(args.command)?.trim() ?? ""
-}
-
-export function sandboxAccessOf(args: Record<string, unknown>): SandboxAccess | undefined {
-  if (!sandboxAvailable()) return undefined
-  const access = asString(args.sandbox)
-  if (access === "read" || access === "workspace") return access
-  return undefined
-}
-
-export function sandboxRequested(args: Record<string, unknown>): boolean {
-  return sandboxAccessOf(args) !== undefined
 }
 
 export function backgroundRequested(args: Record<string, unknown>): boolean {

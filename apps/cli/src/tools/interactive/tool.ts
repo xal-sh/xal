@@ -1,9 +1,8 @@
 import { isAbsolute, resolve } from "node:path"
 import { asNumber, asString } from "../../lib/json"
 import type { Tool } from "../types"
-import { sandboxAccessOf, sandboxRequested } from "../bash/tool"
-import { sandboxAvailable, type SandboxAccess } from "../bash/sandbox"
-import { splitCommand } from "../bash/split"
+import { sandboxAccessOf, sandboxAvailable, sandboxRequested, type SandboxAccess } from "../shell/sandbox"
+import { splitCommand } from "../shell/split"
 import {
   createSessionEmitter,
   disposeInteractiveSessions,
@@ -199,7 +198,7 @@ export const writeStdinTool: Tool = {
   async execute(args, ctx) {
     const id = sessionIdOf(args)
     if (id === undefined) return { output: "(session_id is required)" }
-    const session = interactiveSession(id)
+    const session = interactiveSession(id, ctx.sessionId)
     if (!session) return { output: `(interactive session ${id} is not running)` }
 
     const emitter = createSessionEmitter(ctx.update)
