@@ -91,6 +91,7 @@ describe("native contract parsing", () => {
     const process = parseNativeProcess({
       write() {},
       closeStdin() {},
+      resize() {},
       drain: () => new Uint8Array(),
       outputClosed: () => true,
       wait: async () => ({ status: "signaled", exitCode: 0 }),

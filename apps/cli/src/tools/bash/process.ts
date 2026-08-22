@@ -9,6 +9,7 @@ export interface CommandProcess {
   readonly done: Promise<ProcessTermination>
   onOutput(listener: (chunk: Buffer) => void): void
   write(text: string): void
+  resize(cols: number, rows: number): void
   setTimeout(milliseconds: number): void
   clearTimeout(): void
   timedOut(): boolean
@@ -26,8 +27,22 @@ function terminationOf(termination: NativeProcessTermination): ProcessTerminatio
   return { status: "launch_failed", message: termination.signal }
 }
 
-function nativeCommand(launch: string[], environment: NodeJS.ProcessEnv, cwd: string, stdin: boolean): CommandProcess {
-  const native = createNativeProcess({ launch, cwd, environment: environmentEntries(environment), stdin })
+function nativeCommand(
+  launch: string[],
+  environment: NodeJS.ProcessEnv,
+  cwd: string,
+  stdin: boolean,
+  tty = false,
+  cols = 80,
+  rows = 24,
+): CommandProcess {
+  const native = createNativeProcess({
+    launch,
+    cwd,
+    environment: environmentEntries(environment),
+    stdin,
+    ...(tty ? { tty: true, cols, rows } : {}),
+  })
   const listeners = new Set<(chunk: Buffer) => void>()
   const nativeDone = native.wait()
   let pending = Buffer.alloc(0)
@@ -70,6 +85,9 @@ function nativeCommand(launch: string[], environment: NodeJS.ProcessEnv, cwd: st
     write(text) {
       native.write(Buffer.from(text))
     },
+    resize(cols, rows) {
+      native.resize(cols, rows)
+    },
     setTimeout(milliseconds) {
       native.setTimeout(milliseconds)
     },
@@ -94,4 +112,14 @@ export function spawnCommand(launch: string[], environment: NodeJS.ProcessEnv, c
 
 export function spawnShellProcess(launch: string[], environment: NodeJS.ProcessEnv, cwd: string): CommandProcess {
   return nativeCommand(launch, environment, cwd, true)
+}
+
+export function spawnPtyCommand(
+  launch: string[],
+  environment: NodeJS.ProcessEnv,
+  cwd: string,
+  cols: number,
+  rows: number,
+): CommandProcess {
+  return nativeCommand(launch, environment, cwd, false, true, cols, rows)
 }

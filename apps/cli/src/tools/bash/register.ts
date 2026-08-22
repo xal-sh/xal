@@ -9,7 +9,7 @@ import { disposeShellSession, shellPrompt } from "./shell"
 import { commandSegments } from "./split"
 import { bashTool, commandOf, sandboxRequested } from "./tool"
 
-const RISKY = [
+export const RISKY = [
   "bash(sudo *)",
   "bash(doas *)",
   "bash(dd *)",
@@ -27,7 +27,7 @@ const RISKY = [
   "bash(cargo publish*)",
 ]
 
-function segmentDecision(request: PermissionRequest, segment: string): PolicyDecision | undefined {
+export function segmentDecision(request: PermissionRequest, segment: string): PolicyDecision | undefined {
   const scoped = { ...request, subject: segment }
   if (isDenied(scoped)) return "deny"
   const matched = matchRules(scoped)

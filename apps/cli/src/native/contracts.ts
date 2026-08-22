@@ -208,6 +208,9 @@ export interface NativeProcessRequest {
   cwd: string
   environment: { name: string; value: string }[]
   stdin: boolean
+  tty?: boolean
+  cols?: number
+  rows?: number
 }
 
 export type NativeProcessTermination =
@@ -218,6 +221,7 @@ export type NativeProcessTermination =
 export interface NativeProcess {
   write(bytes: Uint8Array): void
   closeStdin(): void
+  resize(cols: number, rows: number): void
   drain(): Uint8Array
   outputClosed(): boolean
   wait(): Promise<NativeProcessTermination>
@@ -623,7 +627,8 @@ export function parseNativeProcess(value: unknown): NativeProcess {
   if (!isRecord(value)) throw new Error("native process is invalid")
   const write = value.write
   const closeStdin = value.closeStdin
-  if (typeof write !== "function" || typeof closeStdin !== "function") {
+  const resize = value.resize
+  if (typeof write !== "function" || typeof closeStdin !== "function" || typeof resize !== "function") {
     throw new Error("native process is invalid")
   }
   const control = parseProcessControl(value, "native process is invalid")
@@ -633,6 +638,9 @@ export function parseNativeProcess(value: unknown): NativeProcess {
     },
     closeStdin() {
       Reflect.apply(closeStdin, value, [])
+    },
+    resize(cols, rows) {
+      Reflect.apply(resize, value, [cols, rows])
     },
     ...control,
   }
