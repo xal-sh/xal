@@ -7,6 +7,7 @@ import { modelInfo, parseModelIds } from "./wire"
 const BUNDLED_IDS = [
   "grok-4.5",
   "gpt-5.6-luna",
+  "muse-spark-1.2-contributor",
   "glm-5.3",
   "glm-5.2",
   "glm-5.1",

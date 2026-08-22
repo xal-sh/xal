@@ -1,6 +1,6 @@
 import { describe, expect, mock, test } from "bun:test"
-import type { JsonObject } from "../../lib/json"
-import type { StreamRequest } from "../../providers/types"
+import { isJsonObject, type JsonObject } from "../../lib/json"
+import type { StreamRequest, ToolDefinition } from "../../providers/types"
 
 interface CapturedRequest {
   path: string
@@ -9,13 +9,24 @@ interface CapturedRequest {
 }
 
 const requests: CapturedRequest[] = []
+const tool: ToolDefinition = {
+  name: "lookup",
+  description: "Look up a value",
+  parameters: {
+    type: "object",
+    properties: { query: { type: "string" } },
+    required: ["query"],
+  },
+}
 
 mock.module("./api", () => ({
   PROVIDER_ID: "opencode-go",
   PROVIDER_NAME: "OpenCode Go",
   async goFetch(path: string, key: string, init: RequestInit = {}): Promise<Response> {
     requests.push({ path, key, init })
-    return new Response(undefined, { status: 500 })
+    if (path === "/responses") return new Response('data: {"type":"response.completed"}\n\n')
+    if (path === "/messages") return new Response('data: {"type":"message_stop"}\n\n')
+    return new Response("data: [DONE]\n\n")
   },
 }))
 
@@ -42,18 +53,14 @@ function request(overrides: Partial<StreamRequest> = {}): StreamRequest {
 
 async function routeFor(requestOverrides: Partial<StreamRequest>): Promise<string> {
   requests.length = 0
-  try {
-    for await (const _ of streamResponse("profile", request(requestOverrides))) void _
-  } catch {
-    // a stubbed failed response is enough to observe which endpoint was hit
-  }
+  for await (const _ of streamResponse("profile", request(requestOverrides))) void _
   return requests[0]?.path ?? "no request"
 }
 
 function body(): JsonObject {
-  const parsed: unknown = JSON.parse(requests[0]!.init.body as string)
-  expect(typeof parsed).toBe("object")
-  return parsed as JsonObject
+  const parsed: unknown = JSON.parse(String(requests[0]!.init.body))
+  if (!isJsonObject(parsed)) throw new Error("request body was not a JSON object")
+  return parsed
 }
 
 describe("endpoint routing", () => {
@@ -88,6 +95,40 @@ describe("request options", () => {
     await routeFor({ model: "gpt-5.6-luna" })
     expect(body()["reasoning"]).toBeUndefined()
     expect(body()["store"]).toBe(false)
+  })
+
+  test("builds endpoint-specific tool payloads", async () => {
+    await routeFor({ model: "kimi-k3", tools: [tool] })
+    expect(body()).toMatchObject({
+      tools: [
+        {
+          type: "function",
+          function: { name: tool.name, description: tool.description, parameters: tool.parameters },
+        },
+      ],
+      tool_choice: "auto",
+    })
+
+    await routeFor({ model: "gpt-5.6-luna", tools: [tool] })
+    expect(body()).toMatchObject({
+      tools: [
+        {
+          type: "function",
+          name: tool.name,
+          description: tool.description,
+          parameters: tool.parameters,
+          strict: false,
+        },
+      ],
+      tool_choice: "auto",
+      parallel_tool_calls: true,
+    })
+
+    await routeFor({ model: "qwen3.7-max", tools: [tool] })
+    expect(body()).toMatchObject({
+      tools: [{ name: tool.name, description: tool.description, input_schema: tool.parameters }],
+      tool_choice: { type: "auto" },
+    })
   })
 
   test("keeps MiniMax M3 thinking adaptive unless disabled", async () => {
