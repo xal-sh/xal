@@ -14,7 +14,6 @@ on:
       - apps/cli/src/**
       - crates/**
       - scripts/native/**
-      - vendor/rmcp/**
 
 concurrency:
   group: release-checks-${{ github.event.pull_request.number }}

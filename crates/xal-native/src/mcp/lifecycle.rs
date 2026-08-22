@@ -33,7 +33,7 @@ pub(super) async fn connect_entry(
         )
     };
     let result = async {
-        let (service, transport) = connect_service(&config, handler, &cancelled).await?;
+        let (service, transport, stderr) = connect_service(&config, handler, &cancelled).await?;
         let peer = service.peer().clone();
         let discovered = cancellable(
             config.timeout(),
@@ -41,7 +41,8 @@ pub(super) async fn connect_entry(
             &cancelled,
             discover(&peer, &config),
         )
-        .await?;
+        .await
+        .map_err(|error| with_stderr(error, stderr.as_ref()))?;
         Ok::<_, Error>((service, peer, transport, discovered))
     }
     .await;
@@ -71,8 +72,7 @@ pub(super) async fn connect_entry(
                     entry.resources = discovered.1;
                     entry.templates = discovered.2;
                     entry.prompts = discovered.3;
-                    entry.skipped_task_tools = discovered.4;
-                    entry.skipped_output_tools = discovered.5;
+                    entry.skipped_output_tools = discovered.4;
                     entry.instructions =
                         peer.peer_info().and_then(|info| info.instructions.clone());
                     entry.seen_tool_revision = entry.handler.tool_revision.load(Ordering::Relaxed);
@@ -158,9 +158,8 @@ pub(super) async fn refresh_entry(state: Arc<Mutex<ManagerState>>, id: String) -
         return Ok(());
     }
     let tools_changed = tools.is_some();
-    if let Some((tools, skipped_tasks, skipped_output)) = tools {
+    if let Some((tools, skipped_output)) = tools {
         entry.tools = tools;
-        entry.skipped_task_tools = skipped_tasks;
         entry.skipped_output_tools = skipped_output;
         entry.seen_tool_revision = entry.handler.tool_revision.load(Ordering::Relaxed);
     }

@@ -109,13 +109,15 @@ struct LegacySseTransport {
     headers: reqwest13::header::HeaderMap,
     receiver: tokio::sync::mpsc::Receiver<RxJsonRpcMessage<RoleClient>>,
     reader: tokio::task::JoinHandle<()>,
+    reader_error: Arc<Mutex<Option<String>>>,
 }
 
 impl LegacySseTransport {
-    async fn connect(url: &str, headers: reqwest13::header::HeaderMap) -> napi::Result<Self> {
-        let client = reqwest13::Client::builder()
-            .build()
-            .map_err(|error| failed(error.to_string()))?;
+    async fn connect(
+        client: reqwest13::Client,
+        url: &str,
+        headers: reqwest13::header::HeaderMap,
+    ) -> napi::Result<Self> {
         let response = client
             .get(url)
             .headers(headers.clone())
@@ -149,19 +151,22 @@ impl LegacySseTransport {
             }
         };
         let (sender, receiver) = tokio::sync::mpsc::channel(64);
+        let reader_error = Arc::new(Mutex::new(None));
+        let task_error = reader_error.clone();
         let reader = tokio::spawn(async move {
-            if process_sse_buffer(&mut buffer, &sender).await.is_err() {
-                return;
-            }
-            while let Some(chunk) = stream.next().await {
-                let Ok(chunk) = chunk else {
-                    return;
-                };
-                if extend_sse_buffer(&mut buffer, &chunk).is_err()
-                    || process_sse_buffer(&mut buffer, &sender).await.is_err()
-                {
-                    return;
+            let result = async {
+                process_sse_buffer(&mut buffer, &sender).await?;
+                while let Some(chunk) = stream.next().await {
+                    let chunk =
+                        chunk.map_err(|error| failed(format!("legacy MCP SSE failed: {error}")))?;
+                    extend_sse_buffer(&mut buffer, &chunk)?;
+                    process_sse_buffer(&mut buffer, &sender).await?;
                 }
+                Err::<(), _>(failed("legacy MCP SSE connection closed"))
+            }
+            .await;
+            if let Err(error) = result {
+                *lock(&task_error) = Some(error.to_string());
             }
         });
         Ok(Self {
@@ -170,6 +175,7 @@ impl LegacySseTransport {
             headers,
             receiver,
             reader,
+            reader_error,
         })
     }
 }
@@ -205,15 +211,29 @@ impl Transport<RoleClient> for LegacySseTransport {
 
     fn close(&mut self) -> impl Future<Output = Result<(), Self::Error>> + Send {
         self.reader.abort();
-        std::future::ready(Ok(()))
+        std::future::ready(match lock(&self.reader_error).take() {
+            Some(error) => Err(std::io::Error::other(error)),
+            None => Ok(()),
+        })
     }
+}
+
+pub(super) fn with_stderr(error: Error, stderr: Option<&StderrTail>) -> Error {
+    let Some(stderr) = stderr.and_then(stderr_text) else {
+        return error;
+    };
+    failed(format!("{error}; MCP server stderr: {stderr}"))
 }
 
 pub(super) async fn connect_service(
     config: &ServerConfig,
     handler: Handler,
     cancelled: &AtomicBool,
-) -> napi::Result<(RunningService<RoleClient, Handler>, String)> {
+) -> napi::Result<(
+    RunningService<RoleClient, Handler>,
+    String,
+    Option<StderrTail>,
+)> {
     match config {
         ServerConfig::Stdio {
             command,
@@ -223,16 +243,11 @@ pub(super) async fn connect_service(
             ..
         } => {
             let mut process = tokio::process::Command::new(command);
-            process
-                .args(args)
-                .envs(env)
-                .stdin(Stdio::piped())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::null());
+            process.args(args).envs(env);
             if let Some(cwd) = cwd {
                 process.current_dir(cwd);
             }
-            let transport = TokioChildProcess::new(process)
+            let (transport, stderr) = StdioTransport::spawn(process)
                 .map_err(|error| failed(format!("failed to launch MCP server: {error}")))?;
             let service = cancellable(
                 config.timeout(),
@@ -240,8 +255,9 @@ pub(super) async fn connect_service(
                 cancelled,
                 handler.serve(transport),
             )
-            .await?;
-            Ok((service, "stdio".to_owned()))
+            .await
+            .map_err(|error| with_stderr(error, Some(&stderr)))?;
+            Ok((service, "stdio".to_owned(), Some(stderr)))
         }
         ServerConfig::Http { url, headers, .. } => {
             let mut parsed_headers = reqwest13::header::HeaderMap::new();
@@ -253,17 +269,23 @@ pub(super) async fn connect_service(
                 parsed_headers.insert(name, value);
             }
             let client = reqwest13::Client::builder()
+                .redirect(reqwest13::redirect::Policy::none())
+                .connect_timeout(config.timeout().min(Duration::from_secs(10)))
                 .build()
                 .map_err(|error| failed(error.to_string()))?;
-            let transport = StreamableHttpClientTransport::with_client(
-                client,
-                StreamableHttpClientTransportConfig::with_uri(url.clone()).custom_headers(
+            let mut retry = rmcp::transport::common::client_side_sse::FixedInterval::default();
+            retry.max_times = Some(5);
+            let mut transport_config = StreamableHttpClientTransportConfig::with_uri(url.clone())
+                .custom_headers(
                     parsed_headers
                         .iter()
                         .map(|(name, value)| (name.clone(), value.clone()))
                         .collect(),
-                ),
-            );
+                );
+            transport_config.retry_config = Arc::new(retry);
+            let http_client = HttpClient::new(client.clone(), config.timeout());
+            let transport =
+                StreamableHttpClientTransport::with_client(http_client.clone(), transport_config);
             let http = cancellable(
                 config.timeout(),
                 "MCP connection",
@@ -272,17 +294,17 @@ pub(super) async fn connect_service(
             )
             .await;
             match http {
-                Ok(service) => Ok((service, "http".to_owned())),
+                Ok(service) => Ok((service, "http".to_owned(), None)),
                 Err(http_error) => {
                     let http_reason = http_error.to_string();
-                    if !http_reason.contains("HTTP 4") || !http_reason.contains("initialize") {
+                    if !http_client.allows_legacy_fallback() {
                         return Err(failed(format!("streamable HTTP failed: {http_reason}")));
                     }
                     let transport = cancellable(
                         config.timeout(),
                         "legacy MCP connection",
                         cancelled,
-                        LegacySseTransport::connect(url, parsed_headers),
+                        LegacySseTransport::connect(client, url, parsed_headers),
                     )
                     .await
                     .map_err(|sse_error| {
@@ -302,7 +324,7 @@ pub(super) async fn connect_service(
                             "streamable HTTP failed: {http_error}; SSE fallback failed: {sse_error}"
                         ))
                     })?;
-                    Ok((service, "sse".to_owned()))
+                    Ok((service, "sse".to_owned(), None))
                 }
             }
         }

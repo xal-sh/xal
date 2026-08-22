@@ -15,6 +15,38 @@ pub(super) fn has_capability(peer: &Peer<RoleClient>, capability: &str) -> bool 
     capabilities(peer).get(capability).is_some()
 }
 
+fn next_cursor(
+    catalog: &str,
+    item_count: usize,
+    page_count: &mut usize,
+    seen: &mut HashSet<String>,
+    cursor: Option<String>,
+) -> napi::Result<Option<String>> {
+    *page_count += 1;
+    if item_count > MAX_ITEMS_PER_CATALOG {
+        return Err(failed(format!(
+            "MCP {catalog} catalog exceeds {MAX_ITEMS_PER_CATALOG} entries"
+        )));
+    }
+    let Some(cursor) = cursor else {
+        return Ok(None);
+    };
+    if *page_count >= MAX_PAGES_PER_CATALOG {
+        return Err(failed(format!(
+            "MCP {catalog} catalog exceeds {MAX_PAGES_PER_CATALOG} pages"
+        )));
+    }
+    if cursor.len() > MAX_CURSOR_BYTES {
+        return Err(failed(format!(
+            "MCP {catalog} cursor exceeds {MAX_CURSOR_BYTES} bytes"
+        )));
+    }
+    if !seen.insert(cursor.clone()) {
+        return Err(failed(format!("MCP {catalog} listing repeated a cursor")));
+    }
+    Ok(Some(cursor))
+}
+
 pub(super) async fn list_tools(
     peer: &Peer<RoleClient>,
     duration: Duration,
@@ -22,6 +54,7 @@ pub(super) async fn list_tools(
     let run = async {
         let mut items = Vec::new();
         let mut seen = HashSet::new();
+        let mut pages = 0;
         let mut cursor = None;
         loop {
             let result = peer
@@ -31,15 +64,16 @@ pub(super) async fn list_tools(
                 .await
                 .map_err(|error| failed(error.to_string()))?;
             items.extend(result.tools);
-            if items.len() > MAX_ITEMS_PER_CATALOG {
-                return Err(failed("MCP tools catalog exceeds 100000 entries"));
-            }
-            let Some(next) = result.next_cursor else {
-                return Ok(items);
+            let Some(next) = next_cursor(
+                "tools",
+                items.len(),
+                &mut pages,
+                &mut seen,
+                result.next_cursor,
+            )?
+            else {
+                return Ok::<_, Error>(items);
             };
-            if !seen.insert(next.clone()) {
-                return Err(failed("MCP tools listing repeated a cursor"));
-            }
             cursor = Some(next);
         }
     };
@@ -53,6 +87,7 @@ pub(super) async fn list_resources(
     let run = async {
         let mut items = Vec::new();
         let mut seen = HashSet::new();
+        let mut pages = 0;
         let mut cursor = None;
         loop {
             let result = peer
@@ -62,15 +97,16 @@ pub(super) async fn list_resources(
                 .await
                 .map_err(|error| failed(error.to_string()))?;
             items.extend(result.resources);
-            if items.len() > MAX_ITEMS_PER_CATALOG {
-                return Err(failed("MCP resources catalog exceeds 100000 entries"));
-            }
-            let Some(next) = result.next_cursor else {
-                return Ok(items);
+            let Some(next) = next_cursor(
+                "resources",
+                items.len(),
+                &mut pages,
+                &mut seen,
+                result.next_cursor,
+            )?
+            else {
+                return Ok::<_, Error>(items);
             };
-            if !seen.insert(next.clone()) {
-                return Err(failed("MCP resources listing repeated a cursor"));
-            }
             cursor = Some(next);
         }
     };
@@ -84,6 +120,7 @@ pub(super) async fn list_templates(
     let run = async {
         let mut items = Vec::new();
         let mut seen = HashSet::new();
+        let mut pages = 0;
         let mut cursor = None;
         loop {
             let result = peer
@@ -93,17 +130,16 @@ pub(super) async fn list_templates(
                 .await
                 .map_err(|error| failed(error.to_string()))?;
             items.extend(result.resource_templates);
-            if items.len() > MAX_ITEMS_PER_CATALOG {
-                return Err(failed(
-                    "MCP resource templates catalog exceeds 100000 entries",
-                ));
-            }
-            let Some(next) = result.next_cursor else {
-                return Ok(items);
+            let Some(next) = next_cursor(
+                "resource templates",
+                items.len(),
+                &mut pages,
+                &mut seen,
+                result.next_cursor,
+            )?
+            else {
+                return Ok::<_, Error>(items);
             };
-            if !seen.insert(next.clone()) {
-                return Err(failed("MCP resource templates listing repeated a cursor"));
-            }
             cursor = Some(next);
         }
     };
@@ -117,6 +153,7 @@ pub(super) async fn list_prompts(
     let run = async {
         let mut items = Vec::new();
         let mut seen = HashSet::new();
+        let mut pages = 0;
         let mut cursor = None;
         loop {
             let result = peer
@@ -126,15 +163,16 @@ pub(super) async fn list_prompts(
                 .await
                 .map_err(|error| failed(error.to_string()))?;
             items.extend(result.prompts);
-            if items.len() > MAX_ITEMS_PER_CATALOG {
-                return Err(failed("MCP prompts catalog exceeds 100000 entries"));
-            }
-            let Some(next) = result.next_cursor else {
-                return Ok(items);
+            let Some(next) = next_cursor(
+                "prompts",
+                items.len(),
+                &mut pages,
+                &mut seen,
+                result.next_cursor,
+            )?
+            else {
+                return Ok::<_, Error>(items);
             };
-            if !seen.insert(next.clone()) {
-                return Err(failed("MCP prompts listing repeated a cursor"));
-            }
             cursor = Some(next);
         }
     };
@@ -237,11 +275,10 @@ pub(super) fn validate_output_schema(
 pub(super) fn tool_records(
     server: &str,
     tools: Vec<Tool>,
-) -> napi::Result<(Vec<ToolRecord>, Vec<String>, Vec<String>)> {
+) -> napi::Result<(Vec<ToolRecord>, Vec<String>)> {
     let mut remote_names = HashSet::new();
     let mut native_names = HashSet::new();
     let mut records = Vec::new();
-    let mut skipped_tasks = Vec::new();
     let mut skipped_output = Vec::new();
     for tool in tools {
         if !remote_names.insert(tool.name.to_string()) {
@@ -255,16 +292,6 @@ pub(super) fn tool_records(
             return Err(failed(format!(
                 "MCP tool names collide after normalization: {native_name}"
             )));
-        }
-        if tool
-            .execution
-            .as_ref()
-            .and_then(|value| value.get("taskSupport"))
-            .and_then(Value::as_str)
-            == Some("required")
-        {
-            skipped_tasks.push(tool.name.to_string());
-            continue;
         }
         let output_schema = match &tool.output_schema {
             Some(schema) => match validate_output_schema(&tool.name, schema) {
@@ -282,7 +309,7 @@ pub(super) fn tool_records(
             output_schema,
         });
     }
-    Ok((records, skipped_tasks, skipped_output))
+    Ok((records, skipped_output))
 }
 
 pub(super) async fn discover(
@@ -293,7 +320,6 @@ pub(super) async fn discover(
     Vec<Value>,
     Vec<Value>,
     Vec<Value>,
-    Vec<String>,
     Vec<String>,
 )> {
     let duration = config.timeout();
@@ -328,20 +354,24 @@ pub(super) async fn discover(
             }
         }
     );
-    let (tools, skipped_tasks, skipped_output) = tool_records(server, tools?)?;
+    let (tools, skipped_output) = tool_records(server, tools?)?;
     Ok((
         tools,
         json_values(&resources?)?,
         json_values(&templates?)?,
         json_values(&prompts?)?,
-        skipped_tasks,
         skipped_output,
     ))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::native_tool_name;
+    use std::collections::HashSet;
+
+    use super::{
+        MAX_CURSOR_BYTES, MAX_ITEMS_PER_CATALOG, MAX_PAGES_PER_CATALOG, native_tool_name,
+        next_cursor,
+    };
 
     #[test]
     fn normalizes_tool_names_stably() {
@@ -352,6 +382,39 @@ mod tests {
                 .encode_utf16()
                 .count()
                 <= 64
+        );
+    }
+
+    #[test]
+    fn bounds_catalog_pagination() {
+        let mut seen = HashSet::new();
+        let mut pages = 0;
+        assert!(
+            next_cursor(
+                "tools",
+                MAX_ITEMS_PER_CATALOG + 1,
+                &mut pages,
+                &mut seen,
+                None,
+            )
+            .is_err()
+        );
+
+        let mut seen = HashSet::new();
+        let mut pages = MAX_PAGES_PER_CATALOG - 1;
+        assert!(next_cursor("tools", 0, &mut pages, &mut seen, Some("next".to_owned()),).is_err());
+
+        let mut seen = HashSet::new();
+        let mut pages = 0;
+        assert!(
+            next_cursor(
+                "tools",
+                0,
+                &mut pages,
+                &mut seen,
+                Some("x".repeat(MAX_CURSOR_BYTES + 1)),
+            )
+            .is_err()
         );
     }
 }

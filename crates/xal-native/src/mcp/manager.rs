@@ -38,7 +38,6 @@ impl NativeMcpManager {
                     prompts: Vec::new(),
                     instructions: None,
                     error: None,
-                    skipped_task_tools: Vec::new(),
                     skipped_output_tools: Vec::new(),
                     seen_tool_revision: 0,
                     seen_resource_revision: 0,

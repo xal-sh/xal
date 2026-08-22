@@ -198,6 +198,48 @@ describe("native MCP manager", () => {
     }
   })
 
+  test("does not follow HTTP redirects with configured headers", async () => {
+    let redirectedAuthorization: string | null | undefined
+    const destination = Bun.serve({
+      port: 0,
+      fetch(request) {
+        redirectedAuthorization = request.headers.get("authorization")
+        return new Response("unexpected", { status: 500 })
+      },
+    })
+    const source = Bun.serve({
+      port: 0,
+      fetch() {
+        return new Response(null, {
+          status: 307,
+          headers: { location: destination.url.href },
+        })
+      },
+    })
+    const manager = new McpManager(
+      [
+        {
+          id: "redirect",
+          enabled: true,
+          timeoutMs: 5_000,
+          transport: "http",
+          url: source.url.href,
+          headers: { authorization: "Bearer fixture" },
+        },
+      ],
+      new Registry(),
+    )
+    try {
+      await manager.connectAll()
+      expect(manager.statusLines()[0]).toContain("redirect · failed")
+      expect(redirectedAuthorization).toBeUndefined()
+    } finally {
+      await manager.close()
+      source.stop(true)
+      destination.stop(true)
+    }
+  })
+
   test("falls back to legacy SSE when streamable HTTP is unavailable", async () => {
     let stream: ReadableStreamDefaultController<Uint8Array> | undefined
     const encoder = new TextEncoder()
@@ -288,8 +330,9 @@ describe("native MCP manager", () => {
 
     try {
       await manager.connectAll()
-      const [previousName, tool] = registry.tools.entries().next().value ?? []
-      if (!previousName || !tool) throw new Error("MCP tool was not registered")
+      const previousNames = [...registry.tools.keys()]
+      const tool = [...registry.tools.values()].find((candidate) => candidate.name.includes("echo_tool"))
+      if (!tool) throw new Error("MCP tool was not registered")
       registry.rejectName = "mcp__rollback__added"
       await tool.execute(
         { value: "native" },
@@ -304,7 +347,7 @@ describe("native MCP manager", () => {
       )
 
       await waitFor(() => manager.statusLines()[0]?.includes("rejected mcp__rollback__added") ?? false)
-      expect([...registry.tools.keys()]).toEqual([previousName])
+      expect([...registry.tools.keys()]).toEqual(previousNames)
     } finally {
       await manager.close()
     }
@@ -330,10 +373,9 @@ describe("native MCP manager", () => {
 
     await manager.connectAll()
     expect(manager.statusLines()[0]).toContain(
-      "fixture · connected (stdio) · 1 tools · 2 resources · 1 templates · 1 prompts",
+      "fixture · connected (stdio) · 2 tools · 2 resources · 1 templates · 1 prompts",
     )
-    expect(manager.statusLines()[0]).toContain("warning: 1 task-based tools skipped")
-    expect([...registry.tools.keys()]).not.toContain("mcp__fixture__task_only")
+    expect([...registry.tools.keys()].some((name) => name.includes("task_only"))).toBe(true)
     const echoTool = [...registry.tools.values()].find((tool) => tool.name.includes("echo_tool"))
     if (!echoTool) throw new Error("echo MCP tool was not registered")
     expect(echoTool.available?.({ sessionId: "session", interactive: false, kind: "primary", mode: "normal" })).toBe(
@@ -377,7 +419,7 @@ describe("native MCP manager", () => {
     expect(progress).toHaveLength(40)
     expect(progress).toEqual(Array.from({ length: 40 }, (_, index) => `MCP progress ${index + 1}/40`))
 
-    await waitFor(() => registry.tools.size === 2)
+    await waitFor(() => registry.tools.size === 3)
     expect([...registry.tools.keys()]).toContain("mcp__fixture__added")
 
     await manager.close()

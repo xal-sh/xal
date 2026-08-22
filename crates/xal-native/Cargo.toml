@@ -9,6 +9,7 @@ rust-version = "1.92"
 crate-type = ["cdylib"]
 
 [dependencies]
+bytes = "=1.12.1"
 futures-util = "=0.3.34"
 globset = "=0.4.20"
 grep-matcher = "=0.1.8"
@@ -20,11 +21,12 @@ napi-derive = "=3.6.3"
 encoding_rs = "=0.8.35"
 html2md = "=0.2.15"
 jsonschema = { version = "=0.37.4", default-features = false }
-reqwest13 = { package = "reqwest", version = "=0.13.2", default-features = false, features = ["rustls", "stream"] }
-rmcp = { version = "=3.1.4", default-features = false, features = ["client", "transport-child-process", "transport-streamable-http-client-reqwest"] }
+reqwest13 = { package = "reqwest", version = "=0.13.2", default-features = false, features = ["json", "rustls", "stream"] }
+rmcp = { version = "=3.1.4", default-features = false, features = ["client", "transport-async-rw", "transport-streamable-http-client"] }
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.145"
 sha2 = "=0.10.9"
+sse-stream = "=0.2.5"
 tokio = { version = "=1.50.0", features = ["rt-multi-thread", "process", "time", "sync", "macros", "io-util"] }
 which = "=8.0.5"
 

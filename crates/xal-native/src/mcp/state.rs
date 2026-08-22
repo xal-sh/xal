@@ -13,7 +13,6 @@ pub(super) struct Entry {
     pub(super) prompts: Vec<Value>,
     pub(super) instructions: Option<String>,
     pub(super) error: Option<String>,
-    pub(super) skipped_task_tools: Vec<String>,
     pub(super) skipped_output_tools: Vec<String>,
     pub(super) seen_tool_revision: u64,
     pub(super) seen_resource_revision: u64,
@@ -69,12 +68,6 @@ pub(super) fn tool_descriptors(manager: &ManagerState) -> Value {
 
 pub(super) fn server_status(entry: &Entry) -> Value {
     let mut warnings = Vec::new();
-    if !entry.skipped_task_tools.is_empty() {
-        warnings.push(format!(
-            "{} task-based tools skipped",
-            entry.skipped_task_tools.len()
-        ));
-    }
     if !entry.skipped_output_tools.is_empty() {
         warnings.push(format!(
             "output schemas skipped: {}",

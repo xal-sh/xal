@@ -3,7 +3,6 @@
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
-use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, mpsc};
 use std::time::Duration;
@@ -24,7 +23,7 @@ use rmcp::service::{
     TxJsonRpcMessage,
 };
 use rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig;
-use rmcp::transport::{StreamableHttpClientTransport, TokioChildProcess, Transport};
+use rmcp::transport::{StreamableHttpClientTransport, Transport};
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 use tokio::runtime::Runtime;
@@ -32,7 +31,9 @@ use tokio::runtime::Runtime;
 use crate::tool_contracts::cancellation_flag;
 
 const PROGRESS_CAPACITY: usize = 32;
-const MAX_ITEMS_PER_CATALOG: usize = 100_000;
+const MAX_ITEMS_PER_CATALOG: usize = 2_048;
+const MAX_PAGES_PER_CATALOG: usize = 100;
+const MAX_CURSOR_BYTES: usize = 64 * 1024;
 const MAX_LEGACY_SSE_BUFFER_BYTES: usize = 16 * 1024 * 1024;
 
 fn lock<'a, T>(mutex: &'a Mutex<T>) -> MutexGuard<'a, T> {
@@ -54,9 +55,11 @@ mod config;
 mod content;
 mod discovery;
 mod handler;
+mod http;
 mod lifecycle;
 mod manager;
 mod state;
+mod stdio;
 mod task;
 mod transport;
 
@@ -71,10 +74,12 @@ use discovery::{
     list_templates, list_tools, tool_records,
 };
 use handler::{Handler, HandlerState, ProgressEvent};
+use http::HttpClient;
 use lifecycle::{close_all, connect_entry, connected_peer, refresh_entry, remove_entry};
 use state::{Entry, ManagerState, connected_entries, server_status, tool_descriptors};
+use stdio::{StderrTail, StdioTransport, stderr_text};
 use task::{ManagerOperation, ManagerTask};
-use transport::{cancellable, close_service, connect_service, timeout};
+use transport::{cancellable, close_service, connect_service, timeout, with_stderr};
 
 fn client_info(name: String, version: String) -> ClientInfo {
     ClientInfo::new(
