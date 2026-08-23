@@ -1,4 +1,10 @@
-import type { AgentEvent, BackgroundResult, DenialCause, DirectShellResult } from "../agent/events"
+import type {
+  AgentEvent,
+  AgentQuestionEventItem,
+  BackgroundResult,
+  DenialCause,
+  DirectShellResult,
+} from "../agent/events"
 import type { CompactionItem, HistoryItem } from "../agent/history"
 import { isMessageId } from "../agent/message-id"
 import { parseGoalSnapshot } from "../goals/types"
@@ -177,6 +183,15 @@ function parseBackgroundResult(value: unknown): BackgroundResult | undefined {
   return undefined
 }
 
+function parseAgentQuestion(value: unknown): AgentQuestionEventItem | undefined {
+  if (!isRecord(value)) return undefined
+  const requestId = asString(value.requestId)
+  const jobId = asString(value.jobId)
+  const question = asString(value.question)
+  if (!requestId || !jobId || !question) return undefined
+  return { requestId, jobId, question }
+}
+
 function parseEvent(raw: unknown): AgentEvent | undefined {
   if (!isRecord(raw)) return undefined
 
@@ -225,6 +240,14 @@ function parseEvent(raw: unknown): AgentEvent | undefined {
         return result ? [result] : []
       })
       return results.length === raw.results.length ? { type: "background_results", results } : undefined
+    }
+    case "agent_questions": {
+      if (!Array.isArray(raw.questions) || raw.questions.length === 0) return undefined
+      const questions = raw.questions.flatMap((value) => {
+        const question = parseAgentQuestion(value)
+        return question ? [question] : []
+      })
+      return questions.length === raw.questions.length ? { type: "agent_questions", questions } : undefined
     }
     case "conversation_rewound": {
       const movement = parseConversationMove(raw)

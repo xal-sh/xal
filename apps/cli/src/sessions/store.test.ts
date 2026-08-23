@@ -76,6 +76,39 @@ test("reconstructs history and checkpoints from paired user event and item recor
   })
 })
 
+test("reloads historical task-agent questions without adding provider history", async () => {
+  await withSessionFile(async (path) => {
+    const question: AgentEvent = {
+      type: "agent_questions",
+      questions: [
+        {
+          requestId: "question-1",
+          jobId: "child-1",
+          question: "Which release target should I use?",
+        },
+      ],
+    }
+    await writeFile(path, record({ type: "meta", meta }) + record({ type: "event", event: question }))
+
+    const loaded = await loadSession(path)
+
+    expect(loaded?.events).toEqual([question])
+    expect(loaded?.items).toEqual([])
+  })
+})
+
+test("rejects malformed task-agent question events", async () => {
+  await withSessionFile(async (path) => {
+    await writeFile(
+      path,
+      record({ type: "meta", meta }) +
+        record({ type: "event", event: { type: "agent_questions", questions: [{ jobId: "child-1" }] } }),
+    )
+
+    expect(await loadSession(path)).toBeUndefined()
+  })
+})
+
 test("replays records written through the serialized recorder queue", async () => {
   await withSessionFile(async (path) => {
     const messageId = "33333333-3333-4333-8333-333333333333"

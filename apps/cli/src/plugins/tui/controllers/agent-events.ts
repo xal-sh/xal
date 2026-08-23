@@ -1,11 +1,12 @@
+import type { AgentQuestionEventItem, AgentEvent } from "../../../agent/events"
 import type { AgentSession } from "../../../agent/session/session"
-import type { AgentEvent } from "../../../agent/events"
 import { historyMoveNotice } from "../../../agent/history"
 import type { GoalSnapshot, GoalSuspensionCause } from "../../../goals/types"
 import { describeError } from "../../../lib/error"
 import { compactPath } from "../../../lib/path"
 import { contextWindow } from "../../../providers/catalog"
 import type { Screen } from "../screen"
+import type { NoticeBlock } from "../scrollback/blocks"
 
 function suspensionLabel(cause: GoalSuspensionCause): string {
   switch (cause) {
@@ -42,6 +43,21 @@ function goalTranscript(goal: GoalSnapshot, previousEvaluatedTurns: number): str
   }
   const exhaustive: never = goal
   return exhaustive
+}
+
+export function agentQuestionNotice(question: AgentQuestionEventItem, replaying: boolean): NoticeBlock {
+  if (replaying) {
+    return {
+      kind: "notice",
+      summary: `historical task-agent question from ${question.jobId}`,
+      details: [question.question, "This historical question is no longer actionable."],
+    }
+  }
+  return {
+    kind: "notice",
+    summary: `task agent ${question.jobId} is waiting for an answer`,
+    details: [question.question, `Reply with job_send to ${question.jobId}.`],
+  }
 }
 
 export class AgentEventController {
@@ -183,6 +199,9 @@ export class AgentEventController {
               : {}),
           })
         }
+        break
+      case "agent_questions":
+        for (const question of event.questions) scrollback.append(agentQuestionNotice(question, this.replaying))
         break
       case "text_delta":
         this.assistantStreamed = true

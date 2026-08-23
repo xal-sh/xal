@@ -30,5 +30,8 @@ export function registerJobTools(): void {
   registerToolRenderer({ tool: jobKillTool.name, summarize: summarizeKill })
   registerToolRenderer({ tool: jobStatusTool.name, summarize: summarizeStatus })
   registerToolRenderer({ tool: jobExtendTool.name, summarize: () => "extended" })
-  registerToolRenderer({ tool: jobSendTool.name, summarize: () => "queued" })
+  registerToolRenderer({
+    tool: jobSendTool.name,
+    summarize: (output) => (output.startsWith("Answered ") ? "answered" : "queued"),
+  })
 }

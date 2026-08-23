@@ -8,6 +8,7 @@ import { registerToolRenderer } from "../../ui/extension"
 import { registerPrompt } from "../prompt/registry"
 import { settings } from "../../config/settings"
 import { MAX_BATCH_TASKS, MAX_CONTEXT_LENGTH, MAX_TASK_LENGTH, prepareTaskBatch } from "./parse"
+import { MAX_AGENT_MESSAGE_LENGTH } from "./questions"
 import { spawnTask } from "./spawn"
 
 export function compactTaskToolTitle(title: string): string {
@@ -26,6 +27,49 @@ function taskToolTitle(args: Record<string, unknown>): string {
   const preview = assignments.slice(0, 2).join("; ")
   const remaining = assignments.length > 2 ? `; +${assignments.length - 2} more` : ""
   return `Dispatch ${args.tasks.length} ${args.tasks.length === 1 ? "task" : "tasks"}${preview ? ` · ${preview}${remaining}` : ""}`
+}
+
+export const askParentTool: SessionTool = {
+  name: "ask_parent",
+  description:
+    "Ask the owning parent agent a blocking question when a parent-only decision or missing context prevents useful progress. The current tool call waits for the answer. Do not use this for status updates or questions you can resolve independently.",
+  parameters: {
+    type: "object",
+    properties: {
+      question: {
+        type: "string",
+        minLength: 1,
+        maxLength: MAX_AGENT_MESSAGE_LENGTH,
+        description: "The specific decision or missing context required from the parent",
+      },
+    },
+    required: ["question"],
+    additionalProperties: false,
+  },
+  sessionAware: true,
+  available(ctx) {
+    return ctx.kind === "subagent"
+  },
+  title() {
+    return "Ask parent"
+  },
+  readOnly() {
+    return true
+  },
+  async execute(args, ctx) {
+    if (ctx.session.kind !== "subagent") throw new Error("ask_parent is available only to task agents")
+    const question = asString(args.question)?.trim()
+    if (!question) throw new Error("question must be a non-empty string")
+    if (question.length > MAX_AGENT_MESSAGE_LENGTH) {
+      throw new Error(`question must be at most ${MAX_AGENT_MESSAGE_LENGTH} characters`)
+    }
+    ctx.update(`${question}\n`)
+    const result = await ctx.session.askParent(question, ctx.signal)
+    if (result.status === "answered") return { output: `Parent answered:\n${result.answer}` }
+    return {
+      output: `Parent unavailable: ${result.reason}. Continue independently where possible or report the blocker clearly.`,
+    }
+  },
 }
 
 export const taskTool: SessionTool = {
@@ -139,14 +183,19 @@ export function registerTaskAgents(): void {
       if (prompt.kind !== "subagent") return ""
       return [
         "You are a one-shot task agent working for a primary coding agent. Your first user message contains all shared context and your complete assignment.",
-        "Complete only that assignment, work independently with the available tools, and do not ask the user or attempt further delegation.",
+        "Complete only that assignment, work independently with the available tools, never ask the user, and do not attempt further delegation. Call ask_parent only when a parent-only decision or missing context truly blocks useful progress.",
         "You may be one of several agents running concurrently; other agents may be editing other files, so stay within your assignment's scope.",
         "Managed background Bash (background:true) is available for long commands; keep working while they run, and their results are delivered back into this conversation automatically. Your task cannot finish while a managed job is running, so stop every long-lived server or watcher with job_kill before your final report. Never detach processes with nohup, setsid, or a trailing &.",
         "Return a concise, self-contained final report with the result and changed files relevant to the assignment. A report produced before a background result arrives is discarded, so account for every delivered result. Report failures clearly.",
       ].join("\n")
     },
   })
+  registerTool(askParentTool)
   registerTool(taskTool)
+  registerToolRenderer({
+    tool: askParentTool.name,
+    summarize: (output) => (output.startsWith("Parent answered:") ? "answered" : "unavailable"),
+  })
   registerToolRenderer({
     tool: taskTool.name,
     compactTitle: compactTaskToolTitle,

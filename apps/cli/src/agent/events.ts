@@ -57,6 +57,12 @@ export interface SessionStartedEvent {
   mode: PermissionMode
 }
 
+export interface AgentQuestionEventItem {
+  requestId: string
+  jobId: string
+  question: string
+}
+
 export interface DirectShellResult {
   messageId: string
   callId: string
@@ -99,6 +105,7 @@ export type AgentEvent =
   | { type: "queue_changed"; entries: QueuedEntry[] }
   | { type: "queue_flushed"; inputs: UserInput[] }
   | { type: "background_results"; results: BackgroundResult[] }
+  | { type: "agent_questions"; questions: AgentQuestionEventItem[] }
   | { type: "text_delta"; text: string }
   | { type: "reasoning_summary_delta"; text: string }
   | { type: "reasoning_delta"; text: string }

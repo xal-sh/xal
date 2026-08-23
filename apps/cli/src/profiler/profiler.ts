@@ -65,6 +65,7 @@ type AnonymousAgentEvent =
   | { type: "queue_changed"; count: number; imageCount: number }
   | { type: "queue_flushed"; count: number; imageCount: number }
   | { type: "background_results"; results: AnonymousBackgroundResult[] }
+  | { type: "agent_questions"; questionCount: number }
   | { type: "assistant_message" }
   | { type: "reasoning_summary" }
   | { type: "retry_scheduled"; attempt: number; maxAttempts: number; delayMs: number }
@@ -340,6 +341,8 @@ function anonymousAgentEvent(event: AgentEvent): AnonymousAgentEvent | undefined
       }
     case "background_results":
       return { type: event.type, results: event.results.map(anonymousBackgroundResult) }
+    case "agent_questions":
+      return { type: event.type, questionCount: event.questions.length }
     case "retry_scheduled":
       return { type: event.type, attempt: event.attempt, maxAttempts: event.maxAttempts, delayMs: event.delayMs }
     case "approval_requested":

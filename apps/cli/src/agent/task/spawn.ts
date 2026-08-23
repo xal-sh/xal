@@ -23,6 +23,7 @@ import { AgentSession } from "../session/session"
 import { activity, type ActivityState } from "./activity"
 import { driveTaskToQuiescence, type TaskDriveOutcome } from "./drive"
 import type { TaskAccess, TaskItem } from "./parse"
+import { createParentQuestionChannel, type ParentQuestionChannel } from "./questions"
 import { finishTask, taskOutput, type TaskTerminal } from "./record"
 
 interface Waiter {
@@ -105,7 +106,7 @@ function registerTask(
       return cwd()
     },
     childSessionId: () => child()?.id,
-    send: (message) => sendAgentGuidance(job, message, "user"),
+    send: (message) => sendAgentGuidance(job, message, "user") !== false,
     state: () =>
       job.done
         ? {
@@ -146,6 +147,7 @@ async function runTask(
   ctx: SessionToolContext,
   controller: AbortController,
   state: ActivityState,
+  questions: ParentQuestionChannel,
   setChild: (child: AgentSession) => void,
   setCwd: (cwd: string) => void,
 ): Promise<void> {
@@ -215,6 +217,7 @@ async function runTask(
       interactive: false,
       persist: false,
       inheritedDenyMode: ctx.session.mode,
+      askParent: (question, signal) => questions.ask(question, signal),
       ...(item.access === "write" && !worktree
         ? { workspaceUndo: ctx.session.workspaceUndo, trackUndoPrompts: false }
         : {}),
@@ -274,6 +277,7 @@ async function runTask(
     }
   } finally {
     beginAgentStop(job)
+    questions.close("the task ended before the parent answered")
     if (deadline) clearTimeout(deadline)
     if (child) {
       try {
@@ -316,7 +320,21 @@ export function spawnTask(item: TaskItem, context: string, ctx: SessionToolConte
       child?.suppressAsyncDeliveries()
       child?.interrupt()
     },
-    send: (message, source) => child?.steer(`${source === "user" ? "User" : "Parent"} guidance:\n${message}`) ?? false,
+    send: (message, source) => {
+      const requestId = questions.answer(message)
+      if (requestId) return { status: "answered", requestId }
+      const accepted = child?.steer(`${source === "user" ? "User" : "Parent"} guidance:\n${message}`) ?? false
+      return accepted ? { status: "guided" } : false
+    },
+  })
+  const questions = createParentQuestionChannel({
+    jobId: () => job.id,
+    deliver: (question) => ctx.session.receiveAgentQuestion(question),
+    settled: (requestId) => ctx.session.settleAgentQuestion(requestId),
+    waiting: () => setAgentActivity(job, "Waiting for parent…"),
+    resumed: (result) => {
+      if (result.status === "unavailable") setAgentActivity(job, "Parent unavailable; resuming…")
+    },
   })
   attachJobLog(job, createJobLog(ctx.session.directory, `agent-${job.id}`))
   const state: ActivityState = {
@@ -341,6 +359,7 @@ export function spawnTask(item: TaskItem, context: string, ctx: SessionToolConte
     ctx,
     controller,
     state,
+    questions,
     (value) => {
       child = value
     },

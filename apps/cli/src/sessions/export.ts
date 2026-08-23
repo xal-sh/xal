@@ -86,6 +86,13 @@ function renderEvent(event: AgentEvent): string | undefined {
       return `## Shell\n\n${indented(`$ ${event.command}\n${event.output}`)}`
     case "background_results":
       return `## ${appInfo.displayName} context\n\n${event.results.map(backgroundResult).join("\n\n")}`
+    case "agent_questions":
+      return event.questions
+        .map(
+          (question) =>
+            `## Task agent question: ${question.jobId}\n\nRequest: \`${question.requestId}\`\n\n${indented(question.question)}`,
+        )
+        .join("\n\n")
     case "compacted":
       return `## Compaction\n\n${event.summary}`
     case "conversation_rewound":

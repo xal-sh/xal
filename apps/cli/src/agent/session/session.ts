@@ -54,6 +54,7 @@ import type { AgentEvent, AgentState, DenialCause, SessionStartedEvent } from ".
 import { activeHistory, type ConversationCheckpoint, type HistoryItem } from "../history"
 import { isMessageId } from "../message-id"
 import { composeSystemPrompt } from "../prompt/registry"
+import type { DeliveredAgentQuestion, ParentQuestionResult } from "../task/questions"
 import type { SessionKind } from "../types"
 import { backgroundResultsMessage, SessionAsyncState } from "./async"
 import { autoCompact, runCompaction, type CompactionHost } from "./compaction"
@@ -78,6 +79,10 @@ import {
   type UndoCheckpoint,
   type UndoOutcome,
 } from "./types"
+
+interface PendingAgentQuestion extends DeliveredAgentQuestion {
+  corrected: boolean
+}
 
 function recordedContext(events: AgentEvent[]): number | undefined {
   for (let index = events.length - 1; index >= 0; index--) {
@@ -114,6 +119,7 @@ export class AgentSession {
   private readonly outputContract: OutputContract | undefined
   private readonly trackUndoPrompts: boolean
   private readonly inheritedDenyMode: PermissionMode | undefined
+  private readonly askParentHandler: AgentSessionDeps["askParent"]
   private readonly asyncState: SessionAsyncState
   private readonly toolRunner: ToolCallRunner
   private readonly interactions: PendingInteractions
@@ -142,6 +148,9 @@ export class AgentSession {
   private promoteOnAbort = false
   private paused = false
   private pauseWaiters: Array<() => void> = []
+  private queuedAgentQuestions: PendingAgentQuestion[] = []
+  private presentedAgentQuestions: PendingAgentQuestion[] = []
+  private transientQuestionInput: string | undefined
   private readonly hookReporter: HookReporter = {
     started: (hook, event) => {
       this.setState("running_hook")
@@ -158,6 +167,7 @@ export class AgentSession {
     this.workspaceUndo = deps.workspaceUndo ?? new WorkspaceUndo(this.cwd)
     this.trackUndoPrompts = deps.trackUndoPrompts ?? true
     this.inheritedDenyMode = deps.inheritedDenyMode
+    this.askParentHandler = deps.askParent
     this.provider = deps.provider
     this.profileId = deps.profileId
     this.model = deps.model
@@ -231,11 +241,15 @@ export class AgentSession {
       requestInput: (callId, request, signal) => this.interactions.requestInput(callId, request, signal),
       requestApproval: (resolve) => this.interactions.awaitApproval(resolve),
       changeWorkspace: (cwd) => this.changeWorkspace(cwd),
+      askParent: (question, signal) => this.askParent(question, signal),
+      receiveAgentQuestion: (question) => this.receiveAgentQuestion(question),
+      settleAgentQuestion: (requestId) => this.settleAgentQuestion(requestId),
       contextUsage: () => this.contextUsage(),
       restartSession: (prompt) => {
         this.pendingRestart = prompt
       },
-      pendingActivity: () => this.queue.first !== undefined || this.asyncState.hasQueued(),
+      pendingActivity: () =>
+        this.queue.first !== undefined || this.asyncState.hasQueued() || this.hasPendingAgentQuestions(),
       activitySignal: () => this.activityController.signal,
     }
   }
@@ -262,6 +276,9 @@ export class AgentSession {
       hookContext: (signal) => this.hookContext(signal),
       streamRound: (usage) => this.streamHost(usage),
       drainBackgroundResults: () => this.drainBackgroundResults(),
+      drainAgentQuestions: () => this.drainAgentQuestions(),
+      agentQuestionsQueued: () => this.queuedAgentQuestions.length > 0,
+      correctUnansweredAgentQuestions: () => this.correctUnansweredAgentQuestions(),
       drainQueue: (signal, interjected) => this.drainQueue(signal, interjected),
       restartRequested: () => this.pendingRestart !== undefined,
       autoCompact: (signal, provider, model) => autoCompact(this.compactionHost(), signal, provider, model),
@@ -491,6 +508,9 @@ export class AgentSession {
     this.plan = undefined
     this.planHandoffActive = false
     this.pendingRestart = undefined
+    this.queuedAgentQuestions = []
+    this.presentedAgentQuestions = []
+    this.transientQuestionInput = undefined
     this.goals.reset()
     this.buffer.reset()
     this.acceptingQueuedInput = false
@@ -580,6 +600,9 @@ export class AgentSession {
     this.modeBeforePlan = meta.mode === "plan" ? meta.modeBeforePlan : undefined
     this.plan = undefined
     this.planHandoffActive = false
+    this.queuedAgentQuestions = []
+    this.presentedAgentQuestions = []
+    this.transientQuestionInput = undefined
     this.goals.reset()
     let recordedCwd = meta.cwd
     let recordedMode = meta.mode
@@ -722,6 +745,120 @@ export class AgentSession {
     this.activityController = new AbortController()
   }
 
+  private askParent(question: string, signal: AbortSignal): Promise<ParentQuestionResult> {
+    if (this.kind !== "subagent" || !this.askParentHandler) {
+      throw new Error("ask_parent is available only to running task agents")
+    }
+    return this.askParentHandler(question, signal)
+  }
+
+  receiveAgentQuestion(question: DeliveredAgentQuestion): boolean {
+    if (this.kind !== "primary" || this.movingHistory) return false
+    if (
+      this.queuedAgentQuestions.some((candidate) => candidate.requestId === question.requestId) ||
+      this.presentedAgentQuestions.some((candidate) => candidate.requestId === question.requestId)
+    ) {
+      return false
+    }
+    const pending: PendingAgentQuestion = {
+      requestId: question.requestId,
+      jobId: question.jobId,
+      question: question.question,
+      unavailable: question.unavailable,
+      corrected: false,
+    }
+    this.queuedAgentQuestions.push(pending)
+    this.emit({
+      type: "agent_questions",
+      questions: [{ requestId: pending.requestId, jobId: pending.jobId, question: pending.question }],
+    })
+    this.noteActivity()
+    queueMicrotask(() => this.startAgentQuestionTurn())
+    return true
+  }
+
+  settleAgentQuestion(requestId: string): void {
+    this.queuedAgentQuestions = this.queuedAgentQuestions.filter((question) => question.requestId !== requestId)
+    this.presentedAgentQuestions = this.presentedAgentQuestions.filter((question) => question.requestId !== requestId)
+    this.refreshAgentQuestionInput()
+  }
+
+  private hasPendingAgentQuestions(): boolean {
+    return this.queuedAgentQuestions.length > 0 || this.presentedAgentQuestions.length > 0
+  }
+
+  private startAgentQuestionTurn(): boolean {
+    if (
+      this.paused ||
+      this.queuedAgentQuestions.length === 0 ||
+      this.movingHistory ||
+      this.turnActive ||
+      this.state !== "idle"
+    ) {
+      return false
+    }
+    this.startPreparedTurn(() => Promise.resolve())
+    return true
+  }
+
+  private drainAgentQuestions(): boolean {
+    if (this.queuedAgentQuestions.length === 0) return false
+    this.presentedAgentQuestions.push(...this.queuedAgentQuestions.splice(0))
+    this.refreshAgentQuestionInput()
+    return true
+  }
+
+  private refreshAgentQuestionInput(): void {
+    if (this.presentedAgentQuestions.length === 0) {
+      this.transientQuestionInput = undefined
+      return
+    }
+    const fresh = this.presentedAgentQuestions.filter((question) => !question.corrected)
+    const corrected = this.presentedAgentQuestions.filter((question) => question.corrected)
+    const lines = ["<system-notice>"]
+    if (fresh.length > 0) {
+      lines.push(
+        "Task agents are blocked waiting for answers to these parent-only questions:",
+        fresh
+          .map((question) => `- Request ${question.requestId} from task agent ${question.jobId}:\n${question.question}`)
+          .join("\n\n"),
+      )
+    }
+    if (corrected.length > 0) {
+      lines.push(
+        "You have not answered these pending task-agent questions. If you finish again without answering, the blocked children will be told that the parent is unavailable:",
+        corrected.map((question) => `- ${question.jobId}: ${question.question}`).join("\n"),
+      )
+    }
+    lines.push(
+      "Answer each question with job_send using its task agent id. A job_send message answers a pending question before it acts as ordinary guidance. Do not merely narrate the answer.",
+      "</system-notice>",
+    )
+    this.transientQuestionInput = lines.join("\n")
+  }
+
+  private correctUnansweredAgentQuestions(): boolean {
+    if (this.presentedAgentQuestions.length === 0) return false
+    const unavailable = this.presentedAgentQuestions.filter((question) => question.corrected)
+    for (const question of unavailable) {
+      question.unavailable("the parent did not answer the question")
+    }
+    const unanswered = this.presentedAgentQuestions.filter((question) => !question.corrected)
+    if (unanswered.length === 0) return false
+    for (const question of unanswered) question.corrected = true
+    this.refreshAgentQuestionInput()
+    return true
+  }
+
+  private failAgentQuestions(reason: string): void {
+    for (const question of [...this.queuedAgentQuestions, ...this.presentedAgentQuestions]) {
+      question.unavailable(reason)
+    }
+    this.queuedAgentQuestions = []
+    this.presentedAgentQuestions = []
+    this.transientQuestionInput = undefined
+  }
+
   send(input: UserInput): boolean {
     const redacted = redactUserInput(input)
     if (redacted.images.length > 0 && !this.supportsImageInput) {
@@ -814,6 +951,7 @@ export class AgentSession {
     if (this.settlePause()) return
 
     if (controller.signal.aborted) {
+      this.failAgentQuestions("the parent turn was interrupted")
       const active = this.goals.active()
       if (active) this.goals.suspend(active.id, "interruption", "Goal automation was interrupted")
       this.setState("idle")
@@ -824,6 +962,7 @@ export class AgentSession {
     }
 
     if (failure) {
+      this.failAgentQuestions("the parent turn failed")
       const active = this.goals.active()
       if (active) this.goals.suspend(active.id, "turn_failure", failure)
       this.setState("idle")
@@ -834,14 +973,27 @@ export class AgentSession {
 
     if (restart !== undefined && this.startRestartedTurn(restart)) return
 
+    if (this.queuedAgentQuestions.length > 0) {
+      this.setState("idle")
+      if (this.startAgentQuestionTurn()) return
+    }
+
     if (this.queue.first !== undefined) {
       this.setState("idle")
       if (this.startNextQueued()) return
     }
 
-    if (summary && !this.asyncState.hasPendingAsyncWork() && this.startGoalEvaluation(summary)) return
+    if (
+      summary &&
+      !this.hasPendingAgentQuestions() &&
+      !this.asyncState.hasPendingAsyncWork() &&
+      this.startGoalEvaluation(summary)
+    ) {
+      return
+    }
 
     this.setState("idle")
+    if (this.startAgentQuestionTurn()) return
     if (this.settleBackgroundAgents()) return
     this.queue.flush()
   }
@@ -930,6 +1082,7 @@ export class AgentSession {
   private finishGoalEvaluationIdle(): void {
     this.setState("idle")
     if (this.settlePause()) return
+    if (this.startAgentQuestionTurn()) return
     if (this.queue.first !== undefined && this.startNextQueued()) return
     this.settleBackgroundAgents()
   }
@@ -980,6 +1133,9 @@ export class AgentSession {
         this.abortController = undefined
         this.setState("idle")
         if (this.settlePause()) return
+        if (errored) this.failAgentQuestions("the parent turn failed")
+        else if (controller.signal.aborted) this.failAgentQuestions("the parent turn was interrupted")
+        if (this.startAgentQuestionTurn()) return
         if (!errored && (!controller.signal.aborted || this.promoteOnAbort) && this.startNextQueued()) return
         if (controller.signal.aborted) {
           this.queue.flush()
@@ -1361,11 +1517,15 @@ export class AgentSession {
     thinking: ThinkingEffort | undefined,
     signal: AbortSignal,
   ): StreamRequest {
+    const input = prepareConversation(activeHistory(this.items), { provider: provider.id, model })
+    if (this.transientQuestionInput) {
+      input.push({ type: "user_message", text: this.transientQuestionInput, images: [] })
+    }
     return redactStreamRequest({
       model,
       thinking,
       ...this.providerPrompt(model),
-      input: prepareConversation(activeHistory(this.items), { provider: provider.id, model }),
+      input,
       toolChoice: "auto",
       sessionId: this.id,
       signal,

@@ -251,6 +251,15 @@ export function redactAgentEvent(event: AgentEvent): AgentEvent {
       return { ...event, inputs: event.inputs.map(redactUserInput) }
     case "background_results":
       return { ...event, results: event.results.map(redactBackgroundResult) }
+    case "agent_questions":
+      return {
+        ...event,
+        questions: event.questions.map((question) => ({
+          requestId: redactText(question.requestId),
+          jobId: redactText(question.jobId),
+          question: redactText(question.question),
+        })),
+      }
     case "text_delta":
     case "reasoning_summary_delta":
     case "reasoning_delta":

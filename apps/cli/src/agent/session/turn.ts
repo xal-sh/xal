@@ -27,6 +27,9 @@ export interface TurnHost {
   hookContext(signal: AbortSignal): HookContext
   streamRound(usage: TurnUsage): StreamRoundHost
   drainBackgroundResults(): boolean
+  drainAgentQuestions(): boolean
+  agentQuestionsQueued(): boolean
+  correctUnansweredAgentQuestions(): boolean
   drainQueue(signal: AbortSignal, interjected: boolean): Promise<boolean>
   restartRequested(): boolean
   autoCompact(signal: AbortSignal, provider: Provider, model: string): Promise<void>
@@ -58,6 +61,7 @@ export async function runTurn(
     if (host.paused()) return
     if (host.drainBackgroundResults()) toolLoops.reset()
     await host.autoCompact(signal, provider, model)
+    if (host.drainAgentQuestions()) toolLoops.reset()
     if (signal.aborted) {
       host.emit({ type: "turn_interrupted" })
       return
@@ -88,11 +92,13 @@ export async function runTurn(
         continue
       }
       if (host.asyncResultsQueued()) continue
+      if (host.agentQuestionsQueued()) continue
       if (interjected) {
         interjected = false
         host.pushItem({ type: "user_message", text: interjectionResumeMessage(), images: [] })
         continue
       }
+      if (host.correctUnansweredAgentQuestions()) continue
       const contract = host.outputContract()
       if (contract) {
         const correction = contract.missing()
@@ -142,7 +148,11 @@ export async function runTurn(
     if (loopError) throw loopError
     const contract = host.outputContract()
     if (contract?.output) {
-      if (host.queuedPromptNext() || host.asyncResultsQueued()) {
+      if (host.correctUnansweredAgentQuestions()) {
+        contract.reset()
+        continue
+      }
+      if (host.queuedPromptNext() || host.asyncResultsQueued() || host.agentQuestionsQueued()) {
         contract.reset()
         continue
       }

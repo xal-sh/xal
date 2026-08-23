@@ -1,4 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
+import { rm } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import { contributeRules } from "../../permissions/rules"
 import { registerTool, unregisterTool } from "../../tools/registry"
 import type { Tool } from "../../tools/types"
@@ -347,6 +350,180 @@ describe("AgentSession", () => {
     } finally {
       unregisterTool(tool)
     }
+  })
+
+  test("corrects one unanswered child question before releasing it as unavailable", async () => {
+    const provider = new ScriptedProvider([
+      completedRound("I will answer later."),
+      completedRound("Still no tool call."),
+    ])
+    const session = harness.createSession(provider)
+    const unavailable = Promise.withResolvers<string>()
+    const idle = Promise.withResolvers<void>()
+    const observed: AgentEvent[] = []
+    const unsubscribe = session.subscribe((event) => {
+      observed.push(event)
+      if (event.type === "state_changed" && event.state === "idle") idle.resolve()
+    })
+
+    try {
+      expect(
+        session.receiveAgentQuestion({
+          requestId: "question-1",
+          jobId: "child-1",
+          question: "Which target should I use?",
+          unavailable: (reason) => unavailable.resolve(reason),
+        }),
+      ).toBe(true)
+      expect(await unavailable.promise).toBe("the parent did not answer the question")
+      await idle.promise
+
+      expect(provider.requests).toHaveLength(2)
+      expect(provider.requests[0]?.input.at(-1)).toMatchObject({
+        type: "user_message",
+        text: expect.stringContaining("Task agents are blocked"),
+      })
+      expect(provider.requests[1]?.input.at(-1)).toMatchObject({
+        type: "user_message",
+        text: expect.stringContaining("You have not answered"),
+      })
+      expect(observed.filter((event) => event.type === "agent_questions")).toHaveLength(1)
+      expect(session.exportSnapshot().events.filter((event) => event.type === "agent_questions")).toHaveLength(1)
+    } finally {
+      unsubscribe()
+    }
+  })
+
+  test("keeps a pending child question visible across an unrelated tool round", async () => {
+    const toolName = `question_read_${crypto.randomUUID().replaceAll("-", "_")}`
+    const tool: Tool = {
+      name: toolName,
+      description: "Read unrelated state",
+      parameters: { type: "object" },
+      title: () => "Read state",
+      readOnly: () => true,
+      execute: async () => ({ output: "state" }),
+    }
+    const provider = new ScriptedProvider([
+      round([
+        { type: "item_done", item: { type: "tool_call", callId: "read-state", name: toolName, args: {} } },
+        { type: "done" },
+      ]),
+      completedRound("The unrelated read is complete."),
+      completedRound("No answer supplied."),
+    ])
+    const session = harness.createSession(provider)
+    const unavailable = Promise.withResolvers<string>()
+
+    registerTool(tool)
+    try {
+      expect(
+        session.receiveAgentQuestion({
+          requestId: "question-tool-round",
+          jobId: "child-tool-round",
+          question: "Which target should I use?",
+          unavailable: (reason) => unavailable.resolve(reason),
+        }),
+      ).toBe(true)
+      expect(await unavailable.promise).toBe("the parent did not answer the question")
+
+      expect(provider.requests).toHaveLength(3)
+      expect(provider.requests[0]?.input.at(-1)).toMatchObject({
+        type: "user_message",
+        text: expect.stringContaining("Task agents are blocked"),
+      })
+      expect(provider.requests[1]?.input.at(-1)).toMatchObject({
+        type: "user_message",
+        text: expect.stringContaining("Task agents are blocked"),
+      })
+      expect(provider.requests[2]?.input.at(-1)).toMatchObject({
+        type: "user_message",
+        text: expect.stringContaining("You have not answered"),
+      })
+    } finally {
+      unregisterTool(tool)
+    }
+  })
+
+  test("replays task-agent questions as history without restoring actionable provider input", async () => {
+    const provider = new ScriptedProvider([completedRound("Continued after resume.")])
+    const session = harness.createSession(provider)
+    const cwd = session.exportSnapshot().meta.cwd
+    const path = join(tmpdir(), `xal-resume-question-${crypto.randomUUID()}.jsonl`)
+    const replayed: AgentEvent[] = []
+    const question: AgentEvent = {
+      type: "agent_questions",
+      questions: [
+        {
+          requestId: "historical-question",
+          jobId: "historical-child",
+          question: "Which historical target should I use?",
+        },
+      ],
+    }
+    const unsubscribe = session.subscribe((event) => replayed.push(event))
+
+    try {
+      expect(
+        session.resume({
+          session: {
+            meta: {
+              version: 2,
+              id: crypto.randomUUID(),
+              cwd,
+              provider: provider.id,
+              profile: "test-profile",
+              model: "test-model",
+              mode: "ask",
+              startedAt: Date.now(),
+            },
+            items: [],
+            checkpoints: [],
+            events: [question],
+          },
+          path,
+          cwd,
+          provider,
+          profileId: "test-profile",
+          model: "test-model",
+          mode: "ask",
+          continueGoal: false,
+        }),
+      ).toBe(true)
+      const outcome = await runSettledTurn(session, { text: "Continue after restart.", images: [] })
+
+      expect(outcome.status).toBe("completed")
+      expect(replayed).toContainEqual(question)
+      expect(replayed).toContainEqual({ type: "session_replay_finished" })
+      expect(provider.requests).toHaveLength(1)
+      const input = JSON.stringify(provider.requests[0]?.input)
+      expect(input).not.toContain("Which historical target should I use?")
+      expect(input).not.toContain("Task agents are blocked")
+      expect(provider.requests[0]?.input).toEqual([
+        { type: "user_message", text: "Continue after restart.", images: [] },
+      ])
+    } finally {
+      unsubscribe()
+      await session.flushPersistence()
+      await rm(path, { force: true })
+    }
+  })
+
+  test("releases queued child questions when the parent turn fails", async () => {
+    const provider = new ScriptedProvider([round([], new Error("parent provider failed"))])
+    const session = harness.createSession(provider)
+    const unavailable = Promise.withResolvers<string>()
+
+    expect(
+      session.receiveAgentQuestion({
+        requestId: "question-2",
+        jobId: "child-2",
+        question: "Need parent context",
+        unavailable: (reason) => unavailable.resolve(reason),
+      }),
+    ).toBe(true)
+
+    expect(await unavailable.promise).toBe("the parent turn failed")
   })
 
   test("retries a retryable provider failure before the stream emits an event", async () => {

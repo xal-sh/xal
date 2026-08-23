@@ -1,3 +1,4 @@
+import type { DeliveredAgentQuestion, ParentQuestionResult } from "../agent/task/questions"
 import type { SessionKind } from "../agent/types"
 import type { PermissionMode } from "../permissions/types"
 import type { PlanUpdatedEvent } from "../plans/types"
@@ -107,6 +108,9 @@ export interface SessionToolContext {
     mode: PermissionMode
     workspaceUndo: WorkspaceUndo
     changeWorkspace(cwd: string): void
+    askParent(question: string, signal: AbortSignal): Promise<ParentQuestionResult>
+    receiveAgentQuestion(question: DeliveredAgentQuestion): boolean
+    settleAgentQuestion(requestId: string): void
   }
   activity: {
     pending: boolean

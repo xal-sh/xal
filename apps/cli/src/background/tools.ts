@@ -22,6 +22,7 @@ import {
   type BackgroundScheduleJob,
 } from "./jobs"
 import { listBackgroundTasks, type BackgroundAgentSnapshot } from "./registry"
+import { MAX_AGENT_MESSAGE_LENGTH } from "../agent/task/questions"
 import { asNumber, asString } from "../lib/json"
 import { nativeToolRecord, nativeToolString } from "../native/tool-runtime"
 import type { SessionTool } from "../tools/types"
@@ -29,7 +30,6 @@ import type { SessionTool } from "../tools/types"
 const MAX_WAIT_S = 600
 const MAX_EXTENSION_MINUTES = 60
 const MAX_EXTENSION_TURNS = 100
-const MAX_MESSAGE_LENGTH = 20_000
 
 function jobOf(args: Record<string, unknown>, ownerId: string): BackgroundJob {
   const id = asString(args.id)?.trim() ?? ""
@@ -66,12 +66,19 @@ async function processOutput(job: BackgroundProcessJob, wait: number, signal: Ab
   return output
 }
 
-export async function collectAgentOutput(job: BackgroundAgentJob, wait: number, signal: AbortSignal): Promise<string> {
+export async function collectAgentOutput(
+  job: BackgroundAgentJob,
+  wait: number,
+  signal: AbortSignal,
+  activity?: { pending: boolean; signal: AbortSignal },
+): Promise<string> {
   const requestedWaitMs = wait * 1_000
   const waitMs = agentSupervisionWaitMs(job, requestedWaitMs)
-  const supervisionCheckpoint = waitMs < requestedWaitMs
-  const reservation = wait > 0 && !job.done ? reserveDelivery(job) : undefined
-  await waitForAgentCompletion(job, waitMs, signal)
+  const activityAlreadyPending = activity?.pending === true || activity?.signal.aborted === true
+  const reservation = wait > 0 && !job.done && !activityAlreadyPending ? reserveDelivery(job) : undefined
+  if (!activityAlreadyPending) await waitForAgentCompletion(job, waitMs, signal, activity?.signal)
+  const wokeForActivity = activityAlreadyPending || activity?.signal.aborted === true
+  const supervisionCheckpoint = waitMs < requestedWaitMs && !wokeForActivity
   if (!job.done) {
     if (reservation !== undefined) releaseDelivery(job, reservation)
     const result = nativeToolRecord("job_agent_output", {
@@ -203,7 +210,7 @@ export const jobOutputTool: SessionTool = {
       case "process":
         return { output: await processOutput(job, request.wait, ctx.signal) }
       case "agent":
-        return { output: await collectAgentOutput(job, request.wait, ctx.signal) }
+        return { output: await collectAgentOutput(job, request.wait, ctx.signal, ctx.activity) }
       case "schedule":
         return { output: nativeStatusOutput(job.id, ctx.session.id) }
     }
@@ -353,7 +360,7 @@ export const jobExtendTool: SessionTool = {
 export const jobSendTool: SessionTool = {
   name: "job_send",
   description:
-    "Send additional context or a correction to a running task agent. The message is queued into its current turn and does not restart or extend its deadline.",
+    "Answer a running task agent's pending parent question, or send additional context or a correction when no question is pending. The message does not restart or extend the task deadline.",
   parameters: {
     type: "object",
     properties: {
@@ -361,7 +368,7 @@ export const jobSendTool: SessionTool = {
       message: {
         type: "string",
         minLength: 1,
-        maxLength: MAX_MESSAGE_LENGTH,
+        maxLength: MAX_AGENT_MESSAGE_LENGTH,
         description: "Additional context or corrected direction for the task agent",
       },
     },
@@ -386,12 +393,17 @@ export const jobSendTool: SessionTool = {
     const job = jobOf({ id }, ctx.session.id)
     if (job.kind !== "agent") throw new Error(`${job.id} is not a task agent`)
     if (job.done) throw new Error(`${job.id} has already finished (${jobStatus(job)})`)
-    if (!sendAgentGuidance(job, message, "parent")) throw new Error(`${job.id} did not accept the message`)
+    const disposition = sendAgentGuidance(job, message, "parent")
+    if (!disposition) throw new Error(`${job.id} did not accept the message`)
     try {
-      const finalized = nativeToolRecord("job_send_finalize", { id: job.id, accepted: true })
+      const finalized = nativeToolRecord("job_send_finalize", {
+        id: job.id,
+        disposition: disposition.status,
+        ...(disposition.status === "answered" ? { requestId: disposition.requestId } : {}),
+      })
       return { output: nativeToolString(finalized, "output", "job_send") }
     } catch (error) {
-      throw new Error(`Guidance for ${job.id} may already be queued; inspect the job before sending it again`, {
+      throw new Error(`Message for ${job.id} may already be accepted; inspect the job before sending it again`, {
         cause: error,
       })
     }

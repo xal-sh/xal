@@ -132,6 +132,10 @@ test("redacts secrets from every agent event that carries content", () => {
       results: [{ kind: "agent", id: "b1", task: `task ${SECRET}`, status: "completed", output: `out ${SECRET}` }],
     },
     {
+      type: "agent_questions",
+      questions: [{ requestId: `request-${SECRET}`, jobId: `job-${SECRET}`, question: `question ${SECRET}` }],
+    },
+    {
       type: "background_results",
       results: [
         {

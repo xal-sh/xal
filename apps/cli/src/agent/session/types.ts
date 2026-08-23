@@ -6,6 +6,7 @@ import type { AgentState } from "../events"
 import type { ConversationState } from "../history"
 import type { OutputSchema } from "./output-contract"
 import type { SessionKind } from "../types"
+import type { ParentQuestionResult } from "../task/questions"
 
 export interface AgentSessionDeps {
   kind?: SessionKind
@@ -22,6 +23,7 @@ export interface AgentSessionDeps {
   workspaceUndo?: WorkspaceUndo
   trackUndoPrompts?: boolean
   inheritedDenyMode?: PermissionMode
+  askParent?(question: string, signal: AbortSignal): Promise<ParentQuestionResult>
 }
 
 export interface ResumeTarget {

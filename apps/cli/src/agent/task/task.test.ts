@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, expect, test } from "bun:test"
 import { readFile } from "node:fs/promises"
 import { getJob, stopJob } from "../../background/jobs"
+import { registerJobTools } from "../../background/register"
 import { configureModes } from "../../permissions/modes"
 import type { ModelCatalog, Provider, StreamRequest } from "../../providers/types"
 import { bashTool } from "../../plugins/shell/bash/tool"
@@ -24,6 +25,7 @@ let harness: AgentSessionTestHarness
 beforeAll(async () => {
   harness = await setupAgentSessionTests("sub-agent-test-")
   registerBasePrompt()
+  registerJobTools()
   registerTaskAgents()
 })
 
@@ -53,6 +55,154 @@ test("keeps task mechanics in the tool contract and delegation policy in instruc
   expect(request.instructions).toContain("explicitly request delegation")
   expect(request.instructions).toContain("Depth, research, or thoroughness alone is not authorization.")
   expect(request.instructions).not.toContain("Use the smallest useful batch")
+})
+
+test("lets a child ask its parent, consume the answer, and finish in the same session", async () => {
+  let parentSessionId = ""
+  let parentRounds = 0
+  let childRounds = 0
+  let childSawFirstAnswer = false
+  let childSawSecondAnswer = false
+  let firstWaitOutput = ""
+  let secondWaitOutput = ""
+  const questionObserved = Promise.withResolvers<void>()
+  const secondWaitStarted = Promise.withResolvers<void>()
+  const provider: Provider = {
+    id: `sub-agent-question-test-${crypto.randomUUID()}`,
+    name: "Sub-agent question test provider",
+    aliases: [],
+    capabilities: { imageInput: false },
+    async listModels() {
+      return modelCatalog()
+    },
+    async defaultModel() {
+      return "test-model"
+    },
+    async *stream(_profileId: string, request: StreamRequest) {
+      let response: ProviderRound
+      if (request.sessionId === parentSessionId) {
+        parentRounds += 1
+        const transient = request.input.findLast(
+          (item) => item.type === "user_message" && item.text.includes("Task agents are blocked"),
+        )
+        const dispatched = request.input.some((item) => item.type === "tool_call" && item.name === "task")
+        const answerCount = request.input.filter((item) => item.type === "tool_call" && item.name === "job_send").length
+        const waited = request.input.some((item) => item.type === "tool_call" && item.callId === "wait-question")
+        const secondWaited = request.input.some(
+          (item) => item.type === "tool_call" && item.callId === "wait-second-question",
+        )
+        const delivered = request.input.some(
+          (item) => item.type === "user_message" && item.text.includes("question-child final report"),
+        )
+        if (!dispatched) {
+          response = toolRound("dispatch-question", "task", {
+            context: "Resolve one parent-only target decision.",
+            tasks: [
+              {
+                name: "question_child",
+                task: "Ask which target to use, then include the answer in the final report.",
+                access: "read",
+                isolation: "shared",
+              },
+            ],
+          })
+        } else if (transient && answerCount === 0) {
+          const result = request.input.findLast(
+            (item) => item.type === "tool_result" && item.callId === "wait-question",
+          )
+          firstWaitOutput = result?.type === "tool_result" ? result.output : ""
+          response = toolRound("answer-question", "job_send", {
+            id: "question_child",
+            message: "Use target beta.",
+          })
+        } else if (transient) {
+          const result = request.input.findLast(
+            (item) => item.type === "tool_result" && item.callId === "wait-second-question",
+          )
+          secondWaitOutput = result?.type === "tool_result" ? result.output : ""
+          response = toolRound("answer-second-question", "job_send", {
+            id: "question_child",
+            message: "Use format compact.",
+          })
+        } else if (delivered) {
+          response = completedRound("Integrated the child report.")
+        } else if (answerCount === 2) {
+          response = completedRound("Both child questions were answered.")
+        } else if (answerCount === 1 && !secondWaited) {
+          response = toolRound("wait-second-question", "job_output", { id: "question_child", wait: 60 })
+        } else if (!waited) {
+          await questionObserved.promise
+          response = toolRound("wait-question", "job_output", { id: "question_child", wait: 60 })
+        } else {
+          response = completedRound("The child question still needs an answer.")
+        }
+      } else {
+        childRounds += 1
+        const answers = request.input.filter(
+          (item) => item.type === "tool_result" && item.output.includes("Parent answered:"),
+        )
+        if (answers.length === 0) {
+          expect(request.tools.some((tool) => tool.name === "ask_parent")).toBe(true)
+          response = toolRound("ask-target", "ask_parent", { question: "Which target should I use?" })
+        } else if (answers.length === 1) {
+          childSawFirstAnswer = answers[0]?.type === "tool_result" && answers[0].output.includes("Use target beta.")
+          await secondWaitStarted.promise
+          response = toolRound("ask-format", "ask_parent", { question: "Which format should I use?" })
+        } else {
+          childSawSecondAnswer = answers[1]?.type === "tool_result" && answers[1].output.includes("Use format compact.")
+          response = completedRound("question-child final report: used target beta and compact format")
+        }
+      }
+      yield* response(request)
+    },
+  }
+
+  const session = harness.createSession(provider, { interactive: true })
+  parentSessionId = session.id
+  const questions: Extract<AgentEvent, { type: "agent_questions" }>[] = []
+  const deliveries: BackgroundResult[] = []
+  const settled = Promise.withResolvers<void>()
+  const unsubscribe = session.subscribe((event) => {
+    if (event.type === "agent_questions") {
+      questions.push(event)
+      questionObserved.resolve()
+    }
+    if (event.type === "tool_started" && event.callId === "wait-second-question") secondWaitStarted.resolve()
+    if (event.type === "background_results") deliveries.push(...event.results)
+    if (event.type === "state_changed" && event.state === "idle" && deliveries.length > 0) settled.resolve()
+  })
+
+  try {
+    await runSettledTurn(session, { text: "Dispatch the question task.", images: [] })
+    await settled.promise
+
+    expect(questions).toHaveLength(2)
+    expect(questions[0]?.questions[0]?.jobId).toBe("question_child")
+    expect(questions[0]?.questions[0]?.question).toBe("Which target should I use?")
+    expect(questions[1]?.questions[0]?.question).toBe("Which format should I use?")
+    expect(childSawFirstAnswer).toBe(true)
+    expect(childSawSecondAnswer).toBe(true)
+    expect(firstWaitOutput).toContain("[running]")
+    expect(firstWaitOutput).not.toContain("Supervision checkpoint reached")
+    expect(secondWaitOutput).toContain("[running]")
+    expect(secondWaitOutput).not.toContain("Supervision checkpoint reached")
+    expect(childRounds).toBe(3)
+    expect(deliveries).toHaveLength(1)
+    expect(deliveries[0]?.output).toContain("question-child final report: used target beta and compact format")
+    expect(parentRounds).toBeLessThanOrEqual(7)
+
+    const recordMatch = /^Full task record: (.+)$/m.exec(deliveries[0]?.output ?? "")
+    const recordPath = recordMatch?.[1]
+    if (!recordPath) throw new Error("question task did not include its durable record path")
+    const record = await readFile(recordPath, "utf8")
+    expect(record).toContain("Which target should I use?")
+    expect(record).toContain("Use target beta.")
+    expect(record).toContain("Which format should I use?")
+    expect(record).toContain("Use format compact.")
+  } finally {
+    unsubscribe()
+    session.disposeToolResources()
+  }
 })
 
 test("inherits deny rules and durably delivers a bounded task report", async () => {
@@ -282,10 +432,12 @@ test("holds the task open across nested background Bash and delivers only the fr
   }
 })
 
-test("does not wake the parent after a running task is cancelled", async () => {
-  const childStarted = Promise.withResolvers<void>()
+test("releases a child cancelled while ask_parent is pending without restoring the notice", async () => {
+  const releaseChildQuestion = Promise.withResolvers<void>()
+  const questionObserved = Promise.withResolvers<void>()
   let parentSessionId = ""
   let parentRound = 0
+  let followupInput = ""
   const provider: Provider = {
     id: `sub-agent-cancel-test-${crypto.randomUUID()}`,
     name: "Sub-agent cancellation test provider",
@@ -300,33 +452,27 @@ test("does not wake the parent after a running task is cancelled", async () => {
     async *stream(_profileId: string, request: StreamRequest) {
       if (request.sessionId === parentSessionId) {
         parentRound += 1
-        const response =
-          parentRound === 1
-            ? toolRound("dispatch-cancel", "task", {
-                context: "Wait until cancelled.",
-                tasks: [
-                  {
-                    name: "cancel_child",
-                    task: "Wait for cancellation.",
-                    access: "read",
-                    isolation: "shared",
-                  },
-                ],
-              })
-            : completedRound("Waiting for cancellation.")
-        yield* response(request)
+        if (parentRound >= 3) followupInput = JSON.stringify(request.input)
+        if (parentRound === 1) {
+          yield* toolRound("dispatch-cancel", "task", {
+            context: "Ask one question and wait until cancelled.",
+            tasks: [
+              {
+                name: "cancel_child",
+                task: "Ask the parent which target to use, then wait for the answer.",
+                access: "read",
+                isolation: "shared",
+              },
+            ],
+          })(request)
+          return
+        }
+        yield* completedRound(parentRound === 2 ? "Waiting for the child question." : "Parent turn completed.")(request)
         return
       }
 
-      childStarted.resolve()
-      const signal = request.signal
-      if (!signal) throw new Error("task request had no abort signal")
-      if (!signal.aborted) {
-        await new Promise<void>((resolve) => signal.addEventListener("abort", () => resolve(), { once: true }))
-      }
-      const error = new Error("task cancelled")
-      error.name = "AbortError"
-      throw error
+      await releaseChildQuestion.promise
+      yield* toolRound("cancelled-question", "ask_parent", { question: "Which target should I use?" })(request)
     },
   }
 
@@ -334,27 +480,33 @@ test("does not wake the parent after a running task is cancelled", async () => {
   parentSessionId = session.id
   let deliveries = 0
   const unsubscribe = session.subscribe((event) => {
+    if (event.type === "agent_questions") questionObserved.resolve()
     if (event.type === "background_results") deliveries += 1
   })
 
   try {
     const initial = await runSettledTurn(session, { text: "Dispatch a cancellable task.", images: [] })
     expect(initial.status).toBe("completed")
-    expect(initial.response).toBe("Waiting for cancellation.")
-    await childStarted.promise
+    expect(initial.response).toBe("Waiting for the child question.")
+    releaseChildQuestion.resolve()
+    await questionObserved.promise
     const job = getJob("cancel_child")
     if (!job || job.kind !== "agent") throw new Error("cancellable task job was not registered")
+    expect(job.activity).toBe("Waiting for parent…")
 
     await stopJob(job, "model")
     await job.completion
-    await Promise.resolve()
+    await runSettledTurn(session, { text: "Continue after cancellation.", images: [] })
 
     expect(job.outcome?.status).toBe("interrupted")
     expect(job.delivery).toBe("suppressed")
     expect(deliveries).toBe(0)
-    expect(parentRound).toBe(2)
+    expect(parentRound).toBe(3)
+    expect(followupInput).not.toContain("Which target should I use?")
+    expect(followupInput).not.toContain("Task agents are blocked")
     expect(session.currentState).toBe("idle")
   } finally {
+    releaseChildQuestion.resolve()
     unsubscribe()
     session.disposeToolResources()
   }

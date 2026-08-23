@@ -18,6 +18,7 @@ import {
   readProcessOutput,
   reapOwnerJobs,
   registerDeliverySink,
+  sendAgentGuidance,
   startAgentJob,
   stopJob,
   suppressDelivery,
@@ -43,7 +44,7 @@ function agentJob(prefix: string): BackgroundAgentJob {
     timeoutMs: 60_000,
     maxTurns: 24,
     stop: () => {},
-    send: () => true,
+    send: () => ({ status: "guided" }),
   })
   agentJobs.add(job)
   return job
@@ -129,6 +130,31 @@ test("agent completion and abort wake completion waiters", async () => {
   expect(aborted.done).toBe(false)
 })
 
+test("distinguishes pending-question answers from ordinary guidance", () => {
+  let pending = true
+  const job = createAgentJob("test-agent-answer-routing", {
+    ownerId: "background-jobs-test",
+    task: "ask a question",
+    timeoutMs: 60_000,
+    maxTurns: 24,
+    stop: () => {},
+    send: () => {
+      if (!pending) return { status: "guided" }
+      pending = false
+      return { status: "answered", requestId: "question-1" }
+    },
+  })
+  agentJobs.add(job)
+
+  expect(sendAgentGuidance(job, "the answer", "parent")).toEqual({
+    status: "answered",
+    requestId: "question-1",
+  })
+  expect(sendAgentGuidance(job, "more context", "parent")).toEqual({ status: "guided" })
+  expect(job.transcript.text()).toContain("answered pending question question-1")
+  expect(job.transcript.text()).toContain("Parent guidance")
+})
+
 test("reserves a supervision window before a queued agent starts", () => {
   const job = agentJob("test-queued-agent-supervision-window")
 
@@ -212,7 +238,7 @@ test("suppresses agent delivery before invoking a racing stop callback", async (
       if (!current) throw new Error("agent job was not initialized")
       finishAgentJob(current, { status: "completed", report: "too late" }, "completed during stop")
     },
-    send: () => true,
+    send: () => ({ status: "guided" }),
   })
   holder.job = job
   agentJobs.add(job)
@@ -244,7 +270,7 @@ test("a user stop delivers the interrupted outcome to the owner sink", async () 
       if (!current) throw new Error("agent job was not initialized")
       finishAgentJob(current, { status: "interrupted" }, "interrupted")
     },
-    send: () => true,
+    send: () => ({ status: "guided" }),
   })
   holder.job = job
   agentJobs.add(job)

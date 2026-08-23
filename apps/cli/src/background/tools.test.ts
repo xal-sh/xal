@@ -19,7 +19,7 @@ function agentJob(prefix: string): BackgroundAgentJob {
     timeoutMs: 60_000,
     maxTurns: 24,
     stop: () => {},
-    send: () => true,
+    send: () => ({ status: "guided" }),
   })
   jobs.add(job)
   return job
@@ -43,6 +43,39 @@ test("returns before the deadline with an actionable supervision checkpoint", as
   expect(output).toContain("turn cycles 0/24")
   expect(output).toContain("Supervision checkpoint reached before the task deadline")
   expect(output).toContain("job_extend")
+  expect(job.delivery).toBe("none")
+})
+
+test("returns immediately when parent activity predates an agent wait", async () => {
+  const job = agentJob("test-agent-output-preexisting-activity")
+  startAgentJob(job)
+  const activity = new AbortController()
+  activity.abort()
+
+  const output = await collectAgentOutput(job, 60, new AbortController().signal, {
+    pending: true,
+    signal: activity.signal,
+  })
+
+  expect(output).toContain("[running]")
+  expect(output).not.toContain("Supervision checkpoint reached")
+  expect(job.delivery).toBe("none")
+})
+
+test("releases an in-progress agent wait when parent activity arrives", async () => {
+  const job = agentJob("test-agent-output-later-activity")
+  startAgentJob(job)
+  const activity = new AbortController()
+  const output = collectAgentOutput(job, 60, new AbortController().signal, {
+    pending: false,
+    signal: activity.signal,
+  })
+  await Promise.resolve()
+  expect(job.delivery).toBe("reserved")
+
+  activity.abort()
+
+  expect(await output).toContain("[running]")
   expect(job.delivery).toBe("none")
 })
 

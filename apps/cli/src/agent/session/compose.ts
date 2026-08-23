@@ -159,6 +159,7 @@ function lastState(loaded: LoadedSession): {
       case "queue_changed":
       case "queue_flushed":
       case "background_results":
+      case "agent_questions":
       case "text_delta":
       case "reasoning_summary_delta":
       case "reasoning_delta":

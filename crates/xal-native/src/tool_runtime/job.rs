@@ -448,14 +448,23 @@ pub(super) fn job_send_prepare(value: &Value) -> napi::Result<Value> {
 }
 
 pub(super) fn job_send_finalize(value: &Value) -> napi::Result<Value> {
-    Ok(
-        json!({ "output": format!("Queued guidance for {}.", required_string(object(value)?, "id")?) }),
-    )
+    let request = object(value)?;
+    let id = required_string(request, "id")?;
+    match required_string(request, "disposition")?.as_str() {
+        "answered" => Ok(json!({
+            "output": format!(
+                "Answered {id}'s pending question {}.",
+                required_string(request, "requestId")?
+            )
+        })),
+        "guided" => Ok(json!({ "output": format!("Queued guidance for {id}.") })),
+        _ => Err(invalid("disposition must be answered or guided")),
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{job_kill, job_status, run};
+    use super::{job_kill, job_send_finalize, job_status, run};
 
     #[test]
     fn formats_scheduled_job_status() {
@@ -471,5 +480,22 @@ mod tests {
         )
         .unwrap();
         assert!(stopped.contains("finished after stop was requested"));
+    }
+
+    #[test]
+    fn distinguishes_question_answers_from_guidance() {
+        let answered = run(
+            r#"{"id":"child-1","disposition":"answered","requestId":"question-1"}"#.to_owned(),
+            job_send_finalize,
+        )
+        .unwrap();
+        assert!(answered.contains("Answered child-1's pending question question-1."));
+
+        let guided = run(
+            r#"{"id":"child-1","disposition":"guided"}"#.to_owned(),
+            job_send_finalize,
+        )
+        .unwrap();
+        assert!(guided.contains("Queued guidance for child-1."));
     }
 }

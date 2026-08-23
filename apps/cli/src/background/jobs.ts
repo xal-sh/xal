@@ -56,6 +56,7 @@ export type BackgroundAgentOutcome =
   { status: "completed"; report: string } | { status: "failed" } | { status: "interrupted" } | { status: "timed_out" }
 
 export type JobSendSource = "parent" | "user"
+export type JobSendDisposition = { status: "answered"; requestId: string } | { status: "guided" }
 
 export interface BackgroundAgentControls {
   id?: string
@@ -64,7 +65,7 @@ export interface BackgroundAgentControls {
   timeoutMs: number
   maxTurns: number
   stop(): void
-  send(message: string, source: JobSendSource): boolean
+  send(message: string, source: JobSendSource): JobSendDisposition | false
 }
 
 export interface BackgroundScheduleJob extends BackgroundJobBase {
@@ -89,7 +90,7 @@ export interface BackgroundAgentJob extends BackgroundJobBase {
   activity: string
   outcome?: BackgroundAgentOutcome
   record?: BackgroundJobRecord
-  send(message: string, source: JobSendSource): boolean
+  send(message: string, source: JobSendSource): JobSendDisposition | false
 }
 
 export type BackgroundJob = BackgroundProcessJob | BackgroundAgentJob | BackgroundScheduleJob
@@ -723,17 +724,21 @@ export async function waitForAgentCompletion(
   job: BackgroundAgentJob,
   waitMs: number,
   signal?: AbortSignal,
+  activitySignal?: AbortSignal,
 ): Promise<void> {
-  if (waitMs <= 0 || job.done || signal?.aborted) return
+  if (waitMs <= 0 || job.done || signal?.aborted || activitySignal?.aborted) return
   const { promise, resolve } = Promise.withResolvers<void>()
   const timer = setTimeout(resolve, waitMs)
   const abort = (): void => resolve()
   signal?.addEventListener("abort", abort)
+  activitySignal?.addEventListener("abort", abort)
+  if (signal?.aborted || activitySignal?.aborted) resolve()
   try {
     await Promise.race([job.completion, promise])
   } finally {
     clearTimeout(timer)
     signal?.removeEventListener("abort", abort)
+    activitySignal?.removeEventListener("abort", abort)
   }
 }
 
@@ -770,11 +775,21 @@ export function jobStatus(job: BackgroundJob): string {
   return job.done ? job.detail : "still running"
 }
 
-export function sendAgentGuidance(job: BackgroundAgentJob, message: string, source: JobSendSource): boolean {
+export function sendAgentGuidance(
+  job: BackgroundAgentJob,
+  message: string,
+  source: JobSendSource,
+): JobSendDisposition | false {
   if (job.done) return false
-  if (!job.send(message, source)) return false
+  const disposition = job.send(message, source)
+  if (!disposition) return false
   const label = source === "user" ? "User" : "Parent"
+  if (disposition.status === "answered") {
+    appendAgentTranscript(job, `\n> ${label} answered pending question ${disposition.requestId}\n${message}\n`)
+    setAgentActivity(job, "Resuming with parent answer…")
+    return disposition
+  }
   appendAgentTranscript(job, `\n> ${label} guidance\n${message}\n`)
   setAgentActivity(job, `${label} guidance queued…`)
-  return true
+  return disposition
 }

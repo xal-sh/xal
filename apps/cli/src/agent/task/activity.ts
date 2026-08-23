@@ -106,6 +106,7 @@ export function activity(
     case "task_list_updated":
     case "session_started":
     case "session_replay_finished":
+    case "agent_questions":
     case "session_title_changed":
     case "workspace_changed":
     case "mode_changed":

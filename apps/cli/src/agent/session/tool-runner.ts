@@ -24,6 +24,7 @@ import type { AgentEvent, AgentState, DenialCause } from "../events"
 import type { ToolLoopDetector, ToolLoopAction } from "./loop-detection"
 import type { OutputContract } from "./output-contract"
 import { isAbortError } from "./types"
+import type { DeliveredAgentQuestion, ParentQuestionResult } from "../task/questions"
 import type { SessionKind } from "../types"
 
 export interface ApprovalResult {
@@ -100,6 +101,9 @@ export interface ToolRunnerHost {
   requestInput(callId: string, request: ElicitationRequest, signal: AbortSignal): Promise<ElicitationResult>
   requestApproval(resolve: (result: ApprovalResult) => void): void
   changeWorkspace(cwd: string): void
+  askParent(question: string, signal: AbortSignal): Promise<ParentQuestionResult>
+  receiveAgentQuestion(question: DeliveredAgentQuestion): boolean
+  settleAgentQuestion(requestId: string): void
   contextUsage(): Promise<ContextUsage | undefined>
   restartSession(prompt: string): void
   pendingActivity(): boolean
@@ -376,6 +380,9 @@ export class ToolCallRunner {
                   mode: this.host.mode(),
                   workspaceUndo: this.host.workspaceUndo(),
                   changeWorkspace: (cwd) => this.host.changeWorkspace(cwd),
+                  askParent: (question, askSignal) => this.host.askParent(question, askSignal),
+                  receiveAgentQuestion: (question) => this.host.receiveAgentQuestion(question),
+                  settleAgentQuestion: (requestId) => this.host.settleAgentQuestion(requestId),
                 },
                 activity: {
                   pending: this.host.pendingActivity(),
