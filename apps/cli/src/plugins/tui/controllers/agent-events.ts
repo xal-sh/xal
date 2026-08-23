@@ -129,6 +129,9 @@ export class AgentEventController {
         break
       case "state_changed":
         statusBar.setState(event.state)
+        if (event.state === "compacting" && !this.replaying) {
+          scrollback.append({ kind: "compaction", state: "compacting" })
+        }
         if (event.state !== "idle") break
         this.screen.dismissApproval()
         this.screen.dismissElicitation()
@@ -276,6 +279,7 @@ export class AgentEventController {
       case "compacted":
         scrollback.append({
           kind: "compaction",
+          state: "compacted",
           summary: event.summary,
           replaced: event.replaced,
           tokensBefore: event.tokensBefore,

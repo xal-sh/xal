@@ -164,6 +164,10 @@ function compaction(
   detailsShortcut: string | undefined,
 ): Renderable {
   const box = column(ctx)
+  if (block.state === "compacting") {
+    box.add(paragraph(ctx, { content: "Compacting context...", color: COLORS.warning }))
+    return box
+  }
   const before = block.tokensBefore === undefined ? "" : ` · was ${formatTokens(block.tokensBefore)} tokens`
   const hint = expanded || !detailsShortcut ? "" : ` · ${detailsShortcut} to read it`
   box.add(

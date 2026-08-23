@@ -24,7 +24,7 @@ These values live under `pluginConfig.tui`:
 }
 ```
 
-The `display.toggle-details` shortcut, Ctrl+O by default, temporarily toggles transcript details for the current session without changing `showOutputs`. Normal mode keeps task dispatches compact and shows completed background work as its ID plus the first report line. Expanded mode adds assignment metadata, status and line counts, spawned-agent details, and report output. Task plans are optional and created at the model's discretion for non-trivial, multi-phase work. Xal does not inject reminders to create or update a plan. A fully completed plan is dismissed when the session returns to idle, while plans with pending or in-progress work remain visible.
+The `display.toggle-details` shortcut, Ctrl+O by default, temporarily toggles transcript details for the current session without changing `showOutputs`. Normal mode keeps task dispatches compact and shows completed background work as its ID plus the first report line. Expanded mode adds assignment metadata, status and line counts, spawned-agent details, and report output. Context compaction appears in the transcript as soon as it starts, followed by the completed compaction summary. Task plans are optional and created at the model's discretion for non-trivial, multi-phase work. Xal does not inject reminders to create or update a plan. A fully completed plan is dismissed when the session returns to idle, while plans with pending or in-progress work remain visible.
 
 ## Keybindings
 

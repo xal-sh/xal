@@ -46,7 +46,7 @@ function redactBlock(block: Block): Block {
         details: block.details.map(redactText),
       }
     case "compaction":
-      return { ...block, summary: redactText(block.summary) }
+      return block.state === "compacting" ? block : { ...block, summary: redactText(block.summary) }
     case "background":
       return {
         ...block,

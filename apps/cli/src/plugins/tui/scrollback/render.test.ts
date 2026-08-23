@@ -41,6 +41,32 @@ test("normal background results keep failures visible and stay on one row", () =
   expect(displayWidth(narrow)).toBeLessThanOrEqual(30)
 })
 
+test("compaction state is visible in the transcript as soon as it starts", async () => {
+  const setup = await createTestRenderer({
+    width: 80,
+    height: 24,
+    footerHeight: 1,
+    screenMode: "split-footer",
+    externalOutputMode: "capture-stdout",
+  })
+
+  try {
+    const scrollback = new Scrollback(
+      setup.renderer,
+      0,
+      () => {},
+      { showOutputs: false, showThinking: false },
+      undefined,
+    )
+    scrollback.append({ kind: "compaction", state: "compacting" })
+
+    const rows = setup.externalOutput.take().flatMap((commit) => commit.rows)
+    expect(rows).toEqual(["", "  Compacting context..."])
+  } finally {
+    setup.renderer.destroy()
+  }
+})
+
 test("assistant markdown commits only its visible columns", async () => {
   const setup = await createTestRenderer({
     width: 80,

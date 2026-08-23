@@ -35,12 +35,18 @@ export interface NoticeBlock {
   details: string[]
 }
 
-export interface CompactionBlock {
-  kind: "compaction"
-  summary: string
-  replaced: number
-  tokensBefore: number | undefined
-}
+export type CompactionBlock =
+  | {
+      kind: "compaction"
+      state: "compacting"
+    }
+  | {
+      kind: "compaction"
+      state: "compacted"
+      summary: string
+      replaced: number
+      tokensBefore: number | undefined
+    }
 
 export interface BackgroundBlock {
   kind: "background"
