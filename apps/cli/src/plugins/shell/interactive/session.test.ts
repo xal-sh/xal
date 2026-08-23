@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { REDACTION_MARKER, replaceSecretValues } from "../../secrets/redactor"
+import { REDACTION_MARKER, replaceSecretValues } from "../../../secrets/redactor"
 import {
   createSessionEmitter,
   disposeInteractiveSessions,

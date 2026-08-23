@@ -13,6 +13,7 @@ import { registerPolicyRule } from "../permissions/service"
 import { registerProvider } from "../providers/registry"
 import { prepareSecretValues, protectSecretValue } from "../secrets/redactor"
 import { registerTool, unregisterTool } from "../tools/registry"
+import { registerToolSessionDisposer } from "../tools/session"
 import { registerToolRenderer } from "../ui/extension"
 import { registerUi } from "../ui/registry"
 import { builtinPlugins } from "./builtins"
@@ -65,6 +66,7 @@ function contextFor(plugin: Plugin, settings: Settings, pluginOrder: number, sig
     signal,
     registerTool: (tool) => apply(() => registerTool(tool)),
     unregisterTool: (tool) => apply(() => unregisterTool(tool)),
+    registerToolSessionDisposer: (disposer) => apply(() => registerToolSessionDisposer(disposer)),
     registerProvider: (provider) => apply(() => registerProvider(provider)),
     registerCli: (cli) => apply(() => registerCli(cli)),
     registerCommand: (command) => apply(() => registerCommand(command)),

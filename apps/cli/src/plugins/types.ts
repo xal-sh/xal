@@ -6,6 +6,7 @@ import type { EventService } from "../events"
 import type { Hook } from "../hooks/types"
 import type { PermissionRules, PolicyRule } from "../permissions/types"
 import type { Provider } from "../providers/types"
+import type { ToolSessionDisposer } from "../tools/session"
 import type { RegisteredTool } from "../tools/types"
 import type { ToolRenderer } from "../ui/extension"
 import type { Ui } from "../ui/registry"
@@ -35,6 +36,7 @@ export interface PluginContext {
   signal: AbortSignal
   registerTool(tool: RegisteredTool): void
   unregisterTool(tool: RegisteredTool): void
+  registerToolSessionDisposer(disposer: ToolSessionDisposer): void
   registerProvider(provider: Provider): void
   registerCli(cli: Cli, parent?: string): void
   registerCommand(command: Command): void

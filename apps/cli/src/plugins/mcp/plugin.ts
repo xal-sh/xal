@@ -1,4 +1,3 @@
-import { registerToolSessionDisposer } from "../../tools/session"
 import type { Plugin } from "../types"
 import { mcpCommand } from "./command"
 import { parseMcpConfig } from "./config"
@@ -7,7 +6,9 @@ import { mcpTools } from "./tools"
 
 let manager: McpManager | undefined
 
-registerToolSessionDisposer((sessionId) => manager?.disposeSession(sessionId))
+function disposeMcpSession(sessionId: string): void {
+  manager?.disposeSession(sessionId)
+}
 
 const plugin: Plugin = {
   name: "mcp",
@@ -18,6 +19,7 @@ const plugin: Plugin = {
       register: ctx.registerTool,
       unregister: ctx.unregisterTool,
     })
+    ctx.registerToolSessionDisposer(disposeMcpSession)
     for (const tool of mcpTools(manager)) ctx.registerTool(tool)
     ctx.registerPermissionRules({ allow: ["mcp__*", "mcp_read_resource", "mcp_get_prompt"] })
     ctx.registerCommand(mcpCommand(manager))

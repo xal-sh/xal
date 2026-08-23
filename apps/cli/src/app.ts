@@ -36,8 +36,6 @@ import { registerRedaction } from "./secrets/register"
 import { registerScheduler } from "./scheduler/register"
 import { discoverSkills, registerSkills } from "./skills/register"
 import { registerTasks } from "./tasks/register"
-import { registerBash } from "./tools/bash/register"
-import { registerInteractiveShell } from "./tools/interactive/register"
 import { getUi } from "./ui/registry"
 
 let initializationBarrier: Promise<void> | undefined
@@ -69,8 +67,6 @@ function registerCore(settings: Settings): void {
   registerScheduler()
   registerSkills()
   registerBootstrapStep("skills", discoverSkills)
-  registerBash()
-  registerInteractiveShell()
   registerJobTools()
   registerWorktreeTools()
   registerTaskAgents()

@@ -1,4 +1,4 @@
-type ToolSessionDisposer = (sessionId: string) => void
+export type ToolSessionDisposer = (sessionId: string) => void
 
 const disposers = new Set<ToolSessionDisposer>()
 

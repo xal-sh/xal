@@ -17,6 +17,7 @@ function context(permissionRules: PermissionRules[]): PluginContext {
     signal: new AbortController().signal,
     registerTool() {},
     unregisterTool() {},
+    registerToolSessionDisposer() {},
     registerProvider() {},
     registerCli() {},
     registerCommand() {},

@@ -5,12 +5,12 @@ import {
   finishProcessJob,
   stopJob,
   type BackgroundProcessJob,
-} from "../../background/jobs"
-import { createJobLog } from "../../background/log"
-import { registerBackgroundTask } from "../../background/registry"
-import { describeError } from "../../lib/error"
-import type { CommandProcess } from "../shell/process"
-import type { ShellExecution } from "../shell/shell"
+} from "../../../background/jobs"
+import { createJobLog } from "../../../background/log"
+import { registerBackgroundTask } from "../../../background/registry"
+import { describeError } from "../../../lib/error"
+import type { CommandProcess } from "../process"
+import type { ShellExecution } from "../shell"
 
 const runningProcs = new Set<CommandProcess>()
 let exitHookRegistered = false

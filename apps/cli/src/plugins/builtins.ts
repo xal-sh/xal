@@ -17,6 +17,7 @@ import projectInstructions from "./project-instructions/plugin"
 import lsp from "./lsp/plugin"
 import mcp from "./mcp/plugin"
 import search from "./search/plugin"
+import shell from "./shell/plugin"
 import tui from "./tui/plugin"
 import web from "./web/plugin"
 import xai from "./xai/plugin"
@@ -26,6 +27,7 @@ export const builtinPlugins: Plugin[] = [
   promptCommands,
   memory,
   projectInstructions,
+  shell,
   files,
   search,
   web,

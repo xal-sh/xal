@@ -1,7 +1,7 @@
 import { existsSync, realpathSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { asString } from "../../lib/json"
-import type { ProcessSandbox } from "../types"
+import type { ProcessSandbox } from "../../tools/types"
 
 const available = process.platform === "darwin" && existsSync("/usr/bin/sandbox-exec")
 

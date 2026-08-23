@@ -17,6 +17,7 @@ function context(config: Record<string, unknown>): PluginContext {
     signal: new AbortController().signal,
     registerTool() {},
     unregisterTool() {},
+    registerToolSessionDisposer() {},
     registerProvider() {},
     registerCli() {},
     registerCommand() {},

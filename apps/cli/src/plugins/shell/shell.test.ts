@@ -6,9 +6,9 @@ import { appInfo } from "../../app-info"
 import { getJob, stopJob, suppressDelivery, waitForProcessOutput } from "../../background/jobs"
 import { createNativeProcess } from "../../native"
 import { REDACTION_MARKER, replaceSecretValues } from "../../secrets/redactor"
-import { spawnCommand } from "../shell/process"
-import { disposeShellSession, executeShellCommand } from "../shell/shell"
-import { bashTool } from "./tool"
+import { spawnCommand } from "./process"
+import { disposeShellSession, executeShellCommand } from "./shell"
+import { bashTool } from "./bash/tool"
 
 const sessions = new Set<string>()
 

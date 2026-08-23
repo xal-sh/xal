@@ -1,12 +1,18 @@
 import { describe, expect, test } from "bun:test"
-import { setUserRules } from "../../permissions/rules"
-import { evaluatePolicy } from "../../permissions/service"
-import type { PermissionRequest } from "../../permissions/types"
-import { sandboxAvailable } from "../shell/sandbox"
-import { registerInteractiveShell } from "./register"
+import { contributeRules, setUserRules } from "../../../permissions/rules"
+import { evaluatePolicy, registerPolicyRule } from "../../../permissions/service"
+import type { PermissionRequest } from "../../../permissions/types"
+import { sandboxAvailable } from "../sandbox"
+import { registerInteractiveShell } from "../plugin"
 import { execCommandTool, workdirEscapesWorkspace, writeStdinTool } from "./tool"
 
-registerInteractiveShell()
+registerInteractiveShell({
+  registerPermissionRules: contributeRules,
+  registerPolicyRule,
+  registerPrompt() {},
+  registerTool() {},
+  registerToolSessionDisposer() {},
+})
 
 function request(overrides: Partial<PermissionRequest>): PermissionRequest {
   return {

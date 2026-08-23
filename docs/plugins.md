@@ -34,7 +34,7 @@ Plugins may contribute system-prompt sections with `ctx.registerPrompt`. Reserve
 
 Plugins can contribute slash commands with `ctx.registerCommand`. Commands known synchronously belong in `register`; commands discovered from files or services may be added during `bootstrap`, before interactive input is released.
 
-When the UI or CLI exits, Xal aborts `ctx.signal` so in-progress bootstrap work can stop, waits for bootstrap to settle, and then runs `shutdown` in reverse plugin order. Plugins that own child processes or network connections close them there. A dynamically discovered tool can be removed with `ctx.unregisterTool(tool)` using the same tool object that was registered.
+When the UI or CLI exits, Xal aborts `ctx.signal` so in-progress bootstrap work can stop, waits for bootstrap to settle, and then runs `shutdown` in reverse plugin order. Plugins that own child processes or network connections close them there. A dynamically discovered tool can be removed with `ctx.unregisterTool(tool)` using the same tool object that was registered. Tools that retain resources for an agent session can register per-session cleanup with `ctx.registerToolSessionDisposer`.
 
 ## Hooks
 

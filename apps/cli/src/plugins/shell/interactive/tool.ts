@@ -1,9 +1,9 @@
 import { realpathSync } from "node:fs"
 import { isAbsolute, relative, resolve, sep } from "node:path"
-import { asNumber, asString } from "../../lib/json"
-import type { Tool } from "../types"
-import { sandboxAccessOf, sandboxAvailable, sandboxRequested, type SandboxAccess } from "../shell/sandbox"
-import { splitCommand } from "../shell/split"
+import { asNumber, asString } from "../../../lib/json"
+import type { Tool } from "../../../tools/types"
+import { sandboxAccessOf, sandboxAvailable, sandboxRequested, type SandboxAccess } from "../sandbox"
+import { splitCommand } from "../split"
 import {
   createSessionEmitter,
   disposeInteractiveSessions,

@@ -3,7 +3,7 @@ import type { AgentSession } from "../../../agent/session/session"
 import { saveThinking, thinkingOptions } from "../../../config/thinking"
 import { describeError } from "../../../lib/error"
 import { nextPermissionMode } from "../../../permissions/modes"
-import { hasPromotion, requestBackground } from "../../../tools/bash/promote"
+import { hasPromotion, requestBackground } from "../../../background/promotion"
 import type { Screen } from "../screen"
 import type { ResolvedShortcuts, ShortcutAction, ShortcutStroke } from "../shortcuts"
 

@@ -1,11 +1,11 @@
-import { createJobBuffer } from "../../background/buffer"
-import { nativeNormalizeProcessOutput } from "../../native"
-import { createRedactedStream } from "../../secrets/redactor"
-import type { ProcessTermination } from "../shell/process"
-import { spawnPtyCommand } from "../shell/process"
-import { shellEnvironment, shellLaunch } from "../shell/shell"
-import type { SandboxAccess } from "../shell/sandbox"
-import { commandSegments } from "../shell/split"
+import { createJobBuffer } from "../../../background/buffer"
+import { nativeNormalizeProcessOutput } from "../../../native"
+import { createRedactedStream } from "../../../secrets/redactor"
+import type { ProcessTermination } from "../process"
+import { spawnPtyCommand } from "../process"
+import { shellEnvironment, shellLaunch } from "../shell"
+import type { SandboxAccess } from "../sandbox"
+import { commandSegments } from "../split"
 
 const SESSION_TIMEOUT_MS = 600_000
 const COMPLETED_RETENTION_MS = 600_000
