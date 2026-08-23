@@ -12,7 +12,8 @@ const COMPLETED_RETENTION_MS = 600_000
 const MAX_RAW_CHARS = 256 * 1024
 
 function inputAfterWrite(pending: string, text: string): string {
-  for (const char of text) {
+  for (let textIndex = 0; textIndex < text.length; textIndex += 1) {
+    const char = text[textIndex]!
     if (char === "\u0003") {
       pending = ""
       continue
@@ -27,6 +28,7 @@ function inputAfterWrite(pending: string, text: string): string {
     for (let index = pending.length - 2; index >= 0 && pending[index] === "\\"; index -= 1) backslashes += 1
     if (backslashes % 2 === 1) {
       pending = pending.slice(0, -2)
+      if (char === "\r" && text[textIndex + 1] === "\n") textIndex += 1
       continue
     }
     if (pending.trim() === "" || commandSegments(pending)) pending = ""
@@ -156,16 +158,27 @@ export function disposeInteractiveSessions(ownerId: string): void {
   }
 }
 
-export function createSessionEmitter(update: (text: string) => void): { emit(text: string): void; end(): void } {
+export function createSessionEmitter(update: (text: string) => void): {
+  emit(text: string): void
+  end(): void
+  text(): string
+} {
   const redactor = createRedactedStream()
+  const chunks: string[] = []
+  const publish = (text: string): void => {
+    if (!text) return
+    chunks.push(text)
+    update(text)
+  }
   return {
     emit(text) {
-      const redacted = redactor.write(text)
-      if (redacted) update(redacted)
+      publish(redactor.write(text))
     },
     end() {
-      const tail = redactor.end()
-      if (tail) update(tail)
+      publish(redactor.end())
+    },
+    text() {
+      return chunks.join("")
     },
   }
 }

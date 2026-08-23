@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test"
+import { REDACTION_MARKER, replaceSecretValues } from "../../secrets/redactor"
 import {
+  createSessionEmitter,
   disposeInteractiveSessions,
   dropInteractiveSession,
   interactiveSession,
@@ -8,6 +10,21 @@ import {
 import { writeStdinTool } from "./tool"
 
 describe("interactive session", () => {
+  test("returns the same redacted output it streams", () => {
+    replaceSecretValues("interactive-session-test", ["split-secret"])
+    try {
+      const updates: string[] = []
+      const emitter = createSessionEmitter((text) => updates.push(text))
+      emitter.emit("before split-")
+      emitter.emit("secret after")
+      emitter.end()
+      expect(emitter.text()).toBe(`before ${REDACTION_MARKER} after`)
+      expect(updates.join("")).toBe(emitter.text())
+    } finally {
+      replaceSecretValues("interactive-session-test", [])
+    }
+  })
+
   test("returns completed PTY output", async () => {
     const session = startInteractiveSession("printf hello", process.cwd(), process.cwd(), undefined, "test")
     const termination = await session.done
@@ -53,6 +70,14 @@ describe("interactive session", () => {
     ).toEqual({ subject: "/etc/hosts\n" })
     session.write("/etc/hosts\n")
     session.write("rm \\\n")
+    expect(
+      writeStdinTool.permission?.(
+        { session_id: session.id, chars: "/etc/hosts\n" },
+        { cwd: process.cwd(), sessionId: "test" },
+      ),
+    ).toEqual({ subject: "rm /etc/hosts\n" })
+    session.write("/etc/hosts\n")
+    session.write("rm \\\r\n")
     expect(
       writeStdinTool.permission?.(
         { session_id: session.id, chars: "/etc/hosts\n" },

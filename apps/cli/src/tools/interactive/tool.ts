@@ -191,15 +191,9 @@ export const execCommandTool: Tool = {
     if (ctx.signal.aborted) onAbort()
 
     try {
-      const outputChunks: string[] = []
-      const emit = (text: string): void => {
-        if (!text) return
-        outputChunks.push(text)
-        emitter.emit(text)
-      }
-      await collectSessionOutput(session, yieldTimeOf(args), ctx.signal, emit)
+      await collectSessionOutput(session, yieldTimeOf(args), ctx.signal, (text) => emitter.emit(text))
       emitter.end()
-      const output = outputChunks.join("")
+      const output = emitter.text()
       if (ctx.signal.aborted) {
         return { output: output.trimEnd() ? `${output.trimEnd()}\n(interrupted by user)` : "(interrupted by user)" }
       }
@@ -288,15 +282,9 @@ export const writeStdinTool: Tool = {
       if (resize) session.resize(resize.cols, resize.rows)
       const chars = charsOf(args)
       if (chars) session.write(chars)
-      const outputChunks: string[] = []
-      const emit = (text: string): void => {
-        if (!text) return
-        outputChunks.push(text)
-        emitter.emit(text)
-      }
-      await collectSessionOutput(session, yieldTimeOf(args), ctx.signal, emit)
+      await collectSessionOutput(session, yieldTimeOf(args), ctx.signal, (text) => emitter.emit(text))
       emitter.end()
-      const output = outputChunks.join("")
+      const output = emitter.text()
       if (ctx.signal.aborted) {
         return { output: output.trimEnd() ? `${output.trimEnd()}\n(interrupted by user)` : "(interrupted by user)" }
       }
