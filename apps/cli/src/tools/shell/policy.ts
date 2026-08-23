@@ -1,6 +1,7 @@
 import { isDenied, matchRules } from "../../permissions/rules"
 import type { PermissionRequest, PolicyDecision } from "../../permissions/types"
 import { commandEscapesWorkspace, commandSubjects } from "./risk"
+import { commandSegments } from "./split"
 
 const RISKY_COMMANDS = [
   "sudo *",
@@ -22,6 +23,15 @@ const RISKY_COMMANDS = [
 
 export function commandRiskRules(tool: string): string[] {
   return RISKY_COMMANDS.map((pattern) => `${tool}(${pattern})`)
+}
+
+export function commandPolicy(request: PermissionRequest, command: string): PolicyDecision | undefined {
+  const segments = commandSegments(command)
+  if (!segments) return "ask"
+  const decisions = segments.map((segment) => commandSegmentPolicy(request, segment))
+  if (decisions.includes("deny")) return "deny"
+  if (decisions.includes("ask")) return "ask"
+  return decisions.every((decision) => decision === "allow") ? "allow" : undefined
 }
 
 export function commandSegmentPolicy(request: PermissionRequest, segment: string): PolicyDecision | undefined {

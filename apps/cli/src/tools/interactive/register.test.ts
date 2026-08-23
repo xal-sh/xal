@@ -29,13 +29,22 @@ describe("interactive shell policy", () => {
     expect(await evaluatePolicy(request({ args, subject: "touch marker" }))).toBe("ask")
   })
 
-  test("asks before writing to an interactive process but allows polling", async () => {
+  test("applies Bash command risk to input and allows polling", async () => {
     expect(
       await evaluatePolicy(
         request({
           tool: writeStdinTool.name,
-          args: { session_id: 1, chars: "remove outside file" },
-          subject: "remove outside file",
+          args: { session_id: 1, chars: "printf ok\n" },
+          subject: "printf ok\n",
+        }),
+      ),
+    ).toBe("allow")
+    expect(
+      await evaluatePolicy(
+        request({
+          tool: writeStdinTool.name,
+          args: { session_id: 1, chars: "rm /etc/hosts\n" },
+          subject: "rm /etc/hosts\n",
         }),
       ),
     ).toBe("ask")
@@ -49,17 +58,30 @@ describe("interactive shell policy", () => {
       ),
     ).toBe("ask")
     expect(
+      await evaluatePolicy(request({ tool: writeStdinTool.name, args: { session_id: 1, chars: "\n" }, subject: "\n" })),
+    ).toBe("allow")
+    expect(
       await evaluatePolicy(
         request({ tool: writeStdinTool.name, args: { session_id: 1, chars: "" }, subject: "", readOnly: true }),
       ),
     ).toBe("allow")
   })
 
-  test("preserves nested deny rules across shell option layouts", async () => {
-    setUserRules({ deny: ["exec_command(rm *)"] })
+  test("preserves deny rules across interactive command paths", async () => {
+    setUserRules({ deny: ["exec_command(rm *)", "write_stdin(rm *)"] })
     for (const command of ["bash -c -- '-x; rm /etc/hosts' argv0", "bash -c -O extglob -- 'rm /etc/hosts' argv0"]) {
       expect(await evaluatePolicy(request({ args: { cmd: command }, subject: command, mode: "yolo" }))).toBe("deny")
     }
+    expect(
+      await evaluatePolicy(
+        request({
+          tool: writeStdinTool.name,
+          args: { session_id: 1, chars: "rm /etc/hosts\n" },
+          subject: "rm /etc/hosts\n",
+          mode: "yolo",
+        }),
+      ),
+    ).toBe("deny")
     setUserRules({})
   })
 })

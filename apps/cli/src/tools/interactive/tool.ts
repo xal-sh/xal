@@ -61,8 +61,12 @@ function resizeOf(args: Record<string, unknown>): { cols?: number; rows?: number
   return cols === undefined && rows === undefined ? undefined : { cols, rows }
 }
 
+export function resizeRequested(args: Record<string, unknown>): boolean {
+  return resizeOf(args) !== undefined
+}
+
 function changesInteractiveSession(args: Record<string, unknown>): boolean {
-  return charsOf(args) !== "" || resizeOf(args) !== undefined
+  return charsOf(args) !== "" || resizeRequested(args)
 }
 
 function sessionIdOf(args: Record<string, unknown>): number | undefined {
@@ -71,7 +75,7 @@ function sessionIdOf(args: Record<string, unknown>): number | undefined {
   return requested
 }
 
-function charsOf(args: Record<string, unknown>): string {
+export function charsOf(args: Record<string, unknown>): string {
   return asString(args.chars) ?? ""
 }
 
