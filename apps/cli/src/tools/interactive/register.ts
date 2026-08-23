@@ -37,10 +37,13 @@ export function registerInteractiveShell(): void {
         if (commandDecision === "ask" || resizeDecision === "ask") return "ask"
         return commandDecision ?? resizeDecision
       }
-      if (request.tool !== execCommandTool.name || sandboxRequested(request.args)) return undefined
-      if (workdirEscapesWorkspace(request.args, request.cwd)) return "ask"
+      if (request.tool !== execCommandTool.name) return undefined
       const command = commandOf(request.args)
-      return command ? commandPolicy(request, command) : undefined
+      const commandDecision = command ? commandPolicy(request, command) : undefined
+      if (commandDecision === "deny") return "deny"
+      if (sandboxRequested(request.args)) return undefined
+      if (workdirEscapesWorkspace(request.args, request.cwd)) return "ask"
+      return commandDecision
     },
   })
 }

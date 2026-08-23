@@ -11,29 +11,49 @@ const SESSION_TIMEOUT_MS = 600_000
 const COMPLETED_RETENTION_MS = 600_000
 const MAX_RAW_CHARS = 256 * 1024
 
-function inputAfterWrite(pending: string, text: string): string {
+interface InputTransition {
+  pending: string
+  subject: string
+}
+
+function eraseInputWord(input: string): string {
+  return input.replace(/\s+$/, "").replace(/\S+$/, "")
+}
+
+function inputTransition(pending: string, text: string): InputTransition {
+  const submitted: string[] = []
   for (let textIndex = 0; textIndex < text.length; textIndex += 1) {
     const char = text[textIndex]!
-    if (char === "\u0003") {
+    if (char === "\u0003" || char === "\u0015") {
       pending = ""
+      continue
+    }
+    if (char === "\u0017") {
+      pending = eraseInputWord(pending)
       continue
     }
     if (char === "\u007f" || char === "\b") {
       pending = pending.slice(0, -1)
       continue
     }
-    pending += char
+    pending += char === "\r" ? "\n" : char
     if (char !== "\n" && char !== "\r") continue
+    if (char === "\r" && text[textIndex + 1] === "\n") textIndex += 1
     let backslashes = 0
     for (let index = pending.length - 2; index >= 0 && pending[index] === "\\"; index -= 1) backslashes += 1
     if (backslashes % 2 === 1) {
       pending = pending.slice(0, -2)
-      if (char === "\r" && text[textIndex + 1] === "\n") textIndex += 1
       continue
     }
-    if (pending.trim() === "" || commandSegments(pending)) pending = ""
+    if (pending.trim() === "") {
+      pending = ""
+      continue
+    }
+    if (!commandSegments(pending)) continue
+    submitted.push(pending)
+    pending = ""
   }
-  return pending
+  return { pending, subject: submitted.join("") + pending }
 }
 
 export interface InteractiveSession {
@@ -75,10 +95,12 @@ export function startInteractiveSession(
 
   const decoder = new TextDecoder()
   const raw = createJobBuffer(0, MAX_RAW_CHARS)
+  const outputRedactor = createRedactedStream()
   let rawCursor = 0
   let currentCols = cols
   let currentRows = rows
   let finished = false
+  let redactionEnded = false
   let pendingInput = ""
 
   proc.onOutput((chunk) => {
@@ -98,16 +120,28 @@ export function startInteractiveSession(
     entry.expiry.unref()
   })
 
+  const redactOutput = (text: string): string => {
+    if (redactionEnded) {
+      if (text) throw new Error("interactive output arrived after redaction ended")
+      return ""
+    }
+    const output = outputRedactor.write(text)
+    if (!finished) return output
+    redactionEnded = true
+    return output + outputRedactor.end()
+  }
+
   const session: InteractiveSession = {
     id,
     command,
     done,
     finished: () => finished,
     timedOut: () => proc.timedOut(),
-    inputSubject: (text) => pendingInput + text,
+    inputSubject: (text) => inputTransition(pendingInput, text).subject,
     write: (text) => {
+      const transition = inputTransition(pendingInput, text)
       proc.write(text)
-      pendingInput = inputAfterWrite(pendingInput, text)
+      pendingInput = transition.pending
     },
     resize: (cols, rows) => {
       currentCols = cols ?? currentCols
@@ -118,19 +152,21 @@ export function startInteractiveSession(
       const omitted = raw.omitted()
       const retained = raw.tail()
       const total = omitted + retained.length
-      if (rawCursor >= total) return ""
+      if (rawCursor >= total) return redactOutput("")
       if (rawCursor < omitted) {
         const missed = omitted - rawCursor
         rawCursor = total
-        return `\n... ${missed} characters omitted ...\n${nativeNormalizeProcessOutput(retained)}`
+        return redactOutput(`\n... ${missed} characters omitted ...\n${nativeNormalizeProcessOutput(retained)}`)
       }
       const start = rawCursor - omitted
       rawCursor = total
       const normalized = nativeNormalizeProcessOutput(retained)
       const prefix = nativeNormalizeProcessOutput(retained.slice(0, start))
-      return normalized.startsWith(prefix)
-        ? normalized.slice(prefix.length)
-        : nativeNormalizeProcessOutput(retained.slice(start))
+      return redactOutput(
+        normalized.startsWith(prefix)
+          ? normalized.slice(prefix.length)
+          : nativeNormalizeProcessOutput(retained.slice(start)),
+      )
     },
     kill: () => proc.kill(),
   }

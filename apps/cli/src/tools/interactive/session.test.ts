@@ -25,6 +25,34 @@ describe("interactive session", () => {
     }
   })
 
+  test("redacts a secret split across separate drains", async () => {
+    replaceSecretValues("interactive-session-test", ["split-secret"])
+    const session = startInteractiveSession(
+      "printf split-; sleep 0.5; printf secret",
+      process.cwd(),
+      process.cwd(),
+      undefined,
+      "test",
+    )
+    try {
+      let early = ""
+      for (let attempt = 0; attempt < 10; attempt++) {
+        await Bun.sleep(20)
+        early += session.drain()
+      }
+      expect(early).toBe("")
+      await session.done
+      expect(session.drain()).toBe(REDACTION_MARKER)
+    } finally {
+      if (!session.finished()) {
+        session.kill()
+        await session.done
+      }
+      dropInteractiveSession(session.id)
+      replaceSecretValues("interactive-session-test", [])
+    }
+  })
+
   test("returns completed PTY output", async () => {
     const session = startInteractiveSession("printf hello", process.cwd(), process.cwd(), undefined, "test")
     const termination = await session.done
@@ -84,6 +112,26 @@ describe("interactive session", () => {
         { cwd: process.cwd(), sessionId: "test" },
       ),
     ).toEqual({ subject: "rm /etc/hosts\n" })
+    session.write("/etc/hosts\n")
+    for (const { prefix, edit } of [
+      { prefix: "echo ", edit: "\u007f".repeat(5) },
+      { prefix: "echo ", edit: "\b".repeat(5) },
+      { prefix: "echo ", edit: "\u0015" },
+      { prefix: "echo safe ", edit: "\u0017\u0017" },
+    ]) {
+      session.write(prefix)
+      const chars = `${edit}rm /etc/hosts\n`
+      expect(
+        writeStdinTool.permission?.({ session_id: session.id, chars }, { cwd: process.cwd(), sessionId: "test" }),
+      ).toEqual({ subject: "rm /etc/hosts\n" })
+      session.write(chars)
+    }
+    expect(
+      writeStdinTool.permission?.(
+        { session_id: session.id, chars: "printf ok\rrm /etc/hosts\r" },
+        { cwd: process.cwd(), sessionId: "test" },
+      ),
+    ).toEqual({ subject: "printf ok\nrm /etc/hosts\n" })
     session.kill()
     await session.done
     dropInteractiveSession(session.id)

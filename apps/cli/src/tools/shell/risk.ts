@@ -236,6 +236,11 @@ function commandStringOption(word: string): boolean {
   return word.startsWith("-") && !word.startsWith("--") && word.slice(1).includes("c")
 }
 
+function groupedShellValueOptions(word: string): number {
+  if ((!word.startsWith("-") && !word.startsWith("+")) || word.startsWith("--")) return 0
+  return [...word.slice(1)].filter((option) => option === "O" || option === "o").length
+}
+
 function embeddedCommands(words: Word[]): EmbeddedCommands {
   const segments: string[] = []
   for (let index = 0; index < words.length; index++) {
@@ -250,6 +255,9 @@ function embeddedCommands(words: Word[]): EmbeddedCommands {
         const word = words[option]!
         if (!commandStringOption(word.text)) continue
         let operand = option + 1
+        const groupedValues = groupedShellValueOptions(word.text)
+        if (groupedValues > 0 && !words[operand + groupedValues - 1]) return { segments, unsafe: true }
+        operand += groupedValues
         while (operand < words.length) {
           const candidate = words[operand]!.text
           if (candidate === "--") {
@@ -267,7 +275,9 @@ function embeddedCommands(words: Word[]): EmbeddedCommands {
           }
           if (candidate.startsWith("--")) return { segments, unsafe: true }
           if (!candidate.startsWith("-") && !candidate.startsWith("+")) break
-          operand += 1
+          const candidateValues = groupedShellValueOptions(candidate)
+          if (!words[operand + candidateValues]) return { segments, unsafe: true }
+          operand += candidateValues + 1
         }
         script = words[operand]
         if (!script) return { segments, unsafe: true }

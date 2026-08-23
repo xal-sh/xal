@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { setUserRules } from "../../permissions/rules"
 import { evaluatePolicy } from "../../permissions/service"
 import type { PermissionRequest } from "../../permissions/types"
+import { sandboxAvailable } from "../shell/sandbox"
 import { registerInteractiveShell } from "./register"
 import { execCommandTool, workdirEscapesWorkspace, writeStdinTool } from "./tool"
 
@@ -96,20 +97,38 @@ describe("interactive shell policy", () => {
 
   test("preserves deny rules across interactive command paths", async () => {
     setUserRules({ deny: ["exec_command(rm *)", "write_stdin(rm *)"] })
-    for (const command of ["bash -c -- '-x; rm /etc/hosts' argv0", "bash -c -O extglob -- 'rm /etc/hosts' argv0"]) {
-      expect(await evaluatePolicy(request({ args: { cmd: command }, subject: command, mode: "yolo" }))).toBe("deny")
+    try {
+      for (const command of [
+        "bash -c -- '-x; rm /etc/hosts' argv0",
+        "bash -c -O extglob -- 'rm /etc/hosts' argv0",
+        "bash -xcO extglob 'rm /etc/hosts'",
+      ]) {
+        expect(await evaluatePolicy(request({ args: { cmd: command }, subject: command, mode: "yolo" }))).toBe("deny")
+      }
+      const wrapped = "bash -c 'rm -rf .git'"
+      expect(
+        await evaluatePolicy(request({ args: { cmd: wrapped, workdir: ".." }, subject: wrapped, mode: "yolo" })),
+      ).toBe("deny")
+      if (sandboxAvailable()) {
+        expect(
+          await evaluatePolicy(
+            request({ args: { cmd: wrapped, sandbox: "workspace" }, subject: wrapped, sandboxed: true }),
+          ),
+        ).toBe("deny")
+      }
+      expect(
+        await evaluatePolicy(
+          request({
+            tool: writeStdinTool.name,
+            args: { session_id: 1, chars: "/etc/hosts\n" },
+            subject: "rm /etc/hosts\n",
+            mode: "yolo",
+          }),
+        ),
+      ).toBe("deny")
+    } finally {
+      setUserRules({})
     }
-    expect(
-      await evaluatePolicy(
-        request({
-          tool: writeStdinTool.name,
-          args: { session_id: 1, chars: "/etc/hosts\n" },
-          subject: "rm /etc/hosts\n",
-          mode: "yolo",
-        }),
-      ),
-    ).toBe("deny")
-    setUserRules({})
   })
 })
 
