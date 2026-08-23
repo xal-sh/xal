@@ -24,8 +24,10 @@ export function registerInteractiveShell(): void {
   registerPolicyRule({
     evaluate(request) {
       if (request.tool === writeStdinTool.name) {
-        const command = charsOf(request.args).trim()
-        if (command) return commandPolicy(request, command)
+        if (charsOf(request.args) !== "") {
+          const command = request.subject?.trim() ?? ""
+          return command ? commandPolicy(request, command) : undefined
+        }
         return resizeRequested(request.args) ? (matchRules(request) ?? "ask") : undefined
       }
       if (request.tool !== execCommandTool.name || sandboxRequested(request.args)) return undefined

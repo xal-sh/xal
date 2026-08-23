@@ -262,9 +262,11 @@ export const writeStdinTool: Tool = {
   concurrency() {
     return "exclusive"
   },
-  permission(args) {
+  permission(args, ctx) {
     const chars = charsOf(args)
-    return { subject: chars || (resizeOf(args) ? "resize terminal" : "") }
+    const id = sessionIdOf(args)
+    const session = id === undefined ? undefined : interactiveSession(id, ctx.sessionId)
+    return { subject: chars ? (session?.inputSubject(chars) ?? chars) : resizeOf(args) ? "resize terminal" : "" }
   },
   async execute(args, ctx) {
     const id = sessionIdOf(args)

@@ -52,6 +52,24 @@ describe("interactive shell policy", () => {
       await evaluatePolicy(
         request({
           tool: writeStdinTool.name,
+          args: { session_id: 1, chars: "rm " },
+          subject: "rm ",
+        }),
+      ),
+    ).toBe("allow")
+    expect(
+      await evaluatePolicy(
+        request({
+          tool: writeStdinTool.name,
+          args: { session_id: 1, chars: "/etc/hosts\n" },
+          subject: "rm /etc/hosts\n",
+        }),
+      ),
+    ).toBe("ask")
+    expect(
+      await evaluatePolicy(
+        request({
+          tool: writeStdinTool.name,
           args: { session_id: 1, chars: "", cols: 120 },
           subject: "resize terminal",
         }),
@@ -76,7 +94,7 @@ describe("interactive shell policy", () => {
       await evaluatePolicy(
         request({
           tool: writeStdinTool.name,
-          args: { session_id: 1, chars: "rm /etc/hosts\n" },
+          args: { session_id: 1, chars: "/etc/hosts\n" },
           subject: "rm /etc/hosts\n",
           mode: "yolo",
         }),

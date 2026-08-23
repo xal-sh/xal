@@ -5,6 +5,7 @@ import {
   interactiveSession,
   startInteractiveSession,
 } from "./session"
+import { writeStdinTool } from "./tool"
 
 describe("interactive session", () => {
   test("returns completed PTY output", async () => {
@@ -28,6 +29,37 @@ describe("interactive session", () => {
     const termination = await session.done
     expect(termination).toEqual({ status: "exited", exitCode: 0 })
     expect(session.drain()).toContain("got:hi")
+    dropInteractiveSession(session.id)
+  })
+
+  test("accumulates split input for permission checks", async () => {
+    const session = startInteractiveSession("cat", process.cwd(), process.cwd(), undefined, "test")
+    expect(
+      writeStdinTool.permission?.({ session_id: session.id, chars: "rm " }, { cwd: process.cwd(), sessionId: "test" }),
+    ).toEqual({ subject: "rm " })
+    session.write("rm ")
+    expect(
+      writeStdinTool.permission?.(
+        { session_id: session.id, chars: "/etc/hosts\n" },
+        { cwd: process.cwd(), sessionId: "test" },
+      ),
+    ).toEqual({ subject: "rm /etc/hosts\n" })
+    expect(
+      writeStdinTool.permission?.(
+        { session_id: session.id, chars: "/etc/hosts\n" },
+        { cwd: process.cwd(), sessionId: "other" },
+      ),
+    ).toEqual({ subject: "/etc/hosts\n" })
+    session.write("/etc/hosts\n")
+    session.write("rm \\\n")
+    expect(
+      writeStdinTool.permission?.(
+        { session_id: session.id, chars: "/etc/hosts\n" },
+        { cwd: process.cwd(), sessionId: "test" },
+      ),
+    ).toEqual({ subject: "rm /etc/hosts\n" })
+    session.kill()
+    await session.done
     dropInteractiveSession(session.id)
   })
 

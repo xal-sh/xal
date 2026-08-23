@@ -127,11 +127,18 @@ test("webfetch rejects unsupported schemes and internal addresses", async () => 
   await expect(webfetchTool.execute({ url: "http://127.0.0.1/private" }, context())).rejects.toThrow(
     "URL resolves to an internal address",
   )
-  expect(webfetchTool.permission?.({ url: "https://token@example.com/docs/api" }, { cwd: process.cwd() })).toEqual({
+  expect(
+    webfetchTool.permission?.(
+      { url: "https://token@example.com/docs/api" },
+      { cwd: process.cwd(), sessionId: "test-session" },
+    ),
+  ).toEqual({
     subject: "https://example.com/docs/api",
     suggestion: "webfetch(https://example.com/*)",
   })
-  expect(webfetchTool.permission?.({ url: "file:///etc/passwd" }, { cwd: process.cwd() })).toEqual({
+  expect(
+    webfetchTool.permission?.({ url: "file:///etc/passwd" }, { cwd: process.cwd(), sessionId: "test-session" }),
+  ).toEqual({
     subject: "file:///etc/passwd",
   })
 })

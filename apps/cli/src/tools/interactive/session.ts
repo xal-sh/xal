@@ -5,10 +5,34 @@ import type { ProcessTermination } from "../shell/process"
 import { spawnPtyCommand } from "../shell/process"
 import { shellEnvironment, shellLaunch } from "../shell/shell"
 import type { SandboxAccess } from "../shell/sandbox"
+import { commandSegments } from "../shell/split"
 
 const SESSION_TIMEOUT_MS = 600_000
 const COMPLETED_RETENTION_MS = 600_000
 const MAX_RAW_CHARS = 256 * 1024
+
+function inputAfterWrite(pending: string, text: string): string {
+  for (const char of text) {
+    if (char === "\u0003") {
+      pending = ""
+      continue
+    }
+    if (char === "\u007f" || char === "\b") {
+      pending = pending.slice(0, -1)
+      continue
+    }
+    pending += char
+    if (char !== "\n" && char !== "\r") continue
+    let backslashes = 0
+    for (let index = pending.length - 2; index >= 0 && pending[index] === "\\"; index -= 1) backslashes += 1
+    if (backslashes % 2 === 1) {
+      pending = pending.slice(0, -2)
+      continue
+    }
+    if (commandSegments(pending)) pending = ""
+  }
+  return pending
+}
 
 export interface InteractiveSession {
   id: number
@@ -16,6 +40,7 @@ export interface InteractiveSession {
   done: Promise<ProcessTermination>
   finished(): boolean
   timedOut(): boolean
+  inputSubject(text: string): string
   write(text: string): void
   resize(cols: number | undefined, rows: number | undefined): void
   drain(): string
@@ -52,6 +77,7 @@ export function startInteractiveSession(
   let currentCols = cols
   let currentRows = rows
   let finished = false
+  let pendingInput = ""
 
   proc.onOutput((chunk) => {
     const text = decoder.decode(chunk, { stream: true })
@@ -76,7 +102,11 @@ export function startInteractiveSession(
     done,
     finished: () => finished,
     timedOut: () => proc.timedOut(),
-    write: (text) => proc.write(text),
+    inputSubject: (text) => pendingInput + text,
+    write: (text) => {
+      proc.write(text)
+      pendingInput = inputAfterWrite(pendingInput, text)
+    },
     resize: (cols, rows) => {
       currentCols = cols ?? currentCols
       currentRows = rows ?? currentRows
