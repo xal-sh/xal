@@ -34,6 +34,7 @@ describe("interactive session", () => {
 
   test("accumulates split input for permission checks", async () => {
     const session = startInteractiveSession("cat", process.cwd(), process.cwd(), undefined, "test")
+    session.write("\n\n\n")
     expect(
       writeStdinTool.permission?.({ session_id: session.id, chars: "rm " }, { cwd: process.cwd(), sessionId: "test" }),
     ).toEqual({ subject: "rm " })

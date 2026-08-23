@@ -20,6 +20,7 @@ const SESSION_TIMEOUT_S = 600
 const DEFAULT_COLS = 80
 const DEFAULT_ROWS = 24
 const MAX_DIMENSION = 65_535
+export const RESIZE_SUBJECT = "resize terminal"
 
 export function commandOf(args: Record<string, unknown>): string {
   return asString(args.cmd)?.trim() ?? ""
@@ -266,7 +267,7 @@ export const writeStdinTool: Tool = {
     const chars = charsOf(args)
     const id = sessionIdOf(args)
     const session = id === undefined ? undefined : interactiveSession(id, ctx.sessionId)
-    return { subject: chars ? (session?.inputSubject(chars) ?? chars) : resizeOf(args) ? "resize terminal" : "" }
+    return { subject: chars ? (session?.inputSubject(chars) ?? chars) : resizeOf(args) ? RESIZE_SUBJECT : "" }
   },
   async execute(args, ctx) {
     const id = sessionIdOf(args)

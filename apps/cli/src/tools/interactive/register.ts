@@ -1,5 +1,6 @@
-import { contributeRules, matchRules } from "../../permissions/rules"
+import { contributeRules, isDenied, matchRules } from "../../permissions/rules"
 import { registerPolicyRule } from "../../permissions/service"
+import type { PolicyDecision } from "../../permissions/types"
 import { registerTool } from "../registry"
 import { registerToolSessionDisposer } from "../session"
 import { commandPolicy, commandRiskRules } from "../shell/policy"
@@ -9,6 +10,7 @@ import {
   commandOf,
   disposeInteractiveToolSessions,
   execCommandTool,
+  RESIZE_SUBJECT,
   resizeRequested,
   workdirEscapesWorkspace,
   writeStdinTool,
@@ -24,11 +26,16 @@ export function registerInteractiveShell(): void {
   registerPolicyRule({
     evaluate(request) {
       if (request.tool === writeStdinTool.name) {
-        if (charsOf(request.args) !== "") {
-          const command = request.subject?.trim() ?? ""
-          return command ? commandPolicy(request, command) : undefined
+        const command = charsOf(request.args) === "" ? "" : (request.subject?.trim() ?? "")
+        const commandDecision = command ? commandPolicy(request, command) : undefined
+        let resizeDecision: PolicyDecision | undefined
+        if (resizeRequested(request.args)) {
+          const resizeRequest = { ...request, subject: RESIZE_SUBJECT }
+          resizeDecision = isDenied(resizeRequest) ? "deny" : (matchRules(resizeRequest) ?? "ask")
         }
-        return resizeRequested(request.args) ? (matchRules(request) ?? "ask") : undefined
+        if (commandDecision === "deny" || resizeDecision === "deny") return "deny"
+        if (commandDecision === "ask" || resizeDecision === "ask") return "ask"
+        return commandDecision ?? resizeDecision
       }
       if (request.tool !== execCommandTool.name || sandboxRequested(request.args)) return undefined
       if (workdirEscapesWorkspace(request.args, request.cwd)) return "ask"

@@ -29,7 +29,7 @@ function inputAfterWrite(pending: string, text: string): string {
       pending = pending.slice(0, -2)
       continue
     }
-    if (commandSegments(pending)) pending = ""
+    if (pending.trim() === "" || commandSegments(pending)) pending = ""
   }
   return pending
 }

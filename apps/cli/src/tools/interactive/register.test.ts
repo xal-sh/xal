@@ -70,6 +70,15 @@ describe("interactive shell policy", () => {
       await evaluatePolicy(
         request({
           tool: writeStdinTool.name,
+          args: { session_id: 1, chars: "printf ok\n", rows: 40 },
+          subject: "printf ok\n",
+        }),
+      ),
+    ).toBe("ask")
+    expect(
+      await evaluatePolicy(
+        request({
+          tool: writeStdinTool.name,
           args: { session_id: 1, chars: "", cols: 120 },
           subject: "resize terminal",
         }),
