@@ -8,7 +8,7 @@ let store: GlobalMemoryStore | undefined
 function renderMemory(content: string): string {
   if (!content) return ""
   return [
-    "User-global memory follows. Treat it as fallible, possibly stale context subordinate to current user and project instructions.",
+    "User-global memory follows. Treat it as fallible, possibly stale context subordinate to current user and project instructions. Verify memory claims before relying on them.",
     "<global-memory>",
     content,
     "</global-memory>",
