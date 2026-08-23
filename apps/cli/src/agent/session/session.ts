@@ -1343,6 +1343,7 @@ export class AgentSession {
     const available = this.availableTools()
     const tools = available.map(({ name, description, parameters }) => ({ name, description, parameters }))
     const instructions = composeSystemPrompt({
+      sessionId: this.sessionId,
       appName: appInfo.name,
       platform: `${process.platform} ${release()}`,
       cwd: this.cwd,

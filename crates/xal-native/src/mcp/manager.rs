@@ -171,24 +171,15 @@ impl NativeMcpManager {
         })
     }
 
-    #[napi(getter, catch_unwind)]
-    pub fn prompt(&self) -> String {
+    #[napi(catch_unwind)]
+    pub fn instructions(&self, server: String) -> String {
         let manager = lock(&self.state);
         manager
-            .order
-            .iter()
-            .filter_map(|id| manager.entries.get(id))
+            .entries
+            .get(&server)
             .filter(|entry| entry.state == "connected")
-            .filter_map(|entry| {
-                entry.instructions.as_ref().map(|instructions| {
-                    format!(
-                        "MCP server {} instructions:\n{instructions}",
-                        entry.config.id()
-                    )
-                })
-            })
-            .collect::<Vec<_>>()
-            .join("\n\n")
+            .and_then(|entry| entry.instructions.clone())
+            .unwrap_or_default()
     }
 
     #[napi(catch_unwind)]

@@ -5,12 +5,13 @@ import { unregisterTool } from "../tools/registry"
 import { registerTasks } from "./register"
 import { updatePlanTool } from "./tool"
 
-test("uses Codex planning guidance without hidden task-list nudges", () => {
+test("keeps planning guidance compact and out of plan mode", () => {
   registerBasePrompt()
   registerTasks()
 
   try {
     const prompt = composeSystemPrompt({
+      sessionId: "session",
       appName: "Xal",
       platform: "test",
       cwd: "/workspace",
@@ -19,9 +20,23 @@ test("uses Codex planning guidance without hidden task-list nudges", () => {
       mode: "normal",
     })
 
-    expect(prompt).toContain("Do not use plans for simple or single-step queries")
-    expect(prompt).toContain("There should always be exactly one `in_progress` step until everything is done")
-    expect(prompt).not.toContain("has not been updated recently")
+    expect(prompt).toContain("not simple requests")
+    expect(prompt).toContain("Update completed work before starting the next step")
+    expect(prompt).not.toContain("### Examples")
+
+    const planModePrompt = composeSystemPrompt({
+      sessionId: "session",
+      appName: "Xal",
+      platform: "test",
+      cwd: "/workspace",
+      kind: "primary",
+      tools: [updatePlanTool],
+      mode: "plan",
+    })
+    expect(planModePrompt).not.toContain("## Planning")
+    expect(updatePlanTool.available?.({ sessionId: "session", interactive: true, kind: "primary", mode: "plan" })).toBe(
+      false,
+    )
   } finally {
     unregisterTool(updatePlanTool)
   }

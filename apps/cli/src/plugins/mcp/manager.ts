@@ -201,6 +201,17 @@ export class McpManager {
     return this.exposedTools.get(sessionId)?.has(name) ?? false
   }
 
+  instructionsForSession(sessionId: string): string {
+    const exposed = this.exposedTools.get(sessionId)
+    if (!exposed) return ""
+    return [...new Set(this.descriptors.filter((tool) => exposed.has(tool.name)).map((tool) => tool.server))]
+      .flatMap((server) => {
+        const instructions = this.native.instructions(server).trim()
+        return instructions ? [`MCP server ${server} instructions:\n${instructions}`] : []
+      })
+      .join("\n\n")
+  }
+
   searchTools(sessionId: string, query: string, limit: number): string {
     const normalized = query.trim().toLowerCase()
     const terms = searchTerms(normalized)
@@ -254,10 +265,6 @@ export class McpManager {
     const lines = this.native.statusLines(id)
     if (!this.refreshFailure || lines.length === 0) return lines
     return [`${lines[0]} · warning: catalog refresh: ${this.refreshFailure}`, ...lines.slice(1)]
-  }
-
-  prompt(): string {
-    return this.native.prompt
   }
 
   resourceCatalog(server?: string): string {

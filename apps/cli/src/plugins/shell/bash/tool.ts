@@ -61,8 +61,8 @@ function parameters(): Record<string, unknown> {
 
 function description(): string {
   const base = `Execute a command with the user's shell in a persistent session: cd, exported variables, and aliases or functions defined by earlier commands stay in effect for later ones. Returns combined stdout and stderr followed by the exit code. Commands run without a TTY and are killed after ${DEFAULT_TIMEOUT_S} seconds unless timeout says otherwise. Managed background execution is selected with background:true; processes detached inside the shell are not tracked.`
-  if (!sandboxAvailable()) return `${base} Each command requires the user's approval before it runs.`
-  return `${base} Sandboxed commands run immediately with OS-enforced filesystem and network restrictions; other commands require the user's approval before they run.`
+  if (!sandboxAvailable()) return `${base} Commands follow the current permission mode.`
+  return `${base} Sandboxed commands use OS-enforced filesystem and network restrictions; other commands follow the current permission mode.`
 }
 
 export const bashTool: Tool = {

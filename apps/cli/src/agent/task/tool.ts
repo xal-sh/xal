@@ -31,7 +31,7 @@ function taskToolTitle(args: Record<string, unknown>): string {
 export const taskTool: SessionTool = {
   name: "task",
   get description() {
-    return `Dispatch a batch of independent tasks to background agents after delegation is authorized. Use only for concrete, bounded assignments that can run independently alongside useful local work; otherwise continue locally. The call returns agent ids immediately, runs up to ${settings().agents.maxConcurrent} agents at once, queues the rest, and automatically delivers each result back into this session. Agents start without conversation history. Read agents cannot modify files; write agents use the shared checkout or an isolated Git worktree.`
+    return `Dispatch a batch of independent assignments to background agents. The call returns agent ids immediately, runs up to ${settings().agents.maxConcurrent} agents at once, queues the rest, and automatically delivers each result to this session. Agents start without conversation history. Read agents cannot modify files; write agents use the shared checkout or an isolated Git worktree.`
   },
   parameters: {
     type: "object",
@@ -130,7 +130,7 @@ export function registerTaskAgents(): void {
     id: "task-delegation-policy",
     text(prompt) {
       if (prompt.kind !== "primary" || !prompt.tools.some((tool) => tool.name === taskTool.name)) return ""
-      return "Task agents are an available capability, not the default workflow. Do not dispatch task agents unless the user or applicable AGENTS.md or skill instructions explicitly ask for sub-agents, delegation, or parallel agent work. Requests for depth, thoroughness, research, investigation, or detailed codebase analysis do not authorize delegation."
+      return "Use task agents only when the user or applicable AGENTS.md or skill instructions explicitly request delegation. Depth, research, or thoroughness alone is not authorization."
     },
   })
   registerPrompt({

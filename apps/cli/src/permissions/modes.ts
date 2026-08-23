@@ -27,7 +27,7 @@ const builtins: ModeDefinition[] = [
     readOnly: false,
     skipAsk: true,
     guidance:
-      "Every action is pre-approved and runs without confirmation. Be correspondingly careful: prefer the narrowest command that does the job, and never run destructive operations the user did not ask for.",
+      "Every action is pre-approved and runs without confirmation. Prefer the narrowest action that works, never perform unrequested destructive work, and adjust rather than retry if an action is denied.",
     subagentGuidance:
       "This delegation inherits the parent's pre-approved mode. Be correspondingly careful: prefer the narrowest action that completes the assigned task.",
   },

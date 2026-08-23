@@ -49,7 +49,7 @@ export function selectShell(): ShellSelection {
 export function shellPrompt(): string {
   const shell = selectShell()
   const note = shell.diagnostic ? ` (${shell.diagnostic})` : ""
-  return `Shell commands run inside a persistent ${shell.label} session${note}: cd, exported variables, and aliases or functions defined by earlier commands stay in effect for later ones. The session starts without interactive rc files, so the user's interactive aliases are not loaded unless a command sources them.`
+  return `Shell: ${shell.label}${note}, without interactive rc files.`
 }
 
 export function shellLaunch(args: string[], cwd: string, sandbox: SandboxAccess | undefined): string[] {

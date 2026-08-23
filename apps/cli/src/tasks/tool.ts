@@ -44,6 +44,9 @@ export const updatePlanTool: SessionTool = {
     return true
   },
   sessionAware: true,
+  available(ctx) {
+    return ctx.mode !== "plan"
+  },
   async execute(args, ctx) {
     if (ctx.session.mode === "plan") {
       throw new Error("update_plan is a TODO/checklist tool and is not allowed in Plan mode")

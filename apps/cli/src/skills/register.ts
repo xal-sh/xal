@@ -8,12 +8,19 @@ import { loadSkills } from "./catalog"
 import { listSkills, replaceSkills } from "./registry"
 import { skillTool } from "./tool"
 
+export function compactSkillDescription(description: string): string {
+  const normalized = description.replace(/\s+/g, " ").trim()
+  if (normalized.length <= 160) return normalized
+  const boundary = normalized.lastIndexOf(" ", 159)
+  return `${normalized.slice(0, boundary > 80 ? boundary : 159).trimEnd()}…`
+}
+
 function catalogPrompt(): string {
   const skills = listSkills()
   if (skills.length === 0) return ""
-  const entries = skills.map((skill) => `- ${skill.name}: ${skill.description.replace(/\s+/g, " ")}`)
+  const entries = skills.map((skill) => `- ${skill.name}: ${compactSkillDescription(skill.description)}`)
   return [
-    "Reusable skills are available. Load a skill when its description matches the task. Full instructions stay out of context until loaded with the skill tool or injected by an explicit $name invocation.",
+    "Available skills follow. Load one when its description matches, or when the user explicitly invokes $name. Full instructions load on demand with the skill tool.",
     ...entries,
   ].join("\n")
 }

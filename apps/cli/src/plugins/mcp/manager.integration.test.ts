@@ -383,14 +383,16 @@ describe("native MCP manager", () => {
     )
     const searchResult = manager.searchTools("session", "echo a value", 8)
     expect(searchResult).toContain(echoTool.name)
+    expect(searchResult).not.toContain("Use fixture tools.")
     expect(searchResult).not.toContain("inputSchema")
+    expect(manager.instructionsForSession("session")).toBe("MCP server fixture instructions:\nUse fixture tools.")
+    expect(manager.instructionsForSession("other")).toBe("")
     expect(echoTool.available?.({ sessionId: "session", interactive: false, kind: "primary", mode: "normal" })).toBe(
       true,
     )
     expect(echoTool.available?.({ sessionId: "other", interactive: false, kind: "primary", mode: "normal" })).toBe(
       false,
     )
-    expect(manager.prompt()).toContain("Use fixture tools.")
     expect(manager.resourceCatalog()).toContain("fixture://two")
     expect(manager.promptCatalog()).toContain("hello")
 

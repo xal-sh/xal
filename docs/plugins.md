@@ -26,7 +26,7 @@ Plugin registration is transactional. If importing, validating, or registering a
 
 Xal keeps its built-in system prompt small: identity, current environment, permission state, and stateful workflows that the user explicitly entered, such as plan mode. Tool definitions reach the model through the provider's native tool schema. A tool description should explain capability, inputs, effects, limits, and failure conditions; it should not tell the model to prefer that tool or impose a general workflow.
 
-Plugins may contribute system-prompt sections with `ctx.registerPrompt`. Reserve these for runtime state, an explicitly enabled mode, or instructions intrinsic to the plugin as a whole. Project `AGENTS.md` files, the skill catalog, configured MCP server instructions, and global memory are intentional prompt contributions because the user enabled those context sources. Prompt hooks can replace individual user messages and therefore remain a separate, explicitly trusted extension point.
+Plugins may contribute system-prompt sections with `ctx.registerPrompt`. Reserve these for runtime state, an explicitly enabled mode, or instructions intrinsic to the plugin as a whole. Project `AGENTS.md` files, the compact skill catalog, and global memory are intentional prompt contributions because the user enabled those context sources. MCP server instructions stay deferred until a search loads tools from that server. Prompt hooks can replace individual user messages and therefore remain a separate, explicitly trusted extension point.
 
 ## Lifecycle
 

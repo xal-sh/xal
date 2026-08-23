@@ -45,11 +45,12 @@ test("keeps task mechanics in the tool contract and delegation policy in instruc
   const outcome = await runSettledTurn(session, { text: "Inspect the project.", images: [] })
   const request = provider.requests[0]
   if (!request) throw new Error("provider request was not recorded")
-  const delegationPolicy = "Task agents are an available capability, not the default workflow."
+  const delegationPolicy = "Use task agents only when"
 
   expect(outcome.status).toBe("completed")
   const task = request.tools.find((tool) => tool.name === "task")
-  expect(task?.description).toContain("concrete, bounded assignments")
+  expect(task?.description).toContain("independent assignments")
+  expect(task?.description).not.toContain("authorization")
   expect(request.instructions).toContain(delegationPolicy)
   expect(request.instructions).not.toContain("Use the smallest useful batch")
 })

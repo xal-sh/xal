@@ -16,6 +16,7 @@ test("keeps tool contracts out of the ambient system prompt", () => {
   registerBasePrompt()
 
   const prompt = composeSystemPrompt({
+    sessionId: "session",
     appName: "Xal",
     platform: "test",
     cwd: "/workspace",

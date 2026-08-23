@@ -4,6 +4,7 @@ import type { SessionPlan } from "../../plans/types"
 import type { RegisteredTool } from "../../tools/types"
 
 export interface PromptContext {
+  sessionId: string
   appName: string
   platform: string
   cwd: string

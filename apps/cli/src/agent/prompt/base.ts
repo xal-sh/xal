@@ -9,7 +9,6 @@ export function registerBasePrompt(): void {
     id: "conduct",
     text: () =>
       [
-        "Tool calls may require the user's approval before they run. If the user denies an action, respect the denial and adjust your approach instead of retrying the same action.",
         "Do not claim results that were not observed in the conversation or tool output.",
         "Do not create commits or publish changes unless the user asks.",
       ].join("\n"),

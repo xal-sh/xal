@@ -86,7 +86,6 @@ export interface NativeMcpCall {
 export interface NativeMcpManager {
   readonly hasResources: boolean
   readonly hasPrompts: boolean
-  readonly prompt: string
   connectAll(signal?: AbortSignal): Promise<void>
   reconnect(server?: string): Promise<void>
   remove(server: string): Promise<void>
@@ -94,6 +93,7 @@ export interface NativeMcpManager {
   close(): Promise<void>
   servers(): string
   statusLines(server?: string): string[]
+  instructions(server: string): string
   resourceCatalog(server?: string): string
   promptCatalog(server?: string): string
   readResource(request: string, signal?: AbortSignal): Promise<string>
@@ -762,6 +762,7 @@ export function parseNativeMcpManager(value: unknown): NativeMcpManager {
   const close = method("close")
   const servers = method("servers")
   const statusLines = method("statusLines")
+  const instructions = method("instructions")
   const resourceCatalog = method("resourceCatalog")
   const promptCatalog = method("promptCatalog")
   const readResource = method("readResource")
@@ -792,11 +793,6 @@ export function parseNativeMcpManager(value: unknown): NativeMcpManager {
       if (typeof output !== "boolean") throw new Error("native MCP manager returned an invalid value")
       return output
     },
-    get prompt() {
-      const output: unknown = value.prompt
-      if (typeof output !== "string") throw new Error("native MCP manager returned an invalid value")
-      return output
-    },
     async connectAll(signal) {
       if (signal?.aborted) throw signal.reason instanceof Error ? signal.reason : new Error("The operation was aborted")
       await voidCall(connectAll, [signal])
@@ -819,6 +815,9 @@ export function parseNativeMcpManager(value: unknown): NativeMcpManager {
     statusLines(server) {
       const output: unknown = Reflect.apply(statusLines, value, [server])
       return stringArray(output, "native MCP manager returned an invalid value")
+    },
+    instructions(server) {
+      return stringCall(instructions, [server])
     },
     resourceCatalog(server) {
       return stringCall(resourceCatalog, [server])
