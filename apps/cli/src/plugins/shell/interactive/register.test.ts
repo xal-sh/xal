@@ -101,6 +101,21 @@ describe("interactive shell policy", () => {
     ).toBe("allow")
   })
 
+  test("asks before every supported force-push form", async () => {
+    for (const command of [
+      "git push --force origin main",
+      "git push -f origin main",
+      "git push origin main --force",
+      "git push origin main -f",
+      "git push +main",
+      "git push origin +main",
+    ]) {
+      expect(await evaluatePolicy(request({ args: { cmd: command }, subject: command }))).toBe("ask")
+    }
+    const regularPush = "git push origin main"
+    expect(await evaluatePolicy(request({ args: { cmd: regularPush }, subject: regularPush }))).toBe("allow")
+  })
+
   test("preserves deny rules across interactive command paths", async () => {
     setUserRules({ deny: ["exec_command(rm *)", "write_stdin(rm *)"] })
     try {

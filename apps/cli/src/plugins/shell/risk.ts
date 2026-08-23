@@ -27,6 +27,8 @@ const SUPPORTED_SHELLS = new Set(["sh", "bash", "dash", "ksh", "mksh", "zsh"])
 
 const SHELL_VALUE_OPTIONS = new Set(["-O", "+O", "-o", "+o", "--init-file", "--rcfile"])
 
+const ENV_VALUE_OPTIONS = new Set(["-a", "--argv0", "-u", "--unset", "-C", "--chdir"])
+
 const XARGS_VALUE_OPTIONS = new Set([
   "-a",
   "--arg-file",
@@ -314,7 +316,51 @@ function escapes(word: Word, cwd: string, destructive: boolean): boolean {
   return !inside(absolute, tmpdir()) && !inside(absolute, "/tmp")
 }
 
+function envUsesSplitString(words: Word[]): boolean {
+  let options = false
+  let skipValue = false
+  for (const word of words) {
+    if (!options) {
+      const name = basename(word.text)
+      if (name === "env") {
+        options = true
+        continue
+      }
+      if (
+        ASSIGNMENT.test(word.text) ||
+        word.text.startsWith("-") ||
+        /^\d+[smhd]?$/.test(word.text) ||
+        WRAPPERS.has(name)
+      ) {
+        continue
+      }
+      return false
+    }
+    if (skipValue) {
+      skipValue = false
+      continue
+    }
+    if (
+      word.text === "-S" ||
+      word.text === "--split-string" ||
+      (word.text.startsWith("-S") && word.text.length > 2) ||
+      word.text.startsWith("--split-string=")
+    ) {
+      return true
+    }
+    if (word.text === "--") return false
+    if (ENV_VALUE_OPTIONS.has(word.text)) {
+      skipValue = true
+      continue
+    }
+    if (ASSIGNMENT.test(word.text) || word.text.startsWith("-")) continue
+    return false
+  }
+  return false
+}
+
 function wrapperEscapes(words: Word[], cwd: string): boolean {
+  if (envUsesSplitString(words)) return true
   for (let index = 0; index < words.length; index++) {
     const word = words[index]!
     if (word.text === "-C" || word.text === "--chdir") {
@@ -329,7 +375,6 @@ function wrapperEscapes(words: Word[], cwd: string): boolean {
       const path = { ...word, text: word.text.slice("--chdir=".length) }
       if (escapes(path, cwd, false)) return true
     }
-    if (word.text === "-S" || word.text.startsWith("-S") || word.text.startsWith("--split-string")) return true
   }
   return false
 }
