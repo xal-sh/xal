@@ -108,6 +108,8 @@ export interface ToolRunnerHost {
   restartSession(prompt: string): void
   pendingActivity(): boolean
   activitySignal(): AbortSignal
+  pendingAgentActivity(): boolean
+  agentActivitySignal(): AbortSignal
 }
 
 export class ToolCallRunner {
@@ -387,6 +389,10 @@ export class ToolCallRunner {
                 activity: {
                   pending: this.host.pendingActivity(),
                   signal: this.host.activitySignal(),
+                },
+                agentActivity: {
+                  pending: this.host.pendingAgentActivity(),
+                  signal: this.host.agentActivitySignal(),
                 },
                 signal,
                 update,

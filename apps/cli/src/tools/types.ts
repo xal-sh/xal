@@ -116,6 +116,10 @@ export interface SessionToolContext {
     pending: boolean
     signal: AbortSignal
   }
+  agentActivity: {
+    pending: boolean
+    signal: AbortSignal
+  }
   signal: AbortSignal
   update(text: string): void
 }

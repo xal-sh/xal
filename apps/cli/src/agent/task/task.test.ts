@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, expect, test } from "bun:test"
 import { readFile } from "node:fs/promises"
-import { getJob, stopJob } from "../../background/jobs"
+import { createAgentJob, finishAgentJob, getJob, stopJob, suppressDelivery } from "../../background/jobs"
 import { registerJobTools } from "../../background/register"
 import { configureModes } from "../../permissions/modes"
 import type { ModelCatalog, Provider, StreamRequest } from "../../providers/types"
@@ -55,6 +55,53 @@ test("keeps task mechanics in the tool contract and delegation policy in instruc
   expect(request.instructions).toContain("explicitly request delegation")
   expect(request.instructions).toContain("Depth, research, or thoroughness alone is not authorization.")
   expect(request.instructions).not.toContain("Use the smallest useful batch")
+})
+
+test("wait_agent resumes on automatic agent delivery without collecting the result", async () => {
+  const provider = new ScriptedProvider([
+    toolRound("wait-agent", "wait_agent", { timeout_ms: 10_000 }),
+    completedRound("Integrated the task-agent result."),
+  ])
+  const session = harness.createSession(provider, { interactive: true })
+  const job = createAgentJob("wait-agent-test", {
+    id: `wait_agent_${crypto.randomUUID()}`,
+    ownerId: session.id,
+    task: "Inspect the target.",
+    timeoutMs: 60_000,
+    maxTurns: 10,
+    stop() {},
+    send() {
+      return false
+    },
+  })
+  let finished = false
+  const unsubscribe = session.subscribe((event) => {
+    if (event.type !== "tool_started" || event.tool !== "wait_agent" || finished) return
+    finished = true
+    queueMicrotask(() => {
+      finishAgentJob(job, { status: "completed", report: "event-driven task-agent report" }, "completed")
+    })
+  })
+  const started = performance.now()
+
+  try {
+    const outcome = await runSettledTurn(session, { text: "Wait for the running task agent.", images: [] })
+    const followUp = provider.requests[1]
+    if (!followUp) throw new Error("provider follow-up request was not recorded")
+
+    expect(outcome.status).toBe("completed")
+    expect(performance.now() - started).toBeLessThan(2_000)
+    expect(
+      followUp.input.some(
+        (item) => item.type === "user_message" && item.text.includes("event-driven task-agent report"),
+      ),
+    ).toBe(true)
+    expect(job.delivery).toBe("delivered")
+  } finally {
+    unsubscribe()
+    if (!job.done) finishAgentJob(job, { status: "interrupted" }, "test cleanup")
+    suppressDelivery(job)
+  }
 })
 
 test("lets a child ask its parent, consume the answer, and finish in the same session", async () => {

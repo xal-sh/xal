@@ -2,7 +2,7 @@
 
 The built-in `scheduler` tool waits for a model-selected duration. When the wait completes, the tool returns to the same turn and the model receives another inference opportunity with the elapsed wall-clock time.
 
-This supports delayed checks without running a shell sleep command. Repeating behavior remains model-driven: after each wait, the model can inspect current state, finish, or call `scheduler` again.
+This supports time-based delays without running a shell sleep command. Repeating behavior remains model-driven: after each wait, the model can inspect current state, finish, or call `scheduler` again. Task-agent coordination uses the event-driven `wait_agent` tool described in [Background work](/docs/background-work).
 
 ## Arguments
 

@@ -49,9 +49,9 @@ Dispatching any `write` task asks for approval. Sub-agents cannot ask for approv
 
 A task agent should work independently, but it can call `ask_parent` when a parent-only decision or missing context truly blocks useful progress. The tool suspends that child tool call and shows `Waiting for parent…` without starting another provider turn or polling. Each child can have one pending question. The existing task deadline bounds the wait, and cancellation or parent failure releases it with an unavailable result. Questions are process-local live state and are not resumed after teardown.
 
-The parent receives a persisted, expandable question notice in the transcript and TUI plus a transient model instruction. It answers with `job_send`; while a question is pending, the next accepted `job_send` or TUI agent message is the answer rather than ordinary guidance. If the parent finishes without answering, it gets one transient correction. Finishing again releases the child as parent-unavailable. A question also wakes an explicit `job_output(wait)` so the parent cannot deadlock while waiting for the blocked child. Historical question events remain visible after restart, but no actionable instruction is restored into provider history. Assignments should still be self-contained, and agents should not use this path for status questions.
+The parent receives a persisted, expandable question notice in the transcript and TUI plus a transient model instruction. It answers with `job_send`; while a question is pending, the next accepted `job_send` or TUI agent message is the answer rather than ordinary guidance. If the parent finishes without answering, it gets one transient correction. Finishing again releases the child as parent-unavailable. A question wakes `wait_agent` and an explicit `job_output(wait)` so the parent cannot deadlock while waiting for the blocked child. Historical question events remain visible after restart, but no actionable instruction is restored into provider history. Assignments should still be self-contained, and agents should not use this path for status questions.
 
-A finished agent's report is delivered into the parent conversation automatically as a system notice, with no polling needed. Alongside the in-conversation result, every agent writes two durable files into the session directory:
+A finished agent's report is delivered into the parent conversation automatically as a system notice, with no polling needed. If the active turn is blocked on agent work, `wait_agent` subscribes to task-agent activity and returns when a result or question is queued, new user input arrives, or its timeout expires. It does not collect or suppress the automatic report delivery. Alongside the in-conversation result, every agent writes two durable files into the session directory:
 
 - a Markdown task record (`agent-<id>-….md`) with the assignment, workspace, final report, and buffered transcript
 - a full transcript log (`agent-<id>-….log`) written incrementally while the agent runs, so nothing is lost even if the process dies; logs cap at 64 MB and are marked `(capped)` past that
@@ -64,17 +64,18 @@ A running foreground `bash` command can be promoted to a background job at any m
 
 ## Job tools
 
-The model manages jobs with five tools:
+The model coordinates jobs with six tools:
 
 | Tool         | Purpose                                                                                                              |
 | ------------ | -------------------------------------------------------------------------------------------------------------------- |
+| `wait_agent` | Wait for task-agent activity without collecting or consuming the automatically delivered report.                     |
 | `job_output` | Read process output, collect an agent report, or inspect a schedule; agent waits return at a supervision checkpoint. |
 | `job_status` | Inspect processes, task agents, and schedules without consuming output.                                              |
 | `job_send`   | Answer a pending task-agent question, or queue guidance when no question is pending.                                 |
 | `job_extend` | Add up to 60 runtime minutes, 100 soft-budget turns, or both to a queued or running task agent per call.             |
 | `job_kill`   | Stop a process, task agent, or schedule. A process that ignores the graceful stop is hard-killed after 2 seconds.    |
 
-An explicit `job_output` wait cannot consume a task agent's whole runtime budget. It reserves a supervision window of up to one minute and returns with live status so the parent can inspect, extend, steer, or stop the task; a wait started while queued may return earlier because its runtime deadline has not started. If an agent still times out, collection includes a bounded transcript tail labeled as incomplete alongside the durable task-record path.
+`wait_agent` defaults to 30 seconds, clamps shorter requests to 10 seconds, and accepts waits up to one hour. It ends early for queued task-agent results, task-agent questions, or new user input. An explicit `job_output` wait cannot consume a task agent's whole runtime budget. It reserves a supervision window of up to one minute and returns with live status so the parent can inspect, extend, steer, or stop the task; a wait started while queued may return earlier because its runtime deadline has not started. If an agent still times out, collection includes a bounded transcript tail labeled as incomplete alongside the durable task-record path.
 
 Stopping a job from the TUI is never silent: the result is marked `stopped by the user` and still delivered so the model knows what happened. A task agent remains unsettled until its runner has finished cleanup and saved its task record.
 

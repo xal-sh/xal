@@ -10,6 +10,7 @@ import { settings } from "../../config/settings"
 import { MAX_BATCH_TASKS, MAX_CONTEXT_LENGTH, MAX_TASK_LENGTH, prepareTaskBatch } from "./parse"
 import { MAX_AGENT_MESSAGE_LENGTH } from "./questions"
 import { spawnTask } from "./spawn"
+import { waitAgentTool } from "./wait"
 
 export function compactTaskToolTitle(title: string): string {
   return title.split(" · ", 1)[0] ?? title
@@ -75,7 +76,7 @@ export const askParentTool: SessionTool = {
 export const taskTool: SessionTool = {
   name: "task",
   get description() {
-    return `Dispatch a batch of independent assignments to background agents. The call returns agent ids immediately, runs up to ${settings().agents.maxConcurrent} agents at once, queues the rest, and automatically delivers each result to this session. Agents start without conversation history. Read agents cannot modify files; write agents use the shared checkout or an isolated Git worktree.`
+    return `Dispatch a batch of independent assignments to background agents. The call returns agent ids immediately, runs up to ${settings().agents.maxConcurrent} agents at once, queues the rest, and automatically delivers each result to this session. wait_agent blocks on task-agent activity without collecting the delivered result. Agents start without conversation history. Read agents cannot modify files; write agents use the shared checkout or an isolated Git worktree.`
   },
   parameters: {
     type: "object",
@@ -192,6 +193,7 @@ export function registerTaskAgents(): void {
   })
   registerTool(askParentTool)
   registerTool(taskTool)
+  registerTool(waitAgentTool)
   registerToolRenderer({
     tool: askParentTool.name,
     summarize: (output) => (output.startsWith("Parent answered:") ? "answered" : "unavailable"),
@@ -204,5 +206,9 @@ export function registerTaskAgents(): void {
       if (!spawned) return "dispatched"
       return `${spawned[1]} ${spawned[1] === "1" ? "agent" : "agents"}`
     },
+  })
+  registerToolRenderer({
+    tool: waitAgentTool.name,
+    summarize: (output) => (output.startsWith("Task-agent activity") ? "activity arrived" : "wait ended"),
   })
 }

@@ -127,6 +127,7 @@ export class AgentSession {
   private readonly queue = new InputQueue((event) => this.emit(event))
   private readonly goals = new GoalRuntime({ emit: (event) => this.emit(event), evaluate: evaluateGoal })
   private activityController = new AbortController()
+  private agentActivityController = new AbortController()
   private outputDirectory: string
   private cwd: string
   private workspaceUndo: WorkspaceUndo
@@ -185,8 +186,9 @@ export class AgentSession {
     }
     this.asyncState = new SessionAsyncState({
       ownerId: () => this.sessionId,
-      onResultsQueued: () => {
-        this.noteActivity()
+      onResultsQueued: (kind) => {
+        if (kind === "agent") this.noteAgentActivity()
+        else this.noteActivity()
         queueMicrotask(() => this.startBackgroundResultTurn())
       },
       onAgentWorkSettled: () => {
@@ -251,6 +253,9 @@ export class AgentSession {
       pendingActivity: () =>
         this.queue.first !== undefined || this.asyncState.hasQueued() || this.hasPendingAgentQuestions(),
       activitySignal: () => this.activityController.signal,
+      pendingAgentActivity: () =>
+        this.queue.first !== undefined || this.asyncState.hasQueuedAgentResult() || this.hasPendingAgentQuestions(),
+      agentActivitySignal: () => this.agentActivityController.signal,
     }
   }
 
@@ -745,6 +750,12 @@ export class AgentSession {
     this.activityController = new AbortController()
   }
 
+  private noteAgentActivity(): void {
+    this.noteActivity()
+    this.agentActivityController.abort()
+    this.agentActivityController = new AbortController()
+  }
+
   private askParent(question: string, signal: AbortSignal): Promise<ParentQuestionResult> {
     if (this.kind !== "subagent" || !this.askParentHandler) {
       throw new Error("ask_parent is available only to running task agents")
@@ -772,7 +783,7 @@ export class AgentSession {
       type: "agent_questions",
       questions: [{ requestId: pending.requestId, jobId: pending.jobId, question: pending.question }],
     })
-    this.noteActivity()
+    this.noteAgentActivity()
     queueMicrotask(() => this.startAgentQuestionTurn())
     return true
   }
@@ -868,7 +879,7 @@ export class AgentSession {
     if (this.movingHistory) return false
     if (this.turnActive || this.state === "evaluating_goal") {
       if (!isDirectShellInput(redacted)) this.goals.rearm()
-      this.noteActivity()
+      this.noteAgentActivity()
       this.queue.push(redacted)
       return true
     }
@@ -885,7 +896,7 @@ export class AgentSession {
 
   steer(text: string): boolean {
     if (this.movingHistory || !this.turnActive || !this.acceptingQueuedInput) return false
-    this.noteActivity()
+    this.noteAgentActivity()
     this.queue.push(redactUserInput({ text, images: [] }))
     return true
   }

@@ -141,7 +141,7 @@ export function backgroundResultsMessage(results: BackgroundResult[], ownerId: s
 
 interface SessionAsyncHost {
   ownerId(): string
-  onResultsQueued(): void
+  onResultsQueued(kind: BackgroundResult["kind"]): void
   onAgentWorkSettled(): void
   onAsyncWorkSettled(): void
 }
@@ -197,12 +197,16 @@ export class SessionAsyncState {
     const result = formatBackgroundResult(job)
     if (epoch !== this.epoch || job.delivery !== "in_flight") return false
     this.queue.push(result)
-    this.host.onResultsQueued()
+    this.host.onResultsQueued(result.kind)
     return true
   }
 
   hasQueued(): boolean {
     return this.queue.length > 0
+  }
+
+  hasQueuedAgentResult(): boolean {
+    return this.queue.some((result) => result.kind === "agent")
   }
 
   drainQueued(): BackgroundResult[] {
