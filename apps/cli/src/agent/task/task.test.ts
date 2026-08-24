@@ -19,6 +19,7 @@ import {
   type ProviderRound,
 } from "../session/test-support"
 import { registerTaskAgents } from "./tool"
+import { MAX_AGENT_WAIT_MS } from "./wait"
 
 let harness: AgentSessionTestHarness
 
@@ -38,6 +39,20 @@ function modelCatalog(): ModelCatalog {
     models: [{ id: "test-model", name: "Test model", inputModalities: ["text"] }],
     source: "runtime",
   }
+}
+
+function createWaitingAgent(ownerId: string) {
+  return createAgentJob("wait-agent-test", {
+    id: `wait_agent_${crypto.randomUUID()}`,
+    ownerId,
+    task: "Inspect the target.",
+    timeoutMs: 60_000,
+    maxTurns: 10,
+    stop() {},
+    send() {
+      return false
+    },
+  })
 }
 
 test("keeps task mechanics in the tool contract and delegation policy in instructions", async () => {
@@ -63,17 +78,7 @@ test("wait_agent resumes on automatic agent delivery without collecting the resu
     completedRound("Integrated the task-agent result."),
   ])
   const session = harness.createSession(provider, { interactive: true })
-  const job = createAgentJob("wait-agent-test", {
-    id: `wait_agent_${crypto.randomUUID()}`,
-    ownerId: session.id,
-    task: "Inspect the target.",
-    timeoutMs: 60_000,
-    maxTurns: 10,
-    stop() {},
-    send() {
-      return false
-    },
-  })
+  const job = createWaitingAgent(session.id)
   let finished = false
   const unsubscribe = session.subscribe((event) => {
     if (event.type !== "tool_started" || event.tool !== "wait_agent" || finished) return
@@ -99,6 +104,29 @@ test("wait_agent resumes on automatic agent delivery without collecting the resu
     expect(job.delivery).toBe("delivered")
   } finally {
     unsubscribe()
+    if (!job.done) finishAgentJob(job, { status: "interrupted" }, "test cleanup")
+    suppressDelivery(job)
+  }
+})
+
+test("wait_agent returns invalid timeout input as a recoverable tool failure", async () => {
+  const provider = new ScriptedProvider([
+    toolRound("invalid-wait-agent", "wait_agent", { timeout_ms: 0 }),
+    completedRound("Recovered from the invalid wait."),
+  ])
+  const session = harness.createSession(provider, { interactive: true })
+  const job = createWaitingAgent(session.id)
+
+  try {
+    const outcome = await runSettledTurn(session, { text: "Wait with an invalid timeout.", images: [] })
+
+    expect(outcome.status).toBe("completed")
+    expect(provider.requests[1]?.input.at(-1)).toEqual({
+      type: "tool_result",
+      callId: "invalid-wait-agent",
+      output: `Tool failed: timeout_ms must be a positive integer no greater than ${MAX_AGENT_WAIT_MS}`,
+    })
+  } finally {
     if (!job.done) finishAgentJob(job, { status: "interrupted" }, "test cleanup")
     suppressDelivery(job)
   }

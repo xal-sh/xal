@@ -40,8 +40,8 @@ export const waitAgentTool: SessionTool = {
   available(ctx) {
     return ctx.kind === "primary" && ctx.interactive
   },
-  title(args) {
-    return `Wait for task-agent activity for up to ${seconds(timeoutOf(args))}`
+  title() {
+    return "Wait for task-agent activity"
   },
   readOnly() {
     return true
