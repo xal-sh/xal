@@ -54,7 +54,7 @@ The default is `normal` when `mode` is omitted. Override it for one TUI session 
 - **Clear context and build** approves the plan, ends the planning conversation, and starts a new session whose first prompt is the approved plan. Planning transcripts are usually long and the implementation does not need them; the option reports how much of the context window the planning conversation occupies so the tradeoff is visible before choosing.
 - **Request changes** keeps plan mode active so the proposal can be revised.
 
-A dismissed review leaves plan mode active and waits for new direction. User-driven mode changes are refused while a turn, approval, or input request is active so one turn cannot silently cross permission boundaries.
+A dismissed review leaves plan mode active and waits for new direction. User-driven mode changes are refused while a turn, approval, or input request is active so one turn cannot silently cross permission boundaries. After a successful change to a writable mode, the model is explicitly told that plan mode is no longer active so earlier planning context cannot keep blocking writes.
 
 ## Custom modes
 
@@ -69,7 +69,7 @@ Custom modes are defined under `modes` and appear in the TUI mode cycle and `--m
 }
 ```
 
-`base` selects the built-in mode a custom mode behaves like. It defaults to `normal`; `plan` inherits read-only behavior and `yolo` inherits ask-skipping. `allow`, `ask`, and `deny` are mode-scoped rules that apply only while the mode is active. They sit above global `permissions` rules and below approvals remembered from the approval prompt. `guidance` replaces the mode instructions shown to the model.
+`base` selects the built-in mode a custom mode behaves like. It defaults to `normal`; `plan` inherits read-only behavior and `yolo` inherits ask-skipping. `allow`, `ask`, and `deny` are mode-scoped rules that apply only while the mode is active. They sit above global `permissions` rules and below approvals remembered from the approval prompt. `guidance` replaces the mode-specific workflow instructions shown to the primary agent; Xal still identifies the primary agent's current mode and whether it is read-only.
 
 Built-in mode names cannot be redefined. A session restored with a mode that no longer exists falls back to `normal`.
 

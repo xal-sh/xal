@@ -18,7 +18,11 @@ export function registerPermissions(settings: Settings): void {
     id: "permissions",
     text: (prompt) => {
       const definition = modeDefinition(prompt.mode)
-      return prompt.kind === "subagent" ? definition.subagentGuidance : definition.guidance
+      if (prompt.kind === "subagent") return definition.subagentGuidance
+      if (definition.readOnly) {
+        return `Current permission mode is \`${prompt.mode}\` and it is read-only.\n${definition.guidance}`
+      }
+      return `Current permission mode is \`${prompt.mode}\`. Plan mode is not active; do not claim that plan-mode restrictions block tools or file writes.\n${definition.guidance}`
     },
   })
 }
