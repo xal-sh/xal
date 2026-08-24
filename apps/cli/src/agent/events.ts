@@ -14,8 +14,9 @@ export type AgentState =
   | "running_tool"
   | "compacting"
   | "evaluating_goal"
+  | "evaluating_permission"
 
-export type DenialCause = "user" | "policy" | "plan" | "hook"
+export type DenialCause = "user" | "policy" | "plan" | "hook" | "classifier"
 
 export interface QueuedEntry {
   text: string

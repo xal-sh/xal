@@ -3,12 +3,14 @@ use super::*;
 #[napi(object)]
 pub struct NativeReadRequest {
     pub path: Option<String>,
+    pub expected_path: Option<String>,
     pub display_path: String,
     pub offset: Option<f64>,
     pub limit: Option<f64>,
 }
 pub struct ReadTask {
     path: PathBuf,
+    expected_path: Option<String>,
     display_path: String,
     offset: usize,
     limit: usize,
@@ -19,6 +21,7 @@ impl Task for ReadTask {
     type JsValue = NativeToolOutput;
 
     fn compute(&mut self) -> napi::Result<Self::Output> {
+        validate_expected_path(&self.path, self.expected_path.clone())?;
         let metadata = fs::metadata(&self.path)
             .map_err(|_| failed(format!("File not found: {}", self.display_path)))?;
         if metadata.is_dir() {
@@ -102,6 +105,7 @@ impl Task for ReadTask {
 pub fn native_read_file(request: NativeReadRequest) -> napi::Result<AsyncTask<ReadTask>> {
     Ok(AsyncTask::new(ReadTask {
         path: required_path(request.path)?,
+        expected_path: request.expected_path,
         display_path: request.display_path,
         offset: normalized_count(request.offset, 1) as usize,
         limit: normalized_count(request.limit, DEFAULT_READ_LIMIT) as usize,

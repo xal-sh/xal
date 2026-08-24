@@ -20,7 +20,7 @@ Xal writes one prompt-free usage record after each provider request that reports
 }
 ```
 
-`totalInputTokens` includes cached input. The cache-read and cache-write fields identify the subsets that may be priced differently. `outputTokens` is the provider-reported output total. `phase` distinguishes normal turns from compaction and goal-evaluation requests, while `outcome` preserves requests that reported billable usage before failing or being interrupted.
+`totalInputTokens` includes cached input. The cache-read and cache-write fields identify the subsets that may be priced differently. `outputTokens` is the provider-reported output total. `phase` distinguishes normal turns, compaction, goal evaluation, and normal-mode permission classification requests. Permission classification records use `permission_classification`. `outcome` preserves requests that reported billable usage before failing or being interrupted. Records never contain provider prompts, classifier context, tool arguments, verdict reasons, paths, profile IDs, or credentials.
 
 The ledger contains no prompts, responses, working directories, profile names, credentials, or account identifiers. Files and directories are created with user-only permissions. Xal flushes pending records during shutdown and exits with an error if the ledger could not be written. Existing session transcripts are not backfilled, so collection starts with the first run of a Xal version that supports the ledger.
 

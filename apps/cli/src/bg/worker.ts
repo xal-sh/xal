@@ -89,6 +89,7 @@ class WorkerDriver {
       if (event.state === "streaming") this.touch({ activity: "thinking" })
       if (event.state === "compacting") this.touch({ activity: "compacting" })
       if (event.state === "evaluating_goal") this.touch({ activity: "evaluating goal" })
+      if (event.state === "evaluating_permission") this.touch({ activity: "reviewing action" })
       if (event.state === "awaiting_input") this.leave("needs_input", "an interactive tool needs input")
     }
     if (event.type === "turn_failed") this.failure = event.message

@@ -3,6 +3,7 @@ use super::*;
 #[napi(object)]
 pub struct NativeEditRequest {
     pub path: Option<String>,
+    pub expected_path: Option<String>,
     pub display_path: String,
     pub old_string: Option<Utf16String>,
     pub new_string: Option<Utf16String>,
@@ -49,6 +50,7 @@ fn replace_matches(
 
 pub struct EditTask {
     path: PathBuf,
+    expected_path: Option<String>,
     display_path: String,
     old: Vec<u16>,
     new: Vec<u16>,
@@ -60,6 +62,7 @@ impl Task for EditTask {
     type JsValue = NativeToolOutput;
 
     fn compute(&mut self) -> napi::Result<Self::Output> {
+        validate_expected_path(&self.path, self.expected_path.clone())?;
         let metadata = fs::metadata(&self.path)
             .map_err(|_| failed(format!("File not found: {}", self.display_path)))?;
         if metadata.is_dir() {
@@ -134,6 +137,7 @@ pub fn native_edit_file(request: NativeEditRequest) -> napi::Result<AsyncTask<Ed
     }
     Ok(AsyncTask::new(EditTask {
         path: required_path(request.path)?,
+        expected_path: request.expected_path,
         display_path: request.display_path,
         old: old.to_vec(),
         new: new.to_vec(),

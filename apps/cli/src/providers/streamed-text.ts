@@ -17,6 +17,7 @@ export interface StreamedTextRequest {
   kind?: SessionKind
   attempt?: number
   emptyResponseMessage: string
+  validate?(text: string): void
 }
 
 export interface StreamedTextResult {
@@ -50,6 +51,7 @@ export async function collectStreamedText(input: StreamedTextRequest): Promise<S
     }
     const text = (settled || streamed).trim()
     if (!text) throw new Error(input.emptyResponseMessage)
+    input.validate?.(text)
     profileProviderRequestFinished(profile, "completed", usage)
     return { text: redactText(text), usage }
   } catch (error) {

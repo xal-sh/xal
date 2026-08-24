@@ -107,6 +107,7 @@ export interface SessionToolContext {
     thinking?: ThinkingEffort
     mode: PermissionMode
     workspaceUndo: WorkspaceUndo
+    trustedRemotes(): Promise<string[]>
     changeWorkspace(cwd: string): void
     askParent(question: string, signal: AbortSignal): Promise<ParentQuestionResult>
     receiveAgentQuestion(question: DeliveredAgentQuestion): boolean

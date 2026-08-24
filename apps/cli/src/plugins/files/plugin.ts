@@ -1,6 +1,6 @@
-import { homedir, tmpdir } from "node:os"
 import type { Plugin } from "../types"
 import { editTool } from "./edit"
+import { filePolicy } from "./permission"
 import { readTool } from "./read"
 import { writeTool } from "./write"
 
@@ -19,20 +19,7 @@ const plugin: Plugin = {
     ctx.registerTool(readTool)
     ctx.registerTool(writeTool)
     ctx.registerTool(editTool)
-    ctx.registerPermissionRules({
-      ask: [
-        "write(/*)",
-        "edit(/*)",
-        "read(*.env)",
-        "read(*.env.*)",
-        `read(${homedir()}/.ssh/*)`,
-        `read(${homedir()}/.aws/*)`,
-        `read(${homedir()}/.gnupg/*)`,
-      ],
-    })
-    ctx.registerPermissionRules({
-      allow: [`write(${tmpdir()}/*)`, `edit(${tmpdir()}/*)`, "write(/tmp/*)", "edit(/tmp/*)"],
-    })
+    ctx.registerPolicyRule({ evaluate: filePolicy })
     ctx.registerToolRenderer({
       tool: "write",
       alwaysExpanded: true,

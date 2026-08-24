@@ -200,12 +200,15 @@ async function runTask(
     }
     if (controller.signal.aborted) throw new Error("task cancelled before it started")
 
-    const thinking = await resolveThinking(
-      ctx.session.provider,
-      ctx.session.profileId,
-      ctx.session.model,
-      item.thinking ?? ctx.session.thinking,
-    )
+    const [thinking, trustedRemotes] = await Promise.all([
+      resolveThinking(
+        ctx.session.provider,
+        ctx.session.profileId,
+        ctx.session.model,
+        item.thinking ?? ctx.session.thinking,
+      ),
+      ctx.session.trustedRemotes(),
+    ])
     const taskSession = new AgentSession({
       kind: "subagent",
       cwd: worktree?.cwd ?? ctx.session.cwd,
@@ -217,6 +220,7 @@ async function runTask(
       interactive: false,
       persist: false,
       inheritedDenyMode: ctx.session.mode,
+      trustedRemotes,
       askParent: (question, signal) => questions.ask(question, signal),
       ...(item.access === "write" && !worktree
         ? { workspaceUndo: ctx.session.workspaceUndo, trackUndoPrompts: false }

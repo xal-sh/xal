@@ -8,15 +8,17 @@ const builtins: ModeDefinition[] = [
     name: "normal",
     readOnly: false,
     skipAsk: false,
+    classifyUnresolved: true,
     guidance:
-      "Routine actions run without confirmation. Actions that reach outside the workspace, privileged or destructive system commands, and actions the user marked as sensitive ask for approval first. A denied action means the user declined it; adjust instead of retrying.",
+      "Routine local actions run automatically. Other actions are independently reviewed against the user's request and trusted boundaries before execution. Explicit permission asks still require approval. A blocked action should be replaced with a safer alternative instead of retried unchanged.",
     subagentGuidance:
-      "This delegation may modify the workspace. Routine actions run automatically, but any action that still requires separate approval will be denied.",
+      "This delegation may modify the workspace. Routine local actions run automatically, while other actions are independently reviewed and may be blocked.",
   },
   {
     name: "plan",
     readOnly: true,
     skipAsk: false,
+    classifyUnresolved: false,
     guidance:
       "Plan mode is active. Read-only tools may be used for investigation, but writes, edits, and shell commands that are not read-only are refused before they run. Never retry a refused action.",
     subagentGuidance:
@@ -26,6 +28,7 @@ const builtins: ModeDefinition[] = [
     name: "yolo",
     readOnly: false,
     skipAsk: true,
+    classifyUnresolved: false,
     guidance:
       "Every action is pre-approved and runs without confirmation. Prefer the narrowest action that works, never perform unrequested destructive work, and adjust rather than retry if an action is denied.",
     subagentGuidance:
@@ -59,6 +62,7 @@ export function configureModes(custom: Record<string, CustomMode>): void {
       name,
       readOnly: base.readOnly,
       skipAsk: base.skipAsk,
+      classifyUnresolved: base.classifyUnresolved,
       guidance: mode.guidance ?? base.guidance,
       subagentGuidance: base.subagentGuidance,
     })

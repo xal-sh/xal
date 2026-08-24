@@ -19,7 +19,7 @@ const plugin: Plugin = {
   name: "project-instructions",
   register(ctx) {
     promptText = ""
-    ctx.registerPrompt({ id: "project_instructions", text: () => promptText })
+    ctx.registerPrompt({ id: "project_instructions", classifierTrusted: true, text: () => promptText })
   },
   async bootstrap(ctx) {
     const instructions = await loadProjectInstructions(process.cwd(), maxBytes(ctx.config))

@@ -21,9 +21,12 @@ const plugin: Plugin = {
     })
     ctx.registerToolSessionDisposer(disposeMcpSession)
     for (const tool of mcpTools(manager)) ctx.registerTool(tool)
-    ctx.registerPermissionRules({ allow: ["mcp__*", "mcp_read_resource", "mcp_get_prompt"] })
     ctx.registerCommand(mcpCommand(manager))
-    ctx.registerPrompt({ id: "mcp", text: (prompt) => manager?.instructionsForSession(prompt.sessionId) ?? "" })
+    ctx.registerPrompt({
+      id: "mcp",
+      classifierTrusted: false,
+      text: (prompt) => manager?.instructionsForSession(prompt.sessionId) ?? "",
+    })
   },
   async bootstrap(ctx) {
     if (!manager) throw new Error("MCP plugin was not registered")

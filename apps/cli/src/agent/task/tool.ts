@@ -167,11 +167,12 @@ export function registerTaskAgents(): void {
   registerPolicyRule({
     evaluate(request) {
       if (request.tool !== taskTool.name || request.readOnly) return undefined
-      return "ask"
+      return "classify"
     },
   })
   registerPrompt({
     id: "task-delegation-policy",
+    classifierTrusted: true,
     text(prompt) {
       if (prompt.kind !== "primary" || !prompt.tools.some((tool) => tool.name === taskTool.name)) return ""
       return "Use task agents only when the user or applicable AGENTS.md or skill instructions explicitly request delegation. Depth, research, or thoroughness alone is not authorization."
@@ -179,6 +180,7 @@ export function registerTaskAgents(): void {
   })
   registerPrompt({
     id: "task-agent",
+    classifierTrusted: true,
     text(prompt) {
       if (prompt.kind !== "subagent") return ""
       return [

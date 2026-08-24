@@ -203,6 +203,7 @@ export class StatusBar {
       case "running_tool":
       case "compacting":
       case "evaluating_goal":
+      case "evaluating_permission":
         return true
       case "idle":
       case "awaiting_approval":
@@ -313,6 +314,8 @@ export class StatusBar {
         return this.busyContent("Running hooks")
       case "evaluating_goal":
         return this.busyContent("Evaluating goal")
+      case "evaluating_permission":
+        return this.busyContent("Reviewing action")
       case "streaming":
       case "running_tool":
         return this.busyContent("Working")

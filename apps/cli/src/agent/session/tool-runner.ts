@@ -1,6 +1,8 @@
 import { runAfterToolHooks, runBeforeToolHooks, type HookReporter } from "../../hooks/registry"
 import type { HookContext } from "../../hooks/types"
 import { describeError } from "../../lib/error"
+import { classifyPermission } from "../../permissions/classifier"
+import type { ClassifierContext, ClassifierPendingAction } from "../../permissions/context"
 import { modeDefinition } from "../../permissions/modes"
 import { evaluatePolicy } from "../../permissions/service"
 import type { PermissionMode, PermissionScope } from "../../permissions/types"
@@ -48,6 +50,8 @@ export interface PreparedToolCall {
   title: string
   readOnly: boolean
   undo: UndoAction
+  permissionGeneration: number
+  classifierAllowed: boolean
 }
 
 export interface ToolCallOutcome {
@@ -68,6 +72,7 @@ export const denialMessages: Record<DenialCause, string> = {
   policy: "Blocked by the active permission rules.",
   plan: "Plan mode is active, so this action was not run. Finish investigating and present a plan instead of retrying.",
   hook: "Blocked by a lifecycle hook.",
+  classifier: "Blocked by the safety classifier. Choose a safer alternative instead of retrying this action unchanged.",
 }
 
 const subagentPlanDenial =
@@ -89,6 +94,7 @@ export interface ToolRunnerHost {
   modelInputModalities(): ModelInputModality[] | undefined
   thinking(): ThinkingEffort | undefined
   workspaceUndo(): WorkspaceUndo
+  trustedRemotes(): Promise<string[]>
   permissionSessionKey(): object
   outputContract(): OutputContract | undefined
   availableTool(name: string): RegisteredTool | undefined
@@ -108,6 +114,16 @@ export interface ToolRunnerHost {
   restartSession(prompt: string): void
   pendingActivity(): boolean
   activitySignal(): AbortSignal
+  state(): AgentState
+  permissionGeneration(): number
+  classifierBlockCount(): number
+  classificationContext(
+    callId: string,
+    action: ClassifierPendingAction,
+    signal: AbortSignal,
+  ): Promise<ClassifierContext>
+  recordClassification(result: "allow" | "block"): void
+  recordProviderRequest(): void
 }
 
 export class ToolCallRunner {
@@ -257,7 +273,79 @@ export class ToolCallRunner {
     }
   }
 
-  async prepare(call: ToolCallItem, signal: AbortSignal): Promise<ToolCallPreparation> {
+  private async requestApproval(
+    call: ToolCallItem,
+    title: string,
+    readOnly: boolean,
+    suggestion: string | undefined,
+  ): Promise<ApprovalResult> {
+    const asked = new Promise<ApprovalResult>((resolve) => {
+      this.host.requestApproval(resolve)
+    })
+    this.host.setState("awaiting_approval")
+    this.host.emit({
+      type: "approval_requested",
+      callId: call.callId,
+      tool: call.name,
+      title,
+      readOnly,
+      suggestion,
+    })
+    return asked
+  }
+
+  private async classify(
+    call: ToolCallItem,
+    action: ClassifierPendingAction,
+    signal: AbortSignal,
+  ): Promise<{ type: "allow" } | { type: "block"; message: string }> {
+    const generation = this.host.permissionGeneration()
+    const previousState = this.host.state()
+    this.host.setState("evaluating_permission")
+    try {
+      const context = await this.host.classificationContext(call.callId, action, signal)
+      if (signal.aborted) throw new DOMException("Permission classification interrupted", "AbortError")
+      this.host.recordProviderRequest()
+      const result = await classifyPermission({
+        provider: this.host.provider(),
+        profileId: this.host.profileId(),
+        model: this.host.model(),
+        sessionId: this.host.sessionId(),
+        kind: this.host.kind,
+        signal,
+        context,
+      })
+      if (signal.aborted || generation !== this.host.permissionGeneration()) {
+        return {
+          type: "block",
+          message:
+            "Safety review became stale because the session boundary changed. Choose a safer alternative instead of retrying unchanged.",
+        }
+      }
+      if (result.verdict.verdict === "allow") {
+        this.host.recordClassification("allow")
+        return { type: "allow" }
+      }
+      this.host.recordClassification("block")
+      return {
+        type: "block",
+        message: `Safety classifier blocked this action: ${result.verdict.reason} Choose a safer alternative instead of retrying unchanged.`,
+      }
+    } catch (error) {
+      return {
+        type: "block",
+        message: `Safety classification failed closed: ${redactText(describeError(error))}. Choose a safer alternative instead of retrying unchanged.`,
+      }
+    } finally {
+      if (this.host.state() === "evaluating_permission") this.host.setState(previousState)
+    }
+  }
+
+  async prepare(
+    call: ToolCallItem,
+    signal: AbortSignal,
+    origin: ClassifierPendingAction["origin"] = "model",
+  ): Promise<ToolCallPreparation> {
     const tool = this.host.availableTool(call.name)
     const title = tool?.title(call.args, { cwd: this.host.cwd() }) ?? JSON.stringify(call.args)
     const readOnly = tool?.readOnly?.(call.args, { cwd: this.host.cwd() }) ?? false
@@ -276,9 +364,12 @@ export class ToolCallRunner {
       }
     }
 
+    const permissionGeneration = this.host.permissionGeneration()
     const sandboxed = tool.sandboxed?.(call.args, { cwd: this.host.cwd() }) ?? false
     const permission = tool.permission?.(call.args, { cwd: this.host.cwd(), sessionId: this.host.sessionId() })
-    const decision = await evaluatePolicy({
+    let classifierFallback = false
+    let classifierAllowed = false
+    let decision = await evaluatePolicy({
       sessionKey: this.host.permissionSessionKey(),
       cwd: this.host.cwd(),
       tool: call.name,
@@ -290,6 +381,46 @@ export class ToolCallRunner {
       mode: this.host.mode(),
       inheritedDenyMode: this.host.inheritedDenyMode,
     })
+    if (permissionGeneration !== this.host.permissionGeneration()) {
+      return {
+        type: "outcome",
+        outcome: this.outcome(
+          call,
+          title,
+          readOnly,
+          "Permission boundary changed before execution. Request the action again against the current session boundary.",
+          "policy",
+        ),
+      }
+    }
+
+    if (decision === "classify") {
+      if (this.host.kind === "primary" && this.host.interactive && this.host.classifierBlockCount() >= 3) {
+        classifierFallback = true
+        decision = "ask"
+      } else {
+        const classified = await this.classify(
+          call,
+          {
+            tool: call.name,
+            title,
+            args: call.args,
+            subject: permission?.subject,
+            readOnly,
+            sandboxed,
+            origin,
+          },
+          signal,
+        )
+        if (classified.type === "block") {
+          return {
+            type: "outcome",
+            outcome: this.outcome(call, title, readOnly, classified.message, "classifier"),
+          }
+        }
+        classifierAllowed = true
+      }
+    }
 
     if (decision === "deny") {
       const cause = modeDefinition(this.host.mode()).readOnly && !readOnly ? "plan" : "policy"
@@ -301,25 +432,17 @@ export class ToolCallRunner {
     }
 
     if (decision === "ask") {
-      const asked = new Promise<ApprovalResult>((resolve) => {
-        this.host.requestApproval(resolve)
-      })
-      this.host.setState("awaiting_approval")
-      this.host.emit({
-        type: "approval_requested",
-        callId: call.callId,
-        tool: call.name,
-        title,
-        readOnly,
-        suggestion: permission?.suggestion,
-      })
-      const result = await asked
+      const result = await this.requestApproval(call, title, readOnly, permission?.suggestion)
       if (result.decision === "deny") {
         const denial = result.cause ?? "user"
         return {
           type: "outcome",
           outcome: this.outcome(call, title, readOnly, result.message ?? denialMessages[denial], denial),
         }
+      }
+      if (classifierFallback) {
+        this.host.recordClassification("allow")
+        classifierAllowed = true
       }
     }
 
@@ -335,13 +458,33 @@ export class ToolCallRunner {
     }
 
     const undo: UndoAction = tool.undo?.(call.args, { cwd: this.host.cwd() }) ?? { type: "none" }
-    return { type: "ready", prepared: { call, tool, title, readOnly, undo } }
+    return {
+      type: "ready",
+      prepared: {
+        call,
+        tool,
+        title,
+        readOnly,
+        undo,
+        permissionGeneration,
+        classifierAllowed,
+      },
+    }
   }
 
   async execute(prepared: PreparedToolCall, signal: AbortSignal): Promise<ToolCallOutcome> {
     const { call, tool, title, readOnly, undo } = prepared
     if (signal.aborted) {
       return this.outcome(call, title, readOnly, "Interrupted by user before execution.")
+    }
+    if (prepared.permissionGeneration !== this.host.permissionGeneration()) {
+      return this.outcome(
+        call,
+        title,
+        readOnly,
+        "Permission boundary changed before execution. Request the action again against the current session boundary.",
+        prepared.classifierAllowed ? "classifier" : "policy",
+      )
     }
 
     this.host.setState("running_tool")
@@ -379,6 +522,7 @@ export class ToolCallRunner {
                   thinking: this.host.thinking(),
                   mode: this.host.mode(),
                   workspaceUndo: this.host.workspaceUndo(),
+                  trustedRemotes: () => this.host.trustedRemotes(),
                   changeWorkspace: (cwd) => this.host.changeWorkspace(cwd),
                   askParent: (question, askSignal) => this.host.askParent(question, askSignal),
                   receiveAgentQuestion: (question) => this.host.receiveAgentQuestion(question),

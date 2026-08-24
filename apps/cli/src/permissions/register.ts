@@ -16,6 +16,7 @@ export function registerPermissions(settings: Settings): void {
   configureModes(custom)
   registerPrompt({
     id: "permissions",
+    classifierTrusted: true,
     text: (prompt) => {
       const definition = modeDefinition(prompt.mode)
       return prompt.kind === "subagent" ? definition.subagentGuidance : definition.guidance

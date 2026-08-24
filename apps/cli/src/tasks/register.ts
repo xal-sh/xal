@@ -14,6 +14,7 @@ After updating the plan, summarize only important context or the next step inste
 export function registerTasks(): void {
   registerPrompt({
     id: "planning",
+    classifierTrusted: true,
     text: (ctx) =>
       ctx.mode !== "plan" && ctx.tools.some((tool) => tool.name === updatePlanTool.name) ? planningInstructions : "",
   })

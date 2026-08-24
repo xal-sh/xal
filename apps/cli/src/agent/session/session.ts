@@ -9,7 +9,9 @@ import { GoalRuntime, type GoalEvaluationOutcome } from "../../goals/runtime"
 import { goalConditionError, type GoalSnapshot } from "../../goals/types"
 import { runPromptHooks, type HookReporter } from "../../hooks/registry"
 import type { HookContext } from "../../hooks/types"
+import { buildClassifierContext, type ClassifierContext, type ClassifierPendingAction } from "../../permissions/context"
 import { defaultPermissionMode, modeDefinition } from "../../permissions/modes"
+import { captureWorkspaceTrust, workspaceDirty, type WorkspaceTrust } from "../../permissions/trust"
 import type { PermissionMode, PermissionScope } from "../../permissions/types"
 import type { SessionPlan } from "../../plans/types"
 import { profileAgentEvent, profileSessionCreated } from "../../profiler/profiler"
@@ -53,7 +55,7 @@ import type { ElicitationAnswer, RegisteredTool, ToolEvent } from "../../tools/t
 import type { AgentEvent, AgentState, DenialCause, SessionStartedEvent } from "../events"
 import { activeHistory, type ConversationCheckpoint, type HistoryItem } from "../history"
 import { isMessageId } from "../message-id"
-import { composeSystemPrompt } from "../prompt/registry"
+import { composeClassifierGuidance, composeSystemPrompt, type PromptContext } from "../prompt/registry"
 import type { DeliveredAgentQuestion, ParentQuestionResult } from "../task/questions"
 import type { SessionKind } from "../types"
 import { backgroundResultsMessage, SessionAsyncState } from "./async"
@@ -119,6 +121,7 @@ export class AgentSession {
   private readonly outputContract: OutputContract | undefined
   private readonly trackUndoPrompts: boolean
   private readonly inheritedDenyMode: PermissionMode | undefined
+  private readonly trustedRemoteSeed: string[] | undefined
   private readonly askParentHandler: AgentSessionDeps["askParent"]
   private readonly asyncState: SessionAsyncState
   private readonly toolRunner: ToolCallRunner
@@ -137,6 +140,9 @@ export class AgentSession {
   private thinking: ThinkingEffort | undefined
   private state: AgentState = "idle"
   private movingHistory = false
+  private permissionBoundaryGeneration = 0
+  private consecutiveClassifierBlocks = 0
+  private workspaceTrust: Promise<WorkspaceTrust>
   private mode: PermissionMode = defaultPermissionMode
   private modeBeforePlan: PermissionMode | undefined
   private plan: SessionPlan | undefined
@@ -167,6 +173,8 @@ export class AgentSession {
     this.workspaceUndo = deps.workspaceUndo ?? new WorkspaceUndo(this.cwd)
     this.trackUndoPrompts = deps.trackUndoPrompts ?? true
     this.inheritedDenyMode = deps.inheritedDenyMode
+    this.trustedRemoteSeed = deps.trustedRemotes ? [...deps.trustedRemotes] : undefined
+    this.workspaceTrust = captureWorkspaceTrust(this.cwd, this.trustedRemoteSeed)
     this.askParentHandler = deps.askParent
     this.provider = deps.provider
     this.profileId = deps.profileId
@@ -229,6 +237,7 @@ export class AgentSession {
       modelInputModalities: () => this.modelInputModalities,
       thinking: () => this.thinking,
       workspaceUndo: () => this.workspaceUndo,
+      trustedRemotes: () => this.trustedRemotes(),
       permissionSessionKey: () => this.sessionPermissionKey,
       outputContract: () => this.outputContract,
       availableTool: (name) => this.availableTool(name),
@@ -251,7 +260,45 @@ export class AgentSession {
       pendingActivity: () =>
         this.queue.first !== undefined || this.asyncState.hasQueued() || this.hasPendingAgentQuestions(),
       activitySignal: () => this.activityController.signal,
+      state: () => this.state,
+      permissionGeneration: () => this.permissionBoundaryGeneration,
+      classifierBlockCount: () => this.consecutiveClassifierBlocks,
+      classificationContext: (callId, action, signal) => this.classificationContext(callId, action, signal),
+      recordClassification: (result) => this.recordClassification(result),
+      recordProviderRequest: () => this.recordProviderRequest(),
     }
+  }
+
+  private async classificationContext(
+    callId: string,
+    action: ClassifierPendingAction,
+    signal: AbortSignal,
+  ): Promise<ClassifierContext> {
+    const trustPromise = this.workspaceTrust
+    const cwd = this.cwd
+    const [trust, dirty] = await Promise.all([trustPromise, workspaceDirty(cwd, signal)])
+    return buildClassifierContext({
+      guidance: composeClassifierGuidance(this.promptContext()),
+      history: this.items,
+      pendingCallId: callId,
+      trust,
+      dirty,
+      action,
+    })
+  }
+
+  private recordClassification(result: "allow" | "block"): void {
+    this.consecutiveClassifierBlocks = result === "allow" ? 0 : this.consecutiveClassifierBlocks + 1
+  }
+
+  private refreshPermissionBoundary(recaptureTrust = false): void {
+    this.permissionBoundaryGeneration += 1
+    this.consecutiveClassifierBlocks = 0
+    if (recaptureTrust) this.workspaceTrust = captureWorkspaceTrust(this.cwd, this.trustedRemoteSeed)
+  }
+
+  private async trustedRemotes(): Promise<string[]> {
+    return [...(await this.workspaceTrust).remotes]
   }
 
   private async contextUsage(): Promise<ContextUsage | undefined> {
@@ -310,6 +357,7 @@ export class AgentSession {
         this.pushItem(item)
         this.contextTokens = undefined
         this.compactionFailures = 0
+        this.refreshPermissionBoundary()
       },
       setState: (state) => this.setState(state),
       emit: (event) => this.emit(event),
@@ -326,6 +374,7 @@ export class AgentSession {
         this.checkpoints = state.checkpoints
         this.contextTokens = undefined
         this.compactionFailures = 0
+        this.refreshPermissionBoundary()
         if (this.tasks.length > 0) this.publishToolEvent({ type: "task_list_updated", tasks: [] })
       },
       recordEvent: (event) => this.recordEvent(event),
@@ -502,6 +551,7 @@ export class AgentSession {
     this.checkpoints = []
     this.redoStack.reset()
     this.workspaceUndo = new WorkspaceUndo(this.cwd)
+    this.refreshPermissionBoundary(true)
     this.contextTokens = undefined
     this.compactionFailures = 0
     this.tasks = []
@@ -553,6 +603,7 @@ export class AgentSession {
       this.sessionId = id
       this.parentId = parentId
       this.sessionPermissionKey = {}
+      this.refreshPermissionBoundary(true)
       this.startedAt = startedAt
       this.events.push(...forked.corrections)
       this.outputDirectory = toolOutputDirectory(dirname(forked.path), id)
@@ -581,6 +632,7 @@ export class AgentSession {
     this.title = target.session.title ? redactText(target.session.title) : undefined
     this.outputDirectory = toolOutputDirectory(dirname(target.path), this.sessionId)
     this.cwd = resolve(target.cwd)
+    this.refreshPermissionBoundary(true)
     this.startedAt = meta.startedAt
     this.items = target.session.items.map(redactHistoryItem)
     this.events = target.session.events.map(redactAgentEvent)
@@ -703,6 +755,7 @@ export class AgentSession {
     if (mode === "plan") this.modeBeforePlan = this.mode
     if (this.mode === "plan" && mode !== "plan") this.modeBeforePlan = undefined
     this.mode = mode
+    this.refreshPermissionBoundary()
     if (mode === "plan") this.planHandoffActive = false
     this.emit({ type: "mode_changed", mode })
   }
@@ -718,6 +771,7 @@ export class AgentSession {
     const previous = this.cwd
     this.disposeToolResources()
     this.cwd = next
+    this.refreshPermissionBoundary(true)
     this.workspaceUndo = new WorkspaceUndo(next)
     this.workspaceUndo.seed(
       this.checkpoints.map((checkpoint) => ({ messageId: checkpoint.messageId, prompt: checkpoint.input.text })),
@@ -1495,19 +1549,23 @@ export class AgentSession {
     }
   }
 
-  private providerPrompt(model: string): ProviderPrompt {
-    const available = this.availableTools()
-    const tools = available.map(({ name, description, parameters }) => ({ name, description, parameters }))
-    const instructions = composeSystemPrompt({
+  private promptContext(): PromptContext {
+    return {
       sessionId: this.sessionId,
       appName: appInfo.name,
       platform: `${process.platform} ${release()}`,
       cwd: this.cwd,
       kind: this.kind,
-      tools: available,
+      tools: this.availableTools(),
       mode: this.mode,
       plan: this.mode === "plan" || this.planHandoffActive ? this.plan : undefined,
-    })
+    }
+  }
+
+  private providerPrompt(model: string): ProviderPrompt {
+    const context = this.promptContext()
+    const tools = context.tools.map(({ name, description, parameters }) => ({ name, description, parameters }))
+    const instructions = composeSystemPrompt(context)
     return { instructions, tools, cacheKey: promptCacheKey(model, instructions, tools) }
   }
 

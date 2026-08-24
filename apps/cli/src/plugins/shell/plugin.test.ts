@@ -5,7 +5,6 @@ test("registers shell tools and their supporting contributions through the plugi
   const tools: string[] = []
   const prompts: string[] = []
   let disposers = 0
-  let permissionRules = 0
   let policyRules = 0
 
   registerShell({
@@ -18,9 +17,6 @@ test("registers shell tools and their supporting contributions through the plugi
     registerPrompt(prompt) {
       prompts.push(prompt.id)
     },
-    registerPermissionRules() {
-      permissionRules += 1
-    },
     registerPolicyRule() {
       policyRules += 1
     },
@@ -29,6 +25,5 @@ test("registers shell tools and their supporting contributions through the plugi
   expect(tools).toEqual(["bash", "exec_command", "write_stdin"])
   expect(prompts).toEqual(["environment"])
   expect(disposers).toBe(2)
-  expect(permissionRules).toBe(2)
   expect(policyRules).toBe(2)
 })

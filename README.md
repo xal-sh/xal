@@ -31,7 +31,7 @@ Start the TUI in `plan`, `normal`, or `yolo` mode:
 xal --mode plan
 ```
 
-Set `"mode": "plan"` in `config.json` to use it by default. Command-line `--mode` takes precedence.
+Set `"mode": "plan"` in `config.json` to use it by default. Command-line `--mode` takes precedence. Normal mode runs routine local and sandboxed actions directly, then uses the active provider and model for an independent safety check before unresolved actions execute. See [permissions and security](docs/permissions.md) for precedence, classifier context, fail-closed behavior, and explicit ask or deny boundaries.
 
 Update to the latest beta release:
 

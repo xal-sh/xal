@@ -41,6 +41,7 @@ export interface NativeWorkspaceIndex {
 
 export interface NativeReadRequest {
   path?: string
+  expectedPath?: string
   displayPath: string
   offset?: number
   limit?: number
@@ -48,6 +49,7 @@ export interface NativeReadRequest {
 
 export interface NativeEditRequest {
   path?: string
+  expectedPath?: string
   displayPath: string
   oldString?: string
   newString?: string
@@ -56,6 +58,7 @@ export interface NativeEditRequest {
 
 export interface NativeWriteRequest {
   path?: string
+  expectedPath?: string
   displayPath: string
   content?: string
 }

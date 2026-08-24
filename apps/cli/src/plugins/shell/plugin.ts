@@ -12,20 +12,19 @@ import {
   workdirEscapesWorkspace,
   writeStdinTool,
 } from "./interactive/tool"
-import { commandPolicy, commandRiskRules } from "./policy"
+import { commandPolicy } from "./policy"
 import { sandboxRequested } from "./sandbox"
 import { disposeShellSession, shellPrompt } from "./shell"
 
 type ShellRegistrationContext = Pick<
   PluginContext,
-  "registerPermissionRules" | "registerPolicyRule" | "registerPrompt" | "registerTool" | "registerToolSessionDisposer"
+  "registerPolicyRule" | "registerPrompt" | "registerTool" | "registerToolSessionDisposer"
 >
 
 function registerBash(ctx: ShellRegistrationContext): void {
   ctx.registerTool(bashTool)
   ctx.registerToolSessionDisposer(disposeShellSession)
-  ctx.registerPrompt({ id: "environment", text: shellPrompt })
-  ctx.registerPermissionRules({ ask: commandRiskRules(bashTool.name) })
+  ctx.registerPrompt({ id: "environment", classifierTrusted: true, text: shellPrompt })
   ctx.registerPolicyRule({
     evaluate(request) {
       if (request.tool !== bashTool.name || sandboxRequested(request.args)) return undefined
@@ -39,9 +38,6 @@ export function registerInteractiveShell(ctx: ShellRegistrationContext): void {
   ctx.registerTool(execCommandTool)
   ctx.registerTool(writeStdinTool)
   ctx.registerToolSessionDisposer(disposeInteractiveToolSessions)
-  ctx.registerPermissionRules({
-    ask: [...commandRiskRules(execCommandTool.name), ...commandRiskRules(writeStdinTool.name)],
-  })
   ctx.registerPolicyRule({
     evaluate(request) {
       if (request.tool === writeStdinTool.name) {
@@ -50,10 +46,11 @@ export function registerInteractiveShell(ctx: ShellRegistrationContext): void {
         let resizeDecision: PolicyDecision | undefined
         if (resizeRequested(request.args)) {
           const resizeRequest = { ...request, subject: RESIZE_SUBJECT }
-          resizeDecision = isDenied(resizeRequest) ? "deny" : (matchRules(resizeRequest) ?? "ask")
+          resizeDecision = isDenied(resizeRequest) ? "deny" : (matchRules(resizeRequest) ?? "classify")
         }
         if (commandDecision === "deny" || resizeDecision === "deny") return "deny"
         if (commandDecision === "ask" || resizeDecision === "ask") return "ask"
+        if (commandDecision === "classify" || resizeDecision === "classify") return "classify"
         return commandDecision ?? resizeDecision
       }
       if (request.tool !== execCommandTool.name) return undefined
@@ -61,7 +58,7 @@ export function registerInteractiveShell(ctx: ShellRegistrationContext): void {
       const commandDecision = command ? commandPolicy(request, command) : undefined
       if (commandDecision === "deny") return "deny"
       if (sandboxRequested(request.args)) return undefined
-      if (workdirEscapesWorkspace(request.args, request.cwd)) return "ask"
+      if (workdirEscapesWorkspace(request.args, request.cwd)) return "classify"
       return commandDecision
     },
   })

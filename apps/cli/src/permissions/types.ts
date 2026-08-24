@@ -1,15 +1,17 @@
+import type { JsonObject } from "../lib/json"
+
 export type PermissionMode = string
 
 export type PermissionScope = "once" | "session" | "always"
 
-export type PolicyDecision = "allow" | "deny" | "ask"
+export type PolicyDecision = "allow" | "deny" | "ask" | "classify"
 
 export interface PermissionRequest {
   sessionKey: object
   cwd: string
   tool: string
   title: string
-  args: Record<string, unknown>
+  args: JsonObject
   subject: string | undefined
   readOnly: boolean
   sandboxed: boolean
@@ -31,6 +33,7 @@ export interface ModeDefinition {
   name: string
   readOnly: boolean
   skipAsk: boolean
+  classifyUnresolved: boolean
   guidance: string
   subagentGuidance: string
 }

@@ -28,7 +28,7 @@ function catalogPrompt(): string {
 export function registerSkills(): void {
   replaceSkills([])
   registerTool(skillTool)
-  registerPrompt({ id: "skills", text: catalogPrompt })
+  registerPrompt({ id: "skills", classifierTrusted: true, text: catalogPrompt })
 }
 
 export async function discoverSkills(): Promise<void> {

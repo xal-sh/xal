@@ -3,11 +3,13 @@ use super::*;
 #[napi(object)]
 pub struct NativeWriteRequest {
     pub path: Option<String>,
+    pub expected_path: Option<String>,
     pub display_path: String,
     pub content: Option<Utf16String>,
 }
 pub struct WriteTask {
     path: PathBuf,
+    expected_path: Option<String>,
     display_path: String,
     content: Vec<u16>,
 }
@@ -17,6 +19,7 @@ impl Task for WriteTask {
     type JsValue = NativeToolOutput;
 
     fn compute(&mut self) -> napi::Result<Self::Output> {
+        validate_expected_path(&self.path, self.expected_path.clone())?;
         let metadata = fs::metadata(&self.path).ok();
         if metadata.as_ref().is_some_and(fs::Metadata::is_dir) {
             return Err(failed(format!(
@@ -73,6 +76,7 @@ pub fn native_write_file(request: NativeWriteRequest) -> napi::Result<AsyncTask<
         .ok_or_else(|| invalid("content is required"))?;
     Ok(AsyncTask::new(WriteTask {
         path: required_path(request.path)?,
+        expected_path: request.expected_path,
         display_path: request.display_path,
         content: content.to_vec(),
     }))
@@ -93,6 +97,12 @@ mod tests {
         fs::write(&path, [0xff]).expect("fixture should write");
         let mut task = WriteTask {
             path: path.clone(),
+            expected_path: Some(
+                fs::canonicalize(&path)
+                    .expect("fixture should resolve")
+                    .display()
+                    .to_string(),
+            ),
             display_path: path.display().to_string(),
             content: units("�"),
         };

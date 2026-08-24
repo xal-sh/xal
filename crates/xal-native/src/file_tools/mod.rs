@@ -1,8 +1,9 @@
 #![cfg_attr(test, allow(dead_code))]
 
+use std::ffi::OsString;
 use std::fs;
 use std::io::{BufRead, BufReader};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use napi::bindgen_prelude::{AsyncTask, Utf16String};
 use napi::{Env, Error, Status, Task};
@@ -60,6 +61,59 @@ fn required_path(path: Option<String>) -> napi::Result<PathBuf> {
     Ok(PathBuf::from(path))
 }
 
+fn canonical_target(path: &Path) -> napi::Result<PathBuf> {
+    let mut current = path.to_path_buf();
+    let mut suffix: Vec<OsString> = Vec::new();
+    loop {
+        match fs::canonicalize(&current) {
+            Ok(mut target) => {
+                for part in suffix.iter().rev() {
+                    target.push(part);
+                }
+                return Ok(target);
+            }
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+                ) =>
+            {
+                if fs::symlink_metadata(&current)
+                    .is_ok_and(|metadata| metadata.file_type().is_symlink())
+                {
+                    return Err(failed(format!(
+                        "Cannot resolve file boundary: {}",
+                        path.display()
+                    )));
+                }
+                let name = current.file_name().ok_or_else(|| {
+                    failed(format!("Cannot resolve file boundary: {}", path.display()))
+                })?;
+                suffix.push(name.to_os_string());
+                current = current
+                    .parent()
+                    .ok_or_else(|| {
+                        failed(format!("Cannot resolve file boundary: {}", path.display()))
+                    })?
+                    .to_path_buf();
+            }
+            Err(error) => return Err(io_error(error)),
+        }
+    }
+}
+
+fn validate_expected_path(path: &Path, expected_path: Option<String>) -> napi::Result<()> {
+    let expected = required_path(expected_path)?;
+    let current = canonical_target(path)?;
+    if current == expected {
+        return Ok(());
+    }
+    Err(failed(format!(
+        "File boundary changed before execution: {}",
+        path.display()
+    )))
+}
+
 fn normalized_count(value: Option<f64>, default: u32) -> u32 {
     let value = value.unwrap_or(f64::from(default));
     if !value.is_finite() || value < 1.0 {
@@ -85,6 +139,32 @@ fn with_diff(header: String, hunks: &[u16]) -> Vec<u16> {
 #[cfg(test)]
 fn units(value: &str) -> Vec<u16> {
     value.encode_utf16().collect()
+}
+
+#[cfg(test)]
+mod boundary_tests {
+    use std::fs;
+
+    use super::validate_expected_path;
+
+    #[test]
+    fn rejects_a_file_target_that_changed_after_validation() {
+        let root =
+            std::env::temp_dir().join(format!("xal-native-boundary-test-{}", std::process::id()));
+        let path = root.join("file.txt");
+        fs::create_dir_all(&root).expect("fixture directory should exist");
+        fs::write(&path, "content").expect("fixture should write");
+        let expected = fs::canonicalize(&path)
+            .expect("fixture should resolve")
+            .display()
+            .to_string();
+        assert!(validate_expected_path(&path, Some(expected)).is_ok());
+        assert!(
+            validate_expected_path(&path, Some(root.join("other.txt").display().to_string()))
+                .is_err()
+        );
+        fs::remove_dir_all(root).expect("fixture should clean up");
+    }
 }
 
 #[napi(js_name = "nativeUnifiedDiff", catch_unwind)]

@@ -16,6 +16,7 @@ export interface PromptContext {
 
 export interface PromptSection {
   id: string
+  classifierTrusted?: boolean
   text(ctx: PromptContext): string
 }
 
@@ -30,14 +31,23 @@ export function registerPrompt(section: PromptSection): void {
   sections.set(section.id, [section])
 }
 
-export function composeSystemPrompt(ctx: PromptContext): string {
+function composePrompt(ctx: PromptContext, include: (section: PromptSection) => boolean): string {
   return [...sections.values()]
     .map((parts) =>
       parts
+        .filter(include)
         .map((part) => part.text(ctx))
         .filter((text) => text.length > 0)
         .join("\n"),
     )
     .filter((text) => text.length > 0)
     .join("\n\n")
+}
+
+export function composeSystemPrompt(ctx: PromptContext): string {
+  return composePrompt(ctx, () => true)
+}
+
+export function composeClassifierGuidance(ctx: PromptContext): string {
+  return composePrompt(ctx, (section) => section.classifierTrusted === true)
 }

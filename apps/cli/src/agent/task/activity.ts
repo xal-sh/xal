@@ -87,6 +87,7 @@ export function activity(
       break
     case "state_changed":
       if (event.state === "streaming") state.activity = "Thinking…"
+      if (event.state === "evaluating_permission") state.activity = "Reviewing action…"
       break
     case "hook_finished":
       state.activity = `Hook ${event.hook}: ${event.event} ${event.action}`

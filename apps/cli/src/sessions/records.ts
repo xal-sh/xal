@@ -31,7 +31,9 @@ export function isPersistable(event: AgentEvent): boolean {
 
 function parseDenial(value: unknown): DenialCause | undefined {
   const denial = asString(value)
-  if (denial === "user" || denial === "policy" || denial === "plan" || denial === "hook") return denial
+  if (denial === "user" || denial === "policy" || denial === "plan" || denial === "hook" || denial === "classifier") {
+    return denial
+  }
   return undefined
 }
 

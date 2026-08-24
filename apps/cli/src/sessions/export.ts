@@ -80,10 +80,14 @@ function renderEvent(event: AgentEvent): string | undefined {
       return `## Assistant\n\n${event.text || "_(empty response)_"}`
     case "reasoning_summary":
       return `## Reasoning\n\n${event.text || "_(empty reasoning)_"}`
-    case "tool_finished":
-      return `## Tool: ${event.title} (${event.tool})\n\n${indented(event.output)}`
-    case "shell_finished":
-      return `## Shell\n\n${indented(`$ ${event.command}\n${event.output}`)}`
+    case "tool_finished": {
+      const denial = event.denial ? ` · blocked by ${event.denial}` : ""
+      return `## Tool: ${event.title} (${event.tool})${denial}\n\n${indented(event.output)}`
+    }
+    case "shell_finished": {
+      const denial = event.denial ? ` · blocked by ${event.denial}` : ""
+      return `## Shell${denial}\n\n${indented(`$ ${event.command}\n${event.output}`)}`
+    }
     case "background_results":
       return `## ${appInfo.displayName} context\n\n${event.results.map(backgroundResult).join("\n\n")}`
     case "agent_questions":

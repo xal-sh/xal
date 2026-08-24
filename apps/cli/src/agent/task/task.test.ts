@@ -40,6 +40,29 @@ function modelCatalog(): ModelCatalog {
   }
 }
 
+test("classifier blocks a write task before dispatch", async () => {
+  const provider = new ScriptedProvider([
+    toolRound("blocked-write-task", "task", {
+      context: "The assignment must stay local.",
+      tasks: [{ task: "Change the project", access: "write", isolation: "shared" }],
+    }),
+    completedRound('{"verdict":"block","reason":"The user did not authorize delegation"}'),
+    completedRound("Stopped safely."),
+  ])
+  const session = harness.createSession(provider, { interactive: true })
+  const events: AgentEvent[] = []
+
+  await runSettledTurn(session, { text: "Inspect the project yourself.", images: [] }, (event) => events.push(event))
+
+  const blocked = events.find(
+    (event): event is Extract<AgentEvent, { type: "tool_finished" }> =>
+      event.type === "tool_finished" && event.callId === "blocked-write-task",
+  )
+  expect(blocked?.denial).toBe("classifier")
+  expect(blocked?.output).toContain("did not authorize delegation")
+  expect(provider.requests).toHaveLength(3)
+})
+
 test("keeps task mechanics in the tool contract and delegation policy in instructions", async () => {
   const provider = new ScriptedProvider([completedRound("Done.")])
   const session = harness.createSession(provider, { interactive: true })

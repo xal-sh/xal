@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { contributeRules, setUserRules } from "../../../permissions/rules"
+import { setUserRules } from "../../../permissions/rules"
 import { evaluatePolicy, registerPolicyRule } from "../../../permissions/service"
 import type { PermissionRequest } from "../../../permissions/types"
 import { sandboxAvailable } from "../sandbox"
@@ -7,7 +7,6 @@ import { registerInteractiveShell } from "../plugin"
 import { execCommandTool, workdirEscapesWorkspace, writeStdinTool } from "./tool"
 
 registerInteractiveShell({
-  registerPermissionRules: contributeRules,
   registerPolicyRule,
   registerPrompt() {},
   registerTool() {},
@@ -30,13 +29,13 @@ function request(overrides: Partial<PermissionRequest>): PermissionRequest {
 }
 
 describe("interactive shell policy", () => {
-  test("asks before using a working directory outside the workspace", async () => {
+  test("classifies a working directory outside the workspace", async () => {
     const args = { cmd: "touch marker", workdir: ".." }
     expect(workdirEscapesWorkspace(args, process.cwd())).toBe(true)
-    expect(await evaluatePolicy(request({ args, subject: "touch marker" }))).toBe("ask")
+    expect(await evaluatePolicy(request({ args, subject: "touch marker" }))).toBe("classify")
   })
 
-  test("applies Bash command risk to input and allows polling", async () => {
+  test("classifies PTY input and resize while allowing polling", async () => {
     expect(
       await evaluatePolicy(
         request({
@@ -45,7 +44,7 @@ describe("interactive shell policy", () => {
           subject: "printf ok\n",
         }),
       ),
-    ).toBe("allow")
+    ).toBe("classify")
     expect(
       await evaluatePolicy(
         request({
@@ -54,7 +53,7 @@ describe("interactive shell policy", () => {
           subject: "rm /etc/hosts\n",
         }),
       ),
-    ).toBe("ask")
+    ).toBe("classify")
     expect(
       await evaluatePolicy(
         request({
@@ -63,7 +62,7 @@ describe("interactive shell policy", () => {
           subject: "rm ",
         }),
       ),
-    ).toBe("allow")
+    ).toBe("classify")
     expect(
       await evaluatePolicy(
         request({
@@ -72,7 +71,7 @@ describe("interactive shell policy", () => {
           subject: "rm /etc/hosts\n",
         }),
       ),
-    ).toBe("ask")
+    ).toBe("classify")
     expect(
       await evaluatePolicy(
         request({
@@ -81,7 +80,7 @@ describe("interactive shell policy", () => {
           subject: "printf ok\n",
         }),
       ),
-    ).toBe("ask")
+    ).toBe("classify")
     expect(
       await evaluatePolicy(
         request({
@@ -90,10 +89,10 @@ describe("interactive shell policy", () => {
           subject: "resize terminal",
         }),
       ),
-    ).toBe("ask")
+    ).toBe("classify")
     expect(
       await evaluatePolicy(request({ tool: writeStdinTool.name, args: { session_id: 1, chars: "\n" }, subject: "\n" })),
-    ).toBe("allow")
+    ).toBe("classify")
     expect(
       await evaluatePolicy(
         request({ tool: writeStdinTool.name, args: { session_id: 1, chars: "" }, subject: "", readOnly: true }),
@@ -101,7 +100,7 @@ describe("interactive shell policy", () => {
     ).toBe("allow")
   })
 
-  test("asks before every supported force-push form", async () => {
+  test("classifies force pushes and ordinary unsandboxed commands", async () => {
     for (const command of [
       "git push --force origin main",
       "git push -f origin main",
@@ -110,10 +109,10 @@ describe("interactive shell policy", () => {
       "git push +main",
       "git push origin +main",
     ]) {
-      expect(await evaluatePolicy(request({ args: { cmd: command }, subject: command }))).toBe("ask")
+      expect(await evaluatePolicy(request({ args: { cmd: command }, subject: command }))).toBe("classify")
     }
     const regularPush = "git push origin main"
-    expect(await evaluatePolicy(request({ args: { cmd: regularPush }, subject: regularPush }))).toBe("allow")
+    expect(await evaluatePolicy(request({ args: { cmd: regularPush }, subject: regularPush }))).toBe("classify")
   })
 
   test("preserves deny rules across interactive command paths", async () => {

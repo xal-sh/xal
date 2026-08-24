@@ -359,7 +359,7 @@ export const cli: Block[] = [
       },
       {
         kind: "paragraph",
-        text: "Use plan mode when an agent should investigate without modifying files, normal mode for approval-gated development, and yolo mode only when unattended writes are intentional. The [installation guide](/docs/install) documents supported targets, checksums, custom paths, beta channels, and release behavior. Source and release history are available in the [official repository](https://github.com/xal-sh/xal).",
+        text: "Use plan mode when an agent should investigate without modifying files. Normal mode runs routine local work directly and independently classifies unresolved actions with the active provider before execution. Yolo mode skips asks and classification, but retains deny rules. The [permissions guide](/docs/permissions) documents deterministic precedence, fail-closed behavior, classifier context, and explicit safety boundaries. The [installation guide](/docs/install) documents supported targets, checksums, custom paths, beta channels, and release behavior. Source and release history are available in the [official repository](https://github.com/xal-sh/xal).",
       },
     ],
   },

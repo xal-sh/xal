@@ -1,4 +1,4 @@
-import { mkdtemp, rm, utimes, writeFile } from "node:fs/promises"
+import { mkdtemp, realpath, rm, utimes, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { basename, join } from "node:path"
 import {
@@ -293,8 +293,9 @@ async function nativeIoBenchmarks(): Promise<void> {
     const largePath = join(workspace, "large-read.txt")
     const largeText = `${"ordinary line 猫 🔐\n".repeat(20_000)}unique-edit-target\n`
     await writeFile(largePath, largeText)
+    const expectedPath = await realpath(largePath)
     const readStart = performance.now()
-    const read = await nativeReadFile({ path: largePath, displayPath: largePath, offset: 1, limit: 2000 })
+    const read = await nativeReadFile({ path: largePath, expectedPath, displayPath: largePath, offset: 1, limit: 2000 })
     const readMs = performance.now() - readStart
     if (!read.output.includes("Use offset=") || read.output.length > 51_000) {
       throw new Error("native read benchmark output mismatch")
@@ -302,6 +303,7 @@ async function nativeIoBenchmarks(): Promise<void> {
     const editStart = performance.now()
     const edit = await nativeEditFile({
       path: largePath,
+      expectedPath,
       displayPath: largePath,
       oldString: "unique-edit-target",
       newString: "updated-edit-target",

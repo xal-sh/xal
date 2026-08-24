@@ -43,7 +43,7 @@ Global memory is stored at `<app-home>/MEMORY.md`. On Unix, Xal creates it with 
 
 The `profile` value is managed by `/connect` and `/model`. Profile names remain user-facing and may be renamed without changing this ID.
 
-`mode` accepts `normal`, `plan`, `yolo`, or a name defined under `modes`. A command-line `--mode` overrides the configured default for that session.
+`mode` accepts `normal`, `plan`, `yolo`, or a name defined under `modes`. A command-line `--mode` overrides the configured default for that session. Normal mode uses the active session provider and model for independent safety classification when rules and built-in fast paths do not resolve an action. There is no separate classifier model or provider setting. Use `permissions` and custom `modes` to add explicit allow, ask, or deny boundaries.
 
 Malformed `mode`, `permissions`, `modes`, `goal`, `redaction`, or `agents` configuration fails startup instead of silently running without those rules.
 

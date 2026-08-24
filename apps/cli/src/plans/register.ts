@@ -67,6 +67,7 @@ export function registerPlans(): void {
   })
   registerPrompt({
     id: "plan-workflow",
+    classifierTrusted: true,
     text(prompt) {
       if (prompt.kind === "subagent") return ""
       if (prompt.mode === "plan") {

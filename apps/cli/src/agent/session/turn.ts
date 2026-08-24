@@ -192,7 +192,7 @@ export async function runDirectShell(host: TurnHost, input: UserInput, signal: A
     if (entry.type === "outcome") {
       outcome = entry.outcome
     } else {
-      const preparation = await host.toolRunner.prepare(entry.call, signal)
+      const preparation = await host.toolRunner.prepare(entry.call, signal, "direct_user")
       if (preparation.type === "outcome") outcome = preparation.outcome
       else prepared = preparation.prepared
     }

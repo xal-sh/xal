@@ -23,6 +23,7 @@ export interface AgentSessionDeps {
   workspaceUndo?: WorkspaceUndo
   trackUndoPrompts?: boolean
   inheritedDenyMode?: PermissionMode
+  trustedRemotes?: string[]
   askParent?(question: string, signal: AbortSignal): Promise<ParentQuestionResult>
 }
 

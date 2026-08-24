@@ -162,6 +162,7 @@ export class AttentionController {
       case "running_hook":
       case "running_tool":
       case "evaluating_goal":
+      case "evaluating_permission":
         this.start()
         return
     }

@@ -15,6 +15,7 @@ interface Entry extends Matcher {
 const RULE = /^([^()]+?)(?:\((.*)\))?$/
 
 const defaults: Entry[] = []
+const defaultDenies: Matcher[] = []
 let config: Entry[] = []
 const project = new Map<string, Entry[]>()
 const session = new WeakMap<object, Map<string, Entry[]>>()
@@ -68,6 +69,7 @@ function matches(matcher: Matcher, request: PermissionRequest): boolean {
 
 export function contributeRules(rules: PermissionRules): void {
   defaults.push(...toEntries(rules.allow, "allow"), ...toEntries(rules.ask, "ask"))
+  defaultDenies.push(...toMatchers(rules.deny))
 }
 
 export function setUserRules(rules: PermissionRules): void {
@@ -124,7 +126,7 @@ export async function rememberRule(
 export function isDenied(request: PermissionRequest): boolean {
   const inherited = request.inheritedDenyMode ? (modeDenies.get(request.inheritedDenyMode) ?? []) : []
   const scoped = [...(modeDenies.get(request.mode) ?? []), ...inherited]
-  return [...denies, ...scoped].some((matcher) => matches(matcher, request))
+  return [...defaultDenies, ...denies, ...scoped].some((matcher) => matches(matcher, request))
 }
 
 export function matchRules(request: PermissionRequest): PolicyDecision | undefined {
@@ -136,9 +138,11 @@ export function matchRules(request: PermissionRequest): PolicyDecision | undefin
     ...(project.get(key) ?? []),
     ...(session.get(request.sessionKey)?.get(key) ?? []),
   ]
-  for (let index = entries.length - 1; index >= 0; index--) {
-    const entry = entries[index]!
-    if (matches(entry, request)) return entry.decision
+  let allowed = false
+  for (const entry of entries) {
+    if (!matches(entry, request)) continue
+    if (entry.decision === "ask") return "ask"
+    allowed = true
   }
-  return undefined
+  return allowed ? "allow" : undefined
 }

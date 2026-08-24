@@ -22,6 +22,7 @@ const plugin: Plugin = {
     store = current
     ctx.registerPrompt({
       id: "global_memory",
+      classifierTrusted: false,
       text(prompt) {
         return prompt.kind === "primary" ? renderMemory(current.promptContent) : ""
       },

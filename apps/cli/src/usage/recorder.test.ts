@@ -25,7 +25,7 @@ describe("usage recorder", () => {
     recorder.record({
       provider: "openai-chatgpt",
       model: "gpt-5.6-sol",
-      phase: "turn",
+      phase: "permission_classification",
       outcome: "completed",
       usage: {
         totalInputTokens: 120,
@@ -45,7 +45,7 @@ describe("usage recorder", () => {
       timestamp: "2026-08-22T12:34:56.000Z",
       provider: "openai-chatgpt",
       model: "gpt-5.6-sol",
-      phase: "turn",
+      phase: "permission_classification",
       outcome: "completed",
       usage: {
         totalInputTokens: 120,
