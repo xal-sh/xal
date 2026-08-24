@@ -42,6 +42,14 @@ function sensitiveRead(path: string): boolean {
   return [".ssh", ".aws", ".gnupg"].some((directory) => inside(path, resolve(homedir(), directory)))
 }
 
+export function fileExecutionPath(path: string | undefined, cwd: string): { path?: string; expectedPath: string } {
+  if (!path) return { expectedPath: "" }
+  const resolved = resolveFilePath(path, cwd)
+  const expectedPath = canonicalTarget(resolved)
+  if (!expectedPath) throw new Error(`Cannot resolve file boundary: ${displayPath(path, cwd)}`)
+  return { path: resolved, expectedPath }
+}
+
 export function filePolicy(request: PermissionRequest): PolicyDecision | undefined {
   if (request.tool !== "read" && request.tool !== "write" && request.tool !== "edit") return undefined
   const path = canonicalTarget(resolveFilePath(asString(request.args.file_path) ?? "", request.cwd))

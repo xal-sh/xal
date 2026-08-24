@@ -2,7 +2,7 @@ import { asString } from "../../lib/json"
 import { displayPath, resolveFilePath } from "../../lib/path"
 import { nativeWriteFile } from "../../native"
 import type { Tool } from "../../tools/types"
-import { canonicalTarget, pathPermission } from "./permission"
+import { fileExecutionPath, pathPermission } from "./permission"
 
 export const writeTool: Tool = {
   name: "write",
@@ -35,12 +35,9 @@ export const writeTool: Tool = {
   },
   async execute(args, ctx) {
     const path = asString(args.file_path)
-    const resolved = path ? resolveFilePath(path, ctx.cwd) : undefined
-    const expectedPath = resolved ? canonicalTarget(resolved) : undefined
-    if (resolved && !expectedPath) throw new Error(`Cannot resolve file boundary: ${displayPath(path ?? "", ctx.cwd)}`)
     const content = asString(args.content)
     return nativeWriteFile({
-      ...(resolved ? { path: resolved, expectedPath } : {}),
+      ...fileExecutionPath(path, ctx.cwd),
       displayPath: displayPath(path ?? "", ctx.cwd),
       ...(content === undefined ? {} : { content }),
     })

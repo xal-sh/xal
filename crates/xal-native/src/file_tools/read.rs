@@ -3,14 +3,14 @@ use super::*;
 #[napi(object)]
 pub struct NativeReadRequest {
     pub path: Option<String>,
-    pub expected_path: Option<String>,
+    pub expected_path: String,
     pub display_path: String,
     pub offset: Option<f64>,
     pub limit: Option<f64>,
 }
 pub struct ReadTask {
     path: PathBuf,
-    expected_path: Option<String>,
+    expected_path: String,
     display_path: String,
     offset: usize,
     limit: usize,
@@ -21,16 +21,17 @@ impl Task for ReadTask {
     type JsValue = NativeToolOutput;
 
     fn compute(&mut self) -> napi::Result<Self::Output> {
-        validate_expected_path(&self.path, self.expected_path.clone())?;
-        let metadata = fs::metadata(&self.path)
+        let target = stable_target(&self.path, &self.expected_path, false)?;
+        let file = target
+            .directory
+            .open(&target.path)
             .map_err(|_| failed(format!("File not found: {}", self.display_path)))?;
-        if metadata.is_dir() {
+        if file.metadata().map_err(io_error)?.is_dir() {
             return Err(failed(format!(
                 "Path is a directory, not a file: {}",
                 self.display_path
             )));
         }
-        let file = fs::File::open(&self.path).map_err(io_error)?;
         let mut reader = BufReader::new(file);
         let mut buffer = Vec::new();
         let mut output = Vec::<u16>::new();

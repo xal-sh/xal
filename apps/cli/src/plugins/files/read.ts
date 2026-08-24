@@ -1,8 +1,8 @@
 import { asNumber, asString } from "../../lib/json"
-import { displayPath, resolveFilePath } from "../../lib/path"
+import { displayPath } from "../../lib/path"
 import { nativeReadFile } from "../../native"
 import type { Tool } from "../../tools/types"
-import { canonicalTarget, pathPermission } from "./permission"
+import { fileExecutionPath, pathPermission } from "./permission"
 
 const DEFAULT_LIMIT = 2000
 const MAX_LINE_CHARS = 2000
@@ -43,13 +43,10 @@ export const readTool: Tool = {
   },
   async execute(args, ctx) {
     const path = asString(args.file_path)
-    const resolved = path ? resolveFilePath(path, ctx.cwd) : undefined
-    const expectedPath = resolved ? canonicalTarget(resolved) : undefined
-    if (resolved && !expectedPath) throw new Error(`Cannot resolve file boundary: ${displayPath(path ?? "", ctx.cwd)}`)
     const offset = asNumber(args.offset)
     const limit = asNumber(args.limit)
     return nativeReadFile({
-      ...(resolved ? { path: resolved, expectedPath } : {}),
+      ...fileExecutionPath(path, ctx.cwd),
       displayPath: displayPath(path ?? "", ctx.cwd),
       ...(offset === undefined ? {} : { offset }),
       ...(limit === undefined ? {} : { limit }),

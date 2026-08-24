@@ -45,7 +45,9 @@ test("permission policy enforces mode, deny, configured, registered, and remembe
     expect(await evaluatePolicy(request("mcp__production_deploy"))).toBe("classify")
     expect(await evaluatePolicy(request("default-plan", { mode: "plan" }))).toBe("deny")
     expect(await evaluatePolicy(request("default-yolo", { mode: "yolo" }))).toBe("allow")
-    expect(evaluatePolicy(request("default-unknown", { mode: "vanished" }))).rejects.toThrow("unknown permission mode")
+    await expect(evaluatePolicy(request("default-unknown", { mode: "vanished" }))).rejects.toThrow(
+      "unknown permission mode",
+    )
 
     expect(await evaluatePolicy(request("custom-default", { mode: "paranoid" }))).toBe("ask")
     expect(await evaluatePolicy(request("custom-readonly", { mode: "audit" }))).toBe("deny")

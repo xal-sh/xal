@@ -116,6 +116,7 @@ test("edit rejects empty matches and invalid UTF-8 without modifying the file", 
     await expect(
       nativeEditFile({
         path: join(workspace, "missing.txt"),
+        expectedPath: join(workspace, "missing.txt"),
         displayPath: "missing.txt",
         oldString: "",
         newString: "new",

@@ -3,7 +3,7 @@ use super::*;
 #[napi(object)]
 pub struct NativeEditRequest {
     pub path: Option<String>,
-    pub expected_path: Option<String>,
+    pub expected_path: String,
     pub display_path: String,
     pub old_string: Option<Utf16String>,
     pub new_string: Option<Utf16String>,
@@ -50,7 +50,7 @@ fn replace_matches(
 
 pub struct EditTask {
     path: PathBuf,
-    expected_path: Option<String>,
+    expected_path: String,
     display_path: String,
     old: Vec<u16>,
     new: Vec<u16>,
@@ -62,22 +62,27 @@ impl Task for EditTask {
     type JsValue = NativeToolOutput;
 
     fn compute(&mut self) -> napi::Result<Self::Output> {
-        validate_expected_path(&self.path, self.expected_path.clone())?;
-        let metadata = fs::metadata(&self.path)
+        let target = stable_target(&self.path, &self.expected_path, false)?;
+        let mut options = OpenOptions::new();
+        options.read(true).write(true);
+        let mut file = target
+            .directory
+            .open_with(&target.path, &options)
             .map_err(|_| failed(format!("File not found: {}", self.display_path)))?;
-        if metadata.is_dir() {
+        if file.metadata().map_err(io_error)?.is_dir() {
             return Err(failed(format!(
                 "Path is a directory, not a file: {}",
                 self.display_path
             )));
         }
-        let previous_text =
-            String::from_utf8(fs::read(&self.path).map_err(io_error)?).map_err(|error| {
-                invalid(format!(
-                    "Cannot edit binary file {}: {error}",
-                    self.display_path
-                ))
-            })?;
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes).map_err(io_error)?;
+        let previous_text = String::from_utf8(bytes).map_err(|error| {
+            invalid(format!(
+                "Cannot edit binary file {}: {error}",
+                self.display_path
+            ))
+        })?;
         let previous = previous_text.encode_utf16().collect::<Vec<_>>();
         let positions = match_positions(&previous, &self.old);
         let matches = checked_count(positions.len(), "edit match")?;
@@ -101,7 +106,10 @@ impl Task for EditTask {
             self.replace_all,
         );
         let diff = unified_diff(&previous, &next);
-        fs::write(&self.path, utf16_lossy(&next).as_bytes()).map_err(io_error)?;
+        file.seek(SeekFrom::Start(0)).map_err(io_error)?;
+        file.set_len(0).map_err(io_error)?;
+        file.write_all(utf16_lossy(&next).as_bytes())
+            .map_err(io_error)?;
         Ok(NativeToolOutput {
             output: with_diff(
                 format!(

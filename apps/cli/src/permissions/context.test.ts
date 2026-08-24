@@ -115,7 +115,7 @@ test("classifier context drops oldest actions before the newest user intent", ()
   ]
   const context = serialized(history)
 
-  expect(context.length).toBeLessThan(65_000)
+  expect(context.length).toBeLessThanOrEqual(60_000)
   expect(context).toContain("NEWEST_USER_INTENT")
   expect(context).not.toContain('"file_path":"0.txt"')
   expect(context).toContain('"file_path":"79.txt"')

@@ -2,7 +2,7 @@ import { asBoolean, asString } from "../../lib/json"
 import { displayPath, resolveFilePath } from "../../lib/path"
 import { nativeEditFile } from "../../native"
 import type { Tool } from "../../tools/types"
-import { canonicalTarget, pathPermission } from "./permission"
+import { fileExecutionPath, pathPermission } from "./permission"
 
 export const editTool: Tool = {
   name: "edit",
@@ -44,14 +44,11 @@ export const editTool: Tool = {
   },
   async execute(args, ctx) {
     const path = asString(args.file_path)
-    const resolved = path ? resolveFilePath(path, ctx.cwd) : undefined
-    const expectedPath = resolved ? canonicalTarget(resolved) : undefined
-    if (resolved && !expectedPath) throw new Error(`Cannot resolve file boundary: ${displayPath(path ?? "", ctx.cwd)}`)
     const oldString = asString(args.old_string)
     const newString = asString(args.new_string)
     const replaceAll = asBoolean(args.replace_all)
     return nativeEditFile({
-      ...(resolved ? { path: resolved, expectedPath } : {}),
+      ...fileExecutionPath(path, ctx.cwd),
       displayPath: displayPath(path ?? "", ctx.cwd),
       ...(oldString === undefined ? {} : { oldString }),
       ...(newString === undefined ? {} : { newString }),

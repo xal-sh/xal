@@ -3,13 +3,13 @@ use super::*;
 #[napi(object)]
 pub struct NativeWriteRequest {
     pub path: Option<String>,
-    pub expected_path: Option<String>,
+    pub expected_path: String,
     pub display_path: String,
     pub content: Option<Utf16String>,
 }
 pub struct WriteTask {
     path: PathBuf,
-    expected_path: Option<String>,
+    expected_path: String,
     display_path: String,
     content: Vec<u16>,
 }
@@ -19,17 +19,25 @@ impl Task for WriteTask {
     type JsValue = NativeToolOutput;
 
     fn compute(&mut self) -> napi::Result<Self::Output> {
-        validate_expected_path(&self.path, self.expected_path.clone())?;
-        let metadata = fs::metadata(&self.path).ok();
-        if metadata.as_ref().is_some_and(fs::Metadata::is_dir) {
+        let target = stable_target(&self.path, &self.expected_path, true)?;
+        let metadata = target.directory.metadata(&target.path).ok();
+        if metadata.as_ref().is_some_and(|metadata| metadata.is_dir()) {
             return Err(failed(format!(
                 "Path is a directory, not a file: {}",
                 self.display_path
             )));
         }
-        let previous = match metadata {
-            Some(_) => Some(
-                String::from_utf8(fs::read(&self.path).map_err(io_error)?)
+        let mut options = OpenOptions::new();
+        options.read(true).write(true).create(true);
+        let mut file = target
+            .directory
+            .open_with(&target.path, &options)
+            .map_err(io_error)?;
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes).map_err(io_error)?;
+        let previous = if metadata.is_some() {
+            Some(
+                String::from_utf8(bytes)
                     .map_err(|error| {
                         invalid(format!(
                             "Cannot write to binary file {}: {error}",
@@ -38,8 +46,9 @@ impl Task for WriteTask {
                     })?
                     .encode_utf16()
                     .collect::<Vec<_>>(),
-            ),
-            None => None,
+            )
+        } else {
+            None
         };
         if previous.as_deref() == Some(&self.content) {
             return Ok(NativeToolOutput {
@@ -47,10 +56,10 @@ impl Task for WriteTask {
             });
         }
         let diff = unified_diff(previous.as_deref().unwrap_or(&[]), &self.content);
-        if let Some(parent) = self.path.parent() {
-            fs::create_dir_all(parent).map_err(io_error)?;
-        }
-        fs::write(&self.path, utf16_lossy(&self.content).as_bytes()).map_err(io_error)?;
+        file.seek(SeekFrom::Start(0)).map_err(io_error)?;
+        file.set_len(0).map_err(io_error)?;
+        file.write_all(utf16_lossy(&self.content).as_bytes())
+            .map_err(io_error)?;
         let header = if previous.is_some() {
             format!(
                 "Updated {} (+{} -{})",
@@ -97,12 +106,10 @@ mod tests {
         fs::write(&path, [0xff]).expect("fixture should write");
         let mut task = WriteTask {
             path: path.clone(),
-            expected_path: Some(
-                fs::canonicalize(&path)
-                    .expect("fixture should resolve")
-                    .display()
-                    .to_string(),
-            ),
+            expected_path: fs::canonicalize(&path)
+                .expect("fixture should resolve")
+                .display()
+                .to_string(),
             display_path: path.display().to_string(),
             content: units("�"),
         };

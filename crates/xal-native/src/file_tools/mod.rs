@@ -2,9 +2,11 @@
 
 use std::ffi::OsString;
 use std::fs;
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
+use cap_std::ambient_authority;
+use cap_std::fs::{Dir, OpenOptions};
 use napi::bindgen_prelude::{AsyncTask, Utf16String};
 use napi::{Env, Error, Status, Task};
 use napi_derive::napi;
@@ -102,8 +104,8 @@ fn canonical_target(path: &Path) -> napi::Result<PathBuf> {
     }
 }
 
-fn validate_expected_path(path: &Path, expected_path: Option<String>) -> napi::Result<()> {
-    let expected = required_path(expected_path)?;
+fn validate_expected_path(path: &Path, expected_path: &str) -> napi::Result<()> {
+    let expected = required_path(Some(expected_path.to_string()))?;
     let current = canonical_target(path)?;
     if current == expected {
         return Ok(());
@@ -112,6 +114,48 @@ fn validate_expected_path(path: &Path, expected_path: Option<String>) -> napi::R
         "File boundary changed before execution: {}",
         path.display()
     )))
+}
+
+struct StableTarget {
+    directory: Dir,
+    path: PathBuf,
+}
+
+fn stable_target(
+    path: &Path,
+    expected_path: &str,
+    create_parent: bool,
+) -> napi::Result<StableTarget> {
+    validate_expected_path(path, expected_path)?;
+    let expected = required_path(Some(expected_path.to_string()))?;
+    let name = expected
+        .file_name()
+        .ok_or_else(|| failed(format!("Cannot open file boundary: {}", expected.display())))?;
+    let mut ancestor = expected
+        .parent()
+        .ok_or_else(|| failed(format!("Cannot open file boundary: {}", expected.display())))?;
+    let mut relative = PathBuf::from(name);
+    while !ancestor.is_dir() {
+        let part = ancestor
+            .file_name()
+            .ok_or_else(|| failed(format!("Cannot open file boundary: {}", expected.display())))?;
+        relative = PathBuf::from(part).join(relative);
+        ancestor = ancestor
+            .parent()
+            .ok_or_else(|| failed(format!("Cannot open file boundary: {}", expected.display())))?;
+    }
+    let directory = Dir::open_ambient_dir(ancestor, ambient_authority()).map_err(io_error)?;
+    validate_expected_path(path, expected_path)?;
+    if create_parent {
+        let parent = relative
+            .parent()
+            .ok_or_else(|| failed(format!("Cannot open file boundary: {}", expected.display())))?;
+        directory.create_dir_all(parent).map_err(io_error)?;
+    }
+    Ok(StableTarget {
+        directory,
+        path: relative,
+    })
 }
 
 fn normalized_count(value: Option<f64>, default: u32) -> u32 {
@@ -144,8 +188,15 @@ fn units(value: &str) -> Vec<u16> {
 #[cfg(test)]
 mod boundary_tests {
     use std::fs;
+    #[cfg(unix)]
+    use std::io::Read;
 
-    use super::validate_expected_path;
+    use super::{stable_target, validate_expected_path};
+
+    #[cfg(unix)]
+    fn symlink_dir(target: &std::path::Path, link: &std::path::Path) {
+        std::os::unix::fs::symlink(target, link).expect("fixture symlink should exist");
+    }
 
     #[test]
     fn rejects_a_file_target_that_changed_after_validation() {
@@ -158,11 +209,43 @@ mod boundary_tests {
             .expect("fixture should resolve")
             .display()
             .to_string();
-        assert!(validate_expected_path(&path, Some(expected)).is_ok());
+        assert!(validate_expected_path(&path, &expected).is_ok());
         assert!(
-            validate_expected_path(&path, Some(root.join("other.txt").display().to_string()))
-                .is_err()
+            validate_expected_path(&path, &root.join("other.txt").display().to_string()).is_err()
         );
+        fs::remove_dir_all(root).expect("fixture should clean up");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn keeps_file_access_bound_to_the_opened_directory() {
+        let root = std::env::temp_dir().join(format!(
+            "xal-native-stable-boundary-test-{}",
+            std::process::id()
+        ));
+        let internal = root.join("internal");
+        let moved = root.join("moved");
+        let external = root.join("external");
+        fs::create_dir_all(&internal).expect("internal fixture should exist");
+        fs::create_dir_all(&external).expect("external fixture should exist");
+        fs::write(internal.join("file.txt"), "internal").expect("internal fixture should write");
+        fs::write(external.join("file.txt"), "external").expect("external fixture should write");
+        let path = internal.join("file.txt");
+        let expected = fs::canonicalize(&path)
+            .expect("fixture should resolve")
+            .display()
+            .to_string();
+        let target = stable_target(&path, &expected, false).expect("stable target should open");
+        fs::rename(&internal, &moved).expect("internal fixture should move");
+        symlink_dir(&external, &internal);
+        let mut content = String::new();
+        target
+            .directory
+            .open(&target.path)
+            .expect("stable file should open")
+            .read_to_string(&mut content)
+            .expect("stable file should read");
+        assert_eq!(content, "internal");
         fs::remove_dir_all(root).expect("fixture should clean up");
     }
 }

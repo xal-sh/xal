@@ -61,6 +61,10 @@ function projectItem(item: HistoryItem, projection: Projection, pendingCallId: s
     case "tool_result":
     case "direct_shell":
       return
+    default: {
+      const exhaustive: never = item
+      return exhaustive
+    }
   }
 }
 
@@ -78,6 +82,8 @@ export function buildClassifierContext(input: {
 }): ClassifierContext {
   const projection: Projection = { userMessages: [], priorActions: [] }
   for (const item of input.history) projectItem(item, projection, input.pendingCallId)
+  projection.userMessages = projection.userMessages.slice(-100)
+  projection.priorActions = projection.priorActions.slice(-100)
   const context: ClassifierContext = {
     guidance: boundedText(redactText(input.guidance), 12_000),
     userMessages: projection.userMessages,
