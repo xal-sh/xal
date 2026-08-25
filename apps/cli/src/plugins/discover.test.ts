@@ -19,7 +19,7 @@ mock.module("./load", () => ({
   },
 }))
 
-const { bootstrapPlugins, registerPlugins, shutdownPlugins } = await import("./discover")
+const { bootstrapPlugins, registerBootstrapStep, registerPlugins, shutdownPlugins } = await import("./discover")
 
 function settings(plugins: string[] = [], pluginConfig: Settings["pluginConfig"] = {}): Settings {
   return {
@@ -83,6 +83,7 @@ describe("plugin orchestration", () => {
       expect(status).toEqual({
         total: 2,
         failures: [{ plugin: "broken", phase: "register", reason: "registration exploded" }],
+        notices: [],
       })
       expect(registered).toEqual(["broken", "working:true"])
       expect(listHooks()).toEqual([{ id: "working-plugin/active", events: ["prompt"] }])
@@ -111,6 +112,7 @@ describe("plugin orchestration", () => {
     expect(status).toEqual({
       total: 1,
       failures: [{ plugin: "invalid-secrets", phase: "register", reason: "secret redaction marker resolution failed" }],
+      notices: [],
     })
     expect(resolveCli(["invalid-secrets-cli"])).toBeUndefined()
   })
@@ -156,6 +158,7 @@ describe("plugin orchestration", () => {
           { plugin: "register-failure", phase: "register", reason: "could not import" },
           { plugin: "bootstrap-failure", phase: "bootstrap", reason: "bootstrap exploded" },
         ],
+        notices: [],
       })
       expect(observed).toEqual([
         { type: "plugin_registration_finished", status: registered },
@@ -211,7 +214,19 @@ describe("plugin orchestration", () => {
     expect(await first).toEqual({
       total: 3,
       failures: [{ plugin: "second", phase: "shutdown", reason: "second shutdown exploded" }],
+      notices: [],
     })
     expect(stopped).toEqual(["third", "second", "first"])
+  })
+
+  test("reports bootstrap step warnings without treating them as failures", async () => {
+    registerBootstrapStep("skills", async () => ["invalid skill was skipped"])
+    await registerPlugins(settings())
+
+    expect(await bootstrapPlugins()).toEqual({
+      total: 0,
+      failures: [],
+      notices: [{ plugin: "skills", reason: "invalid skill was skipped" }],
+    })
   })
 })

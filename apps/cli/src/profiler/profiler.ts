@@ -93,9 +93,9 @@ type AnonymousAgentEvent =
   | { type: "error" }
 
 type AnonymousAppEvent =
-  | { type: "plugin_registration_finished"; total: number; failedPhases: string[] }
+  | { type: "plugin_registration_finished"; total: number; failedPhases: string[]; notices: number }
   | { type: "plugin_bootstrap_started"; total: number }
-  | { type: "plugin_bootstrap_finished"; total: number; failedPhases: string[] }
+  | { type: "plugin_bootstrap_finished"; total: number; failedPhases: string[]; notices: number }
 
 type ProfileRecord =
   | { type: "run_started"; version: string }
@@ -407,6 +407,7 @@ function anonymousAppEvent(event: AppEvent): AnonymousAppEvent {
         type: event.type,
         total: event.status.total,
         failedPhases: event.status.failures.map((failure) => failure.phase),
+        notices: event.status.notices.length,
       }
     case "plugin_bootstrap_started":
       return event

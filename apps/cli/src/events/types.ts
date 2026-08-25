@@ -4,9 +4,15 @@ export interface PluginFailure {
   reason: string
 }
 
+export interface PluginNotice {
+  plugin: string
+  reason: string
+}
+
 export interface PluginStatus {
   total: number
   failures: PluginFailure[]
+  notices: PluginNotice[]
 }
 
 export type AppEvent =

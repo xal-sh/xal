@@ -14,6 +14,10 @@ function redactEvent(event: AppEvent): AppEvent {
             plugin: redactText(failure.plugin),
             reason: redactText(failure.reason),
           })),
+          notices: event.status.notices.map((notice) => ({
+            plugin: redactText(notice.plugin),
+            reason: redactText(notice.reason),
+          })),
         },
       }
     case "plugin_bootstrap_started":
@@ -50,4 +54,4 @@ class AppEventService implements EventService {
 }
 
 export const events: EventService = new AppEventService()
-export type { AppEvent, EventService, PluginFailure, PluginStatus } from "./types"
+export type { AppEvent, EventService, PluginFailure, PluginNotice, PluginStatus } from "./types"

@@ -152,6 +152,9 @@ export async function runApp(
     if (failure.phase !== "bootstrap") continue
     ctx.error(`plugin bootstrap failed: ${failure.plugin}: ${failure.reason}`)
   }
+  for (const notice of bootstrapped.notices) {
+    ctx.error(`plugin bootstrap warning: ${notice.plugin}: ${notice.reason}`)
+  }
 
   await runCli(args, ctx)
 }

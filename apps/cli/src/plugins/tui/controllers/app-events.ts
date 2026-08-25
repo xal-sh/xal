@@ -1,4 +1,4 @@
-import type { AppEvent, PluginFailure } from "../../../events"
+import type { AppEvent, PluginFailure, PluginNotice } from "../../../events"
 import type { UserInput } from "../../../providers/types"
 import type { Screen } from "../screen"
 
@@ -22,6 +22,10 @@ export class InputQueue {
 
 function failureDetails(failures: PluginFailure[]): string[] {
   return failures.map((failure) => `${failure.plugin}: ${failure.reason}`)
+}
+
+function noticeDetails(notices: PluginNotice[]): string[] {
+  return notices.map((notice) => `${notice.plugin}: ${notice.reason}`)
 }
 
 export class AppEventController {
@@ -62,6 +66,14 @@ export class AppEventController {
             kind: "notice",
             summary: `plugins: ${failures.length} failed to initialize${hint}`,
             details: failureDetails(failures),
+          })
+        }
+        if (event.status.notices.length > 0) {
+          const hint = this.detailsShortcut ? ` · ${this.detailsShortcut} to see warnings` : ""
+          scrollback.appendHeader({
+            kind: "notice",
+            summary: `plugins: initialized with ${event.status.notices.length} warning${event.status.notices.length === 1 ? "" : "s"}${hint}`,
+            details: noticeDetails(event.status.notices),
           })
         }
         this.input.release()

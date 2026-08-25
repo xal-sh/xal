@@ -1,6 +1,6 @@
 import { readdir, readFile, realpath, stat } from "node:fs/promises"
 import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path"
-import { isMissingPathError } from "../lib/error"
+import { describeError, isMissingPathError } from "../lib/error"
 import { asString, isRecord } from "../lib/json"
 import type { Skill, SkillSource } from "./types"
 
@@ -10,6 +10,16 @@ const MAX_RESOURCE_BYTES = 50_000
 export interface SkillRoot {
   directory: string
   source: SkillSource
+}
+
+export interface SkillLoadFailure {
+  path: string
+  reason: string
+}
+
+export interface SkillLoadResult {
+  skills: Skill[]
+  failures: SkillLoadFailure[]
 }
 
 interface SkillDocument {
@@ -107,22 +117,39 @@ async function loadSkill(path: string, source: SkillSource): Promise<Skill> {
   return { ...document, directory: resolve(path, ".."), path, source }
 }
 
-async function loadRoot(root: SkillRoot): Promise<Skill[]> {
-  const skills = await Promise.all((await findSkillFiles(root.directory)).map((path) => loadSkill(path, root.source)))
+async function loadRoot(root: SkillRoot): Promise<SkillLoadResult> {
+  const paths = await findSkillFiles(root.directory)
+  const outcomes = await Promise.allSettled(paths.map((path) => loadSkill(path, root.source)))
+  const skills: Skill[] = []
+  const failures: SkillLoadFailure[] = []
   const names = new Set<string>()
-  for (const skill of skills) {
-    if (names.has(skill.name)) throw new Error(`${root.directory}: duplicate skill name: ${skill.name}`)
-    names.add(skill.name)
+
+  for (const [index, outcome] of outcomes.entries()) {
+    if (outcome.status === "rejected") {
+      const path = paths[index]!
+      const reason = describeError(outcome.reason)
+      failures.push({ path, reason: reason.startsWith(`${path}: `) ? reason.slice(path.length + 2) : reason })
+      continue
+    }
+    if (names.has(outcome.value.name)) {
+      throw new Error(`${root.directory}: duplicate skill name: ${outcome.value.name}`)
+    }
+    names.add(outcome.value.name)
+    skills.push(outcome.value)
   }
-  return skills
+  return { skills, failures }
 }
 
-export async function loadSkills(roots: SkillRoot[]): Promise<Skill[]> {
+export async function loadSkills(roots: SkillRoot[]): Promise<SkillLoadResult> {
   const catalog = new Map<string, Skill>()
+  const failures: SkillLoadFailure[] = []
   for (const root of roots) {
-    for (const skill of await loadRoot(root)) catalog.set(skill.name, skill)
+    const loaded = await loadRoot(root)
+    failures.push(...loaded.failures)
+    for (const skill of loaded.skills) catalog.set(skill.name, skill)
   }
-  return [...catalog.values()].sort((left, right) => left.name.localeCompare(right.name))
+  const skills = [...catalog.values()].sort((left, right) => left.name.localeCompare(right.name))
+  return { skills, failures }
 }
 
 export async function listSkillFiles(skill: Skill): Promise<string[]> {

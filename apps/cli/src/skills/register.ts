@@ -31,14 +31,14 @@ export function registerSkills(): void {
   registerPrompt({ id: "skills", text: catalogPrompt })
 }
 
-export async function discoverSkills(): Promise<void> {
+export async function discoverSkills(): Promise<string[]> {
   const root = await findProjectRoot(process.cwd())
-  replaceSkills(
-    await loadSkills([
-      { directory: join(homedir(), ".agents", "skills"), source: "user" },
-      { directory: join(agentHome(), "skills"), source: "user" },
-      { directory: join(root, ".agents", "skills"), source: "project" },
-      { directory: join(dirname(projectConfigPath(root)), "skills"), source: "project" },
-    ]),
-  )
+  const loaded = await loadSkills([
+    { directory: join(homedir(), ".agents", "skills"), source: "user" },
+    { directory: join(agentHome(), "skills"), source: "user" },
+    { directory: join(root, ".agents", "skills"), source: "project" },
+    { directory: join(dirname(projectConfigPath(root)), "skills"), source: "project" },
+  ])
+  replaceSkills(loaded.skills)
+  return loaded.failures.map((failure) => `${failure.path}: ${failure.reason}`)
 }

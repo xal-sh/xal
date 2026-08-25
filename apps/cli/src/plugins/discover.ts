@@ -5,7 +5,7 @@ import { registerCommand } from "../commands/registry"
 import { loadCredential, replaceCredential, saveCredential } from "../config/credentials"
 import { agentHome, cacheDir } from "../config/paths"
 import type { Settings } from "../config/settings"
-import { events, type PluginFailure, type PluginStatus } from "../events"
+import { events, type PluginFailure, type PluginNotice, type PluginStatus } from "../events"
 import { describeError } from "../lib/error"
 import { clearHooks, registerHook, removeHooks } from "../hooks/registry"
 import { contributeRules } from "../permissions/rules"
@@ -29,15 +29,20 @@ interface RegisteredPlugin {
 
 interface BootstrapStep {
   name: string
-  run(): Promise<void>
+  run(): Promise<string[]>
 }
 
-let status: PluginStatus = { total: 0, failures: [] }
+let status: PluginStatus = { total: 0, failures: [], notices: [] }
 let registered: RegisteredPlugin[] = []
 const bootstrapSteps: BootstrapStep[] = []
 
-export function registerBootstrapStep(name: string, run: () => Promise<void>): void {
-  bootstrapSteps.push({ name, run })
+export function registerBootstrapStep(name: string, run: () => Promise<void | string[]>): void {
+  bootstrapSteps.push({
+    name,
+    async run() {
+      return (await run()) ?? []
+    },
+  })
 }
 let bootstrapRun: Promise<PluginStatus> | undefined
 let shutdownRun: Promise<PluginStatus> | undefined
@@ -123,30 +128,42 @@ export async function registerPlugins(settings: Settings): Promise<PluginStatus>
     }
   }
 
-  status = { total: builtinPlugins.length + settings.plugins.length, failures }
+  status = { total: builtinPlugins.length + settings.plugins.length, failures, notices: [] }
   events.emitRetained({ type: "plugin_registration_finished", status })
   return status
 }
 
 async function runBootstrap(): Promise<PluginStatus> {
   const entries = registered.filter((entry) => entry.plugin.bootstrap)
-  const jobs: { name: string; pluginOrder?: number; run(): void | Promise<void> }[] = [
-    ...bootstrapSteps.map((step) => ({ name: step.name, run: step.run })),
+  const jobs: { name: string; pluginOrder?: number; run(): Promise<string[]> }[] = [
+    ...bootstrapSteps,
     ...entries.map((entry) => ({
       name: entry.plugin.name,
       pluginOrder: entry.pluginOrder,
-      run: () => entry.plugin.bootstrap?.(entry.ctx),
+      async run() {
+        await entry.plugin.bootstrap?.(entry.ctx)
+        return []
+      },
     })),
   ]
   events.emitRetained({ type: "plugin_bootstrap_started", total: jobs.length })
-  const outcomes = await Promise.allSettled(jobs.map((job) => Promise.resolve().then(() => job.run())))
-  const failures = outcomes.flatMap((outcome, index): PluginFailure[] => {
-    if (outcome.status === "fulfilled") return []
+  const outcomes = await Promise.allSettled(jobs.map((job) => job.run()))
+  const failures: PluginFailure[] = []
+  const notices: PluginNotice[] = []
+  for (const [index, outcome] of outcomes.entries()) {
     const job = jobs[index]!
+    if (outcome.status === "fulfilled") {
+      notices.push(...outcome.value.map((reason) => ({ plugin: job.name, reason })))
+      continue
+    }
     if (job.pluginOrder !== undefined) removeHooks(job.pluginOrder)
-    return [{ plugin: job.name, phase: "bootstrap", reason: describeError(outcome.reason) }]
-  })
-  status = { total: status.total, failures: [...status.failures, ...failures] }
+    failures.push({ plugin: job.name, phase: "bootstrap", reason: describeError(outcome.reason) })
+  }
+  status = {
+    total: status.total,
+    failures: [...status.failures, ...failures],
+    notices: [...status.notices, ...notices],
+  }
   events.emitRetained({ type: "plugin_bootstrap_finished", status })
   return status
 }
@@ -168,7 +185,7 @@ async function runShutdown(): Promise<PluginStatus> {
       failures.push({ plugin: entry.plugin.name, phase: "shutdown", reason: describeError(error) })
     }
   }
-  status = { total: status.total, failures: [...status.failures, ...failures] }
+  status = { total: status.total, failures: [...status.failures, ...failures], notices: status.notices }
   return status
 }
 
