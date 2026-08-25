@@ -261,7 +261,7 @@ export class Scrollback {
     }
     this.reflowedWidth = this.renderer.terminalWidth
     const blocks = this.blocks.filter((block) => block !== streaming?.block && this.visible(block))
-    const start = this.transcriptStart(blocks)
+    const start = this.transcriptStart(blocks, streaming?.block)
     const retained = blocks.slice(start)
     if (start > 0) {
       retained.unshift({ kind: "info", text: "earlier transcript omitted · raise tui scrollbackRows to keep more" })
@@ -297,14 +297,14 @@ export class Scrollback {
     }
   }
 
-  private transcriptStart(blocks: Block[]): number {
+  private transcriptStart(blocks: Block[], streaming: StreamBlock | undefined): number {
     if (this.maxRows === 0) return 0
     const surface = this.renderer.createScrollbackSurface()
     try {
-      let rows = 0
+      let rows = streaming && this.visible(streaming) ? this.measure(surface, streaming, blocks.at(-1)) : 0
       for (let index = blocks.length - 1; index > 0; index -= 1) {
+        if (rows >= this.maxRows) return index + 1
         rows += this.measure(surface, blocks[index]!, blocks[index - 1])
-        if (rows >= this.maxRows) return index
       }
       return 0
     } finally {

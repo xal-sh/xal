@@ -325,3 +325,37 @@ test("a rebuild during a live stream re-prints the stream once", async () => {
     setup.renderer.destroy()
   }
 })
+
+test("a live stream is charged to the scrollback row budget", async () => {
+  const setup = await createTestRenderer({
+    width: 80,
+    height: 24,
+    footerHeight: 1,
+    screenMode: "split-footer",
+    externalOutputMode: "capture-stdout",
+  })
+
+  try {
+    await setup.renderer.setupTerminal()
+    const scrollback = new Scrollback(
+      setup.renderer,
+      0,
+      () => {},
+      { showOutputs: false, showThinking: false, scrollbackRows: 20 },
+      undefined,
+    )
+    for (let index = 0; index < 30; index += 1) {
+      scrollback.append({ kind: "info", text: `entry ${index}` })
+    }
+    scrollback.appendStream("text", `${Array.from({ length: 30 }, (_, row) => `stream row ${row}`).join("\n\n")}\n\n`)
+    setup.externalOutput.clear()
+
+    scrollback.replay()
+
+    const rows = setup.externalOutput.take().flatMap((commit) => commit.rows)
+    expect(rows.some((row) => row.includes("earlier transcript omitted"))).toBe(true)
+    expect(rows.filter((row) => row.includes("entry")).length).toBe(0)
+  } finally {
+    setup.renderer.destroy()
+  }
+})
