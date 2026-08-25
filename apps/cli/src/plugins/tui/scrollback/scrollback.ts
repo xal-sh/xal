@@ -191,7 +191,7 @@ export class Scrollback {
     if (!this.deferred) return
     this.deferred = false
     if (!this.active) return
-    this.emitTranscript(false)
+    this.emitTranscript(false, true)
   }
 
   clear(): void {
@@ -252,7 +252,7 @@ export class Scrollback {
     this.emitTranscript(fromStart)
   }
 
-  private emitTranscript(fromStart: boolean): void {
+  private emitTranscript(fromStart: boolean, resumed = false): void {
     const streaming = this.stream
     if (streaming) {
       streaming.surface?.destroy()
@@ -262,7 +262,14 @@ export class Scrollback {
     if (fromStart) {
       for (const [index, block] of blocks.entries()) this.emit(block, blocks[index - 1])
     } else {
-      this.emitBatch(blocks, this.viewportStart(blocks))
+      const start = this.viewportStart(blocks)
+      if (resumed && start > 0) {
+        const hint = this.detailsShortcut ? ` · ${this.detailsShortcut} reprints it` : ""
+        const notice: Block = { kind: "info", text: `resumed · earlier transcript omitted${hint}` }
+        this.emitBatch([notice, ...blocks.slice(start)], 0)
+      } else {
+        this.emitBatch(blocks, start)
+      }
     }
     if (!streaming) return
     this.stream = this.openRedactedStream(streaming.block, streaming.redactor)

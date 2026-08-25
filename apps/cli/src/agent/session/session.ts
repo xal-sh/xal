@@ -638,8 +638,8 @@ export class AgentSession {
     this.mode = target.mode
     this.asyncState.register()
     this.recorder?.attach(target.path)
-    this.emit(this.startEvent(true))
     try {
+      this.emit(this.startEvent(true))
       for (const event of target.session.events) this.notify(event)
     } finally {
       this.notify({ type: "session_replay_finished" })

@@ -35,7 +35,7 @@ import { describeTerminal, sessionTerminalTitle, terminalBackground } from "./te
 import { TerminalOutput } from "./terminal-output"
 import { applyTerminalPalette, COLORS } from "./theme/colors"
 
-const RESIZE_DEBOUNCE_MS = 60
+const RESIZE_DEBOUNCE_MS = 200
 const TERMINAL_RESET = "\u001b[r\u001b[<u\u001b[?25h"
 const KITTY_KEYBOARD: KittyKeyboardOptions = { allKeysAsEscapes: true, reportText: true }
 
@@ -158,13 +158,22 @@ export async function startTui(events: EventService, config: TuiConfig, options:
   renderer.root.add(screen.view)
   let lastWidth = renderer.terminalWidth
   let lastHeight = renderer.terminalHeight
+  let replayWidth = renderer.terminalWidth
   let replayTimer: ReturnType<typeof setTimeout> | undefined
   let replayPending = false
   let editing = false
-  const replayLayout = (): void => {
+  const syncLayout = (): void => {
     screen.composer.reflow()
     screen.syncFooter()
+  }
+  const replayScrollback = (): void => {
+    if (renderer.terminalWidth === replayWidth) return
+    replayWidth = renderer.terminalWidth
     screen.scrollback.replayViewport()
+  }
+  const replayLayout = (): void => {
+    syncLayout()
+    replayScrollback()
   }
   renderer.on(CliRenderEvents.RESIZE, () => {
     if (renderer.terminalWidth === lastWidth && renderer.terminalHeight === lastHeight) return
@@ -174,10 +183,12 @@ export async function startTui(events: EventService, config: TuiConfig, options:
       replayPending = true
       return
     }
+    syncLayout()
+    if (renderer.terminalWidth === replayWidth) return
     clearTimeout(replayTimer)
     replayTimer = setTimeout(() => {
       replayTimer = undefined
-      replayLayout()
+      replayScrollback()
     }, RESIZE_DEBOUNCE_MS)
   })
   const resetCommands = setTuiCommandActions({

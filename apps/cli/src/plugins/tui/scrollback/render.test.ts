@@ -196,8 +196,10 @@ test("session replay defers emission and lands as one viewport batch", async () 
     scrollback.endReplay()
 
     const commits = setup.externalOutput.take()
-    const entries = commits.flatMap((commit) => commit.rows).filter((row) => row.includes("entry"))
+    const rows = commits.flatMap((commit) => commit.rows)
+    const entries = rows.filter((row) => row.includes("entry"))
     expect(commits.length).toBe(1)
+    expect(rows.find((row) => row.trim().length > 0)).toContain("resumed · earlier transcript omitted")
     expect(entries[0]).toContain("entry 20")
     expect(entries.at(-1)).toContain("entry 29")
   } finally {
