@@ -38,6 +38,16 @@ const SCROLLBACK_GAP_ROWS = 1
 
 type ScreenPage = { kind: "main" } | { kind: "job" }
 
+export function mainFooterHeight(
+  terminalHeight: number,
+  scrollbackRows: number,
+  contentRows: number,
+  liveRows: number,
+): number {
+  if (liveRows === 0) return contentRows
+  return Math.max(contentRows, terminalHeight - scrollbackRows)
+}
+
 export class Screen {
   readonly view: BoxRenderable
   private readonly mainPanel: BoxRenderable
@@ -58,6 +68,7 @@ export class Screen {
   private readonly shortcutHelp: ShortcutHelp
   private overlaid = false
   private paletteBelow = true
+  private pendingScrollbackRows = 0
   private reserved = 0
   private page: ScreenPage = { kind: "main" }
   private sessionTitle: string | undefined
@@ -80,7 +91,7 @@ export class Screen {
       preferences,
       shortcuts.help("display.toggle-details"),
     )
-    this.view = column(renderer, { width: "100%", height: "100%", justifyContent: "flex-end" })
+    this.view = column(renderer, { width: "100%", height: "100%" })
     this.jobViewer = new JobViewer(renderer, (message) => this.statusBar.setNotice(message))
     this.live = new LiveTools(renderer, () => this.syncFooter(), shortcuts.help("jobs.background"))
     this.queued = new QueuedInputs(renderer, () => this.syncFooter())
@@ -167,7 +178,7 @@ export class Screen {
       () => this.session.id,
     )
 
-    this.mainPanel = column(renderer, { paddingLeft: 2, paddingRight: 2 })
+    this.mainPanel = column(renderer, { paddingLeft: 2, paddingRight: 2, marginBottom: "auto" })
     this.mainPanel.add(this.live.view)
     this.mainPanel.add(this.queued.view)
     this.mainPanel.add(this.taskList.view)
@@ -362,19 +373,30 @@ export class Screen {
     if (this.paletteBelow || overlaid) this.reserved = 0
     else this.reserved = Math.max(this.reserved, paletteRows)
     const editing = this.composer.rows + this.shortcutHelp.height + Math.max(paletteRows, this.reserved)
-    this.renderer.footerHeight =
+    this.live.setGrouped(this.scrollback.endsWithTool)
+    const contentRows =
       this.live.height +
       this.queued.height +
       this.taskList.height +
       (overlaid ? overlayRows : editing) +
       STATUS_ROWS +
       this.tasks.height
+    this.renderer.footerHeight = mainFooterHeight(
+      this.renderer.terminalHeight,
+      this.scrollback.rows + this.pendingScrollbackRows,
+      contentRows,
+      this.live.height,
+    )
   }
 
   private reclaim(rows: number): void {
-    if (this.reserved === 0) return
     this.reserved = Math.max(0, this.reserved - rows)
-    this.syncFooter()
+    this.pendingScrollbackRows += rows
+    try {
+      this.syncFooter()
+    } finally {
+      this.pendingScrollbackRows -= rows
+    }
   }
 
   private closedFooterRows(): number {

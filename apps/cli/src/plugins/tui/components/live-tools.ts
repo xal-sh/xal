@@ -26,6 +26,7 @@ export class LiveTools {
   readonly view: BoxRenderable
   private readonly rows = new Map<string, LiveRow>()
   private readonly spinner = spinnerHandle(() => this.render())
+  private grouped = false
 
   constructor(
     private readonly ctx: RenderContext,
@@ -37,9 +38,14 @@ export class LiveTools {
 
   get height(): number {
     if (this.rows.size === 0) return 0
-    let height = 1
+    let height = this.grouped ? 0 : 1
     for (const entry of this.rows.values()) height += 1 + entry.previewLabels.length
     return height
+  }
+
+  setGrouped(grouped: boolean): void {
+    this.grouped = grouped
+    this.view.marginTop = grouped ? 0 : 1
   }
 
   request(callId: string, tool: string, title: string, readOnly: boolean): void {
@@ -177,7 +183,6 @@ export class LiveTools {
 
   private sync(): void {
     this.view.visible = this.rows.size > 0
-    this.view.marginTop = this.rows.size > 0 ? 1 : 0
     this.onChange()
   }
 

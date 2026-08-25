@@ -90,6 +90,10 @@ export class Scrollback {
     return this.origin + this.committed
   }
 
+  get endsWithTool(): boolean {
+    return this.blocks.findLast((block) => this.visible(block))?.kind === "tool"
+  }
+
   setTerminalBackground(background: RGBA): boolean {
     const next = userMessageBackground(background)
     if (this.userBackground.equals(next)) return false
@@ -297,7 +301,7 @@ export class Scrollback {
     if (target <= stream.committed) return
     const rows = target - stream.committed
     this.onCommit(rows)
-    this.commitStreamRows(stream.surface, rendered, stream.committed, target)
+    this.commitStreamRows(stream.surface, rendered, stream.committed, target, final)
     this.committed += rows
     stream.committed = target
   }
@@ -315,7 +319,7 @@ export class Scrollback {
       )
       surface.render()
       this.onCommit(surface.height)
-      surface.commitRows(0, surface.height)
+      surface.commitRows(0, surface.height, { trailingNewline: false })
       this.committed += surface.height
     } finally {
       surface.destroy()
@@ -329,7 +333,7 @@ export class Scrollback {
       surface.root.add(view)
       surface.render()
       this.onCommit(surface.height)
-      this.commitStreamRows(surface, rendered, 0, surface.height)
+      this.commitStreamRows(surface, rendered, 0, surface.height, true)
       this.committed += surface.height
     } finally {
       surface.destroy()
@@ -341,10 +345,14 @@ export class Scrollback {
     rendered: RenderedMarkdown,
     startRow: number,
     endRowExclusive: number,
+    final: boolean,
   ): void {
     const columns = streamRowColumns(rendered, surface.height)
     for (let row = startRow; row < endRowExclusive; row += 1) {
-      surface.commitRows(row, row + 1, { rowColumns: columns[row] })
+      surface.commitRows(row, row + 1, {
+        rowColumns: columns[row],
+        trailingNewline: !final || row + 1 < endRowExclusive,
+      })
     }
   }
 

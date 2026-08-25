@@ -95,6 +95,42 @@ test("compaction state is visible in the transcript as soon as it starts", async
   }
 })
 
+test("settled tools leave the scrollback cursor on their row for live tool grouping", async () => {
+  const setup = await createTestRenderer({
+    width: 80,
+    height: 24,
+    footerHeight: 1,
+    screenMode: "split-footer",
+    externalOutputMode: "capture-stdout",
+  })
+
+  try {
+    const scrollback = new Scrollback(
+      setup.renderer,
+      0,
+      () => {},
+      { showOutputs: false, showThinking: false },
+      undefined,
+    )
+    scrollback.append({
+      kind: "tool",
+      tool: "wait_agent",
+      title: "Wait for task-agent activity",
+      readOnly: true,
+      denial: undefined,
+      output: "wait ended",
+      execution: undefined,
+      elapsed: "20s",
+      expanded: false,
+    })
+
+    const commits = setup.externalOutput.take()
+    expect(commits.at(-1)?.trailingNewline).toBe(false)
+  } finally {
+    setup.renderer.destroy()
+  }
+})
+
 test("assistant markdown commits only its visible columns", async () => {
   const setup = await createTestRenderer({
     width: 80,
@@ -129,6 +165,7 @@ test("assistant markdown commits only its visible columns", async () => {
     ])
     expect(commits.every((commit) => commit.height === 1)).toBe(true)
     expect(commits.map((commit) => commit.rowColumns)).toEqual(rows.map(displayWidth))
+    expect(commits.map((commit) => commit.trailingNewline)).toEqual([true, true, true, true, false])
   } finally {
     setup.renderer.destroy()
   }
