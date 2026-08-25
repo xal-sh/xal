@@ -73,6 +73,8 @@ export class Scrollback {
   private origin: number
   private active = true
   private deferred = false
+  private reflowedWidth: number
+  private readonly maxRows: number
   private userBackground = userMessageBackground(COLORS.background)
 
   constructor(
@@ -85,6 +87,8 @@ export class Scrollback {
     this.origin = startRow
     this.expanded = config.showOutputs
     this.reasoningVisible = config.showThinking
+    this.maxRows = config.scrollbackRows
+    this.reflowedWidth = renderer.terminalWidth
   }
 
   get rows(): number {
@@ -191,7 +195,7 @@ export class Scrollback {
     if (!this.deferred) return
     this.deferred = false
     if (!this.active) return
-    this.emitTranscript(false, true)
+    this.emitTranscript(false)
   }
 
   clear(): void {
@@ -237,54 +241,46 @@ export class Scrollback {
     this.replay()
   }
 
+  reflow(): void {
+    if (this.renderer.terminalWidth === this.reflowedWidth) return
+    this.replay()
+  }
+
   replay(): void {
-    this.replayBlocks(true)
-  }
-
-  replayViewport(): void {
-    this.replayBlocks(false)
-  }
-
-  private replayBlocks(fromStart: boolean): void {
     if (!this.emitting) return
-    this.renderer.resetSplitFooterForReplay({ clearSavedLines: fromStart })
+    this.renderer.resetSplitFooterForReplay({ clearSavedLines: true })
     this.reset()
-    this.emitTranscript(fromStart)
+    this.emitTranscript(true)
   }
 
-  private emitTranscript(fromStart: boolean, resumed = false): void {
+  private emitTranscript(cleared: boolean): void {
     const streaming = this.stream
     if (streaming) {
       streaming.surface?.destroy()
       this.stream = undefined
     }
+    this.reflowedWidth = this.renderer.terminalWidth
     const blocks = this.blocks.filter((block) => block !== streaming?.block && this.visible(block))
-    if (fromStart) {
-      for (const [index, block] of blocks.entries()) this.emit(block, blocks[index - 1])
-    } else {
-      const start = this.viewportStart(blocks)
-      if (resumed && start > 0) {
-        const hint = this.detailsShortcut ? ` · ${this.detailsShortcut} reprints it` : ""
-        const notice: Block = { kind: "info", text: `resumed · earlier transcript omitted${hint}` }
-        this.emitBatch([notice, ...blocks.slice(start)], 0)
-      } else {
-        this.emitBatch(blocks, start)
-      }
+    const start = this.transcriptStart(blocks)
+    const retained = blocks.slice(start)
+    if (start > 0) {
+      retained.unshift({ kind: "info", text: "earlier transcript omitted · raise tui scrollbackRows to keep more" })
     }
+    this.emitBatch(retained)
     if (!streaming) return
     this.stream = this.openRedactedStream(streaming.block, streaming.redactor)
-    this.flush(this.stream, false, !fromStart)
+    this.flush(this.stream, false, !cleared)
   }
 
-  private emitBatch(blocks: Block[], start: number): void {
-    if (start >= blocks.length) return
+  private emitBatch(blocks: Block[]): void {
+    if (blocks.length === 0) return
     const surface = this.renderer.createScrollbackSurface()
     try {
-      for (let index = start; index < blocks.length; index += 1) {
+      for (const [index, block] of blocks.entries()) {
         surface.root.add(
           renderBlock(
             surface.renderContext,
-            blocks[index]!,
+            block,
             this.expanded,
             this.userBackground,
             this.detailsShortcut,
@@ -301,25 +297,36 @@ export class Scrollback {
     }
   }
 
-  private viewportStart(blocks: Block[]): number {
-    let rows = 0
-    for (let index = blocks.length - 1; index > 0; index -= 1) {
-      rows += this.measure(blocks[index]!, blocks[index - 1])
-      if (rows >= this.renderer.terminalHeight * 2) return index
-    }
-    return 0
-  }
-
-  private measure(block: Block, previous: Block | undefined): number {
+  private transcriptStart(blocks: Block[]): number {
+    if (this.maxRows === 0) return 0
     const surface = this.renderer.createScrollbackSurface()
     try {
-      surface.root.add(
-        renderBlock(surface.renderContext, block, this.expanded, this.userBackground, this.detailsShortcut, previous),
-      )
+      let rows = 0
+      for (let index = blocks.length - 1; index > 0; index -= 1) {
+        rows += this.measure(surface, blocks[index]!, blocks[index - 1])
+        if (rows >= this.maxRows) return index
+      }
+      return 0
+    } finally {
+      surface.destroy()
+    }
+  }
+
+  private measure(surface: ScrollbackSurface, block: Block, previous: Block | undefined): number {
+    const view = renderBlock(
+      surface.renderContext,
+      block,
+      this.expanded,
+      this.userBackground,
+      this.detailsShortcut,
+      previous,
+    )
+    surface.root.add(view)
+    try {
       surface.render()
       return surface.height
     } finally {
-      surface.destroy()
+      view.destroyRecursively()
     }
   }
 

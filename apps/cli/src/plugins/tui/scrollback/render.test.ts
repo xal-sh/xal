@@ -55,7 +55,7 @@ test("user bubbles preserve composer line breaks", async () => {
       setup.renderer,
       0,
       () => {},
-      { showOutputs: false, showThinking: false },
+      { showOutputs: false, showThinking: false, scrollbackRows: 20 },
       undefined,
     )
     scrollback.append({ kind: "user", text: "first line\n\n$implement second line", imageCount: 0, sentAt: 0 })
@@ -83,7 +83,7 @@ test("compaction state is visible in the transcript as soon as it starts", async
       setup.renderer,
       0,
       () => {},
-      { showOutputs: false, showThinking: false },
+      { showOutputs: false, showThinking: false, scrollbackRows: 20 },
       undefined,
     )
     scrollback.append({ kind: "compaction", state: "compacting" })
@@ -109,7 +109,7 @@ test("settled tools leave the scrollback cursor on their row for live tool group
       setup.renderer,
       0,
       () => {},
-      { showOutputs: false, showThinking: false },
+      { showOutputs: false, showThinking: false, scrollbackRows: 20 },
       undefined,
     )
     scrollback.append({
@@ -131,7 +131,7 @@ test("settled tools leave the scrollback cursor on their row for live tool group
   }
 })
 
-test("viewport replay re-prints only the last two viewports of blocks", async () => {
+test("a rebuild clears saved scrollback and re-prints one capped batch", async () => {
   const setup = await createTestRenderer({
     width: 80,
     height: 10,
@@ -146,7 +146,7 @@ test("viewport replay re-prints only the last two viewports of blocks", async ()
       setup.renderer,
       0,
       () => {},
-      { showOutputs: false, showThinking: false },
+      { showOutputs: false, showThinking: false, scrollbackRows: 20 },
       undefined,
     )
     for (let index = 0; index < 30; index += 1) {
@@ -154,14 +154,14 @@ test("viewport replay re-prints only the last two viewports of blocks", async ()
     }
     setup.externalOutput.clear()
 
-    scrollback.replayViewport()
+    scrollback.replay()
 
     const commits = setup.externalOutput.take()
     const rows = commits.flatMap((commit) => commit.rows)
     const entries = rows.filter((row) => row.includes("entry"))
     expect(commits.length).toBe(1)
-    expect(rows.length).toBeGreaterThanOrEqual(20)
     expect(rows.length).toBeLessThan(30)
+    expect(rows.find((row) => row.trim().length > 0)).toContain("earlier transcript omitted")
     expect(entries[0]).toContain("entry 20")
     expect(entries.at(-1)).toContain("entry 29")
   } finally {
@@ -183,7 +183,7 @@ test("session replay defers emission and lands as one viewport batch", async () 
       setup.renderer,
       0,
       () => {},
-      { showOutputs: false, showThinking: false },
+      { showOutputs: false, showThinking: false, scrollbackRows: 20 },
       undefined,
     )
     scrollback.beginReplay()
@@ -199,7 +199,7 @@ test("session replay defers emission and lands as one viewport batch", async () 
     const rows = commits.flatMap((commit) => commit.rows)
     const entries = rows.filter((row) => row.includes("entry"))
     expect(commits.length).toBe(1)
-    expect(rows.find((row) => row.trim().length > 0)).toContain("resumed · earlier transcript omitted")
+    expect(rows.find((row) => row.trim().length > 0)).toContain("earlier transcript omitted")
     expect(entries[0]).toContain("entry 20")
     expect(entries.at(-1)).toContain("entry 29")
   } finally {
@@ -221,7 +221,7 @@ test("a tool block leading the resumed batch separates from the omission notice"
       setup.renderer,
       0,
       () => {},
-      { showOutputs: false, showThinking: false },
+      { showOutputs: false, showThinking: false, scrollbackRows: 20 },
       undefined,
     )
     scrollback.beginReplay()
@@ -242,7 +242,7 @@ test("a tool block leading the resumed batch separates from the omission notice"
     scrollback.endReplay()
 
     const rows = setup.externalOutput.take().flatMap((commit) => commit.rows)
-    expect(rows[1]).toContain("resumed · earlier transcript omitted")
+    expect(rows[1]).toContain("earlier transcript omitted")
     expect(rows[2]).toBe("")
     expect(rows[3]).toContain("cmd 10")
     expect(rows[4]).toContain("cmd 11")
@@ -266,7 +266,7 @@ test("assistant markdown commits only its visible columns", async () => {
       setup.renderer,
       0,
       () => {},
-      { showOutputs: false, showThinking: false },
+      { showOutputs: false, showThinking: false, scrollbackRows: 20 },
       undefined,
     )
     scrollback.appendStream(
@@ -287,6 +287,40 @@ test("assistant markdown commits only its visible columns", async () => {
     expect(commits.every((commit) => commit.height === 1)).toBe(true)
     expect(commits.map((commit) => commit.rowColumns)).toEqual(rows.map(displayWidth))
     expect(commits.map((commit) => commit.trailingNewline)).toEqual([true, true, true, true, false])
+  } finally {
+    setup.renderer.destroy()
+  }
+})
+
+test("a rebuild during a live stream re-prints the stream once", async () => {
+  const setup = await createTestRenderer({
+    width: 80,
+    height: 24,
+    footerHeight: 1,
+    screenMode: "split-footer",
+    externalOutputMode: "capture-stdout",
+  })
+
+  try {
+    await setup.renderer.setupTerminal()
+    const scrollback = new Scrollback(
+      setup.renderer,
+      0,
+      () => {},
+      { showOutputs: false, showThinking: false, scrollbackRows: 0 },
+      undefined,
+    )
+    scrollback.append({ kind: "info", text: "before the stream" })
+    scrollback.appendStream("text", "streamed paragraph one\n\nstreamed paragraph two\n\n")
+    setup.externalOutput.clear()
+
+    scrollback.replay()
+    scrollback.endStream()
+
+    const rows = setup.externalOutput.take().flatMap((commit) => commit.rows)
+    expect(rows.filter((row) => row.includes("before the stream")).length).toBe(1)
+    expect(rows.filter((row) => row.includes("streamed paragraph one")).length).toBe(1)
+    expect(rows.filter((row) => row.includes("streamed paragraph two")).length).toBe(1)
   } finally {
     setup.renderer.destroy()
   }

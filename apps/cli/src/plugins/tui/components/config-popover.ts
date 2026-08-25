@@ -1,6 +1,6 @@
 import { StyledText, TextAttributes, type BoxRenderable, type RenderContext, type TextRenderable } from "@opentui/core"
 import { describeError } from "../../../lib/error"
-import type { TuiConfigKey, TuiPreferences } from "../config"
+import type { TuiPreferences } from "../config"
 import { column, label, row } from "../lib/renderables"
 import { terminalGlyph } from "../lib/text"
 import { COLORS } from "../theme/colors"
@@ -19,6 +19,8 @@ const SETTINGS = [
   },
 ] as const
 
+export type TuiToggleKey = (typeof SETTINGS)[number]["key"]
+
 interface SettingRow {
   cursor: TextRenderable
   name: TextRenderable
@@ -27,7 +29,7 @@ interface SettingRow {
 }
 
 interface ConfigPopoverActions {
-  change(config: TuiPreferences, key: TuiConfigKey): Promise<void>
+  change(config: TuiPreferences, key: TuiToggleKey): Promise<void>
   changed(): void
   error(message: string): void
 }

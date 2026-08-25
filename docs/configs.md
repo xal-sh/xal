@@ -115,7 +115,8 @@ Every option is optional. This example shows how the top-level sections fit toge
   "pluginConfig": {
     "tui": {
       "showOutputs": false,
-      "showThinking": false
+      "showThinking": false,
+      "scrollbackRows": 1000
     },
     "project-instructions": {
       "maxBytes": 65536

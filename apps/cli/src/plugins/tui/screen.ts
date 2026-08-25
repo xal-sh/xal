@@ -107,15 +107,22 @@ export class Screen {
     this.picker = new Picker(renderer, () => this.syncFooter())
     this.config = new ConfigPopover(
       renderer,
-      { showOutputs: preferences.showOutputs, showThinking: preferences.showThinking },
+      {
+        showOutputs: preferences.showOutputs,
+        showThinking: preferences.showThinking,
+        scrollbackRows: preferences.scrollbackRows,
+      },
       {
         change: async (config, key) => {
           await saveTuiConfig(config)
-          if (key === "showOutputs") {
-            this.scrollback.setExpanded(config.showOutputs)
-            return
+          switch (key) {
+            case "showOutputs":
+              this.scrollback.setExpanded(config.showOutputs)
+              return
+            case "showThinking":
+              this.scrollback.setReasoningVisible(config.showThinking)
+              return
           }
-          this.scrollback.setReasoningVisible(config.showThinking)
         },
         changed: () => this.syncFooter(),
         error: (message) => this.scrollback.append({ kind: "error", text: message }),
