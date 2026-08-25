@@ -207,6 +207,51 @@ test("session replay defers emission and lands as one viewport batch", async () 
   }
 })
 
+test("a tool block leading the resumed batch separates from the omission notice", async () => {
+  const setup = await createTestRenderer({
+    width: 80,
+    height: 10,
+    footerHeight: 1,
+    screenMode: "split-footer",
+    externalOutputMode: "capture-stdout",
+  })
+
+  try {
+    const scrollback = new Scrollback(
+      setup.renderer,
+      0,
+      () => {},
+      { showOutputs: false, showThinking: false },
+      undefined,
+    )
+    scrollback.beginReplay()
+    for (let index = 0; index < 30; index += 1) {
+      scrollback.append({
+        kind: "tool",
+        tool: "bash",
+        title: `cmd ${index}`,
+        readOnly: true,
+        denial: undefined,
+        output: "",
+        execution: undefined,
+        elapsed: undefined,
+        expanded: false,
+      })
+    }
+
+    scrollback.endReplay()
+
+    const rows = setup.externalOutput.take().flatMap((commit) => commit.rows)
+    expect(rows[1]).toContain("resumed · earlier transcript omitted")
+    expect(rows[2]).toBe("")
+    expect(rows[3]).toContain("cmd 10")
+    expect(rows[4]).toContain("cmd 11")
+    expect(rows.at(-1)).toContain("cmd 29")
+  } finally {
+    setup.renderer.destroy()
+  }
+})
+
 test("assistant markdown commits only its visible columns", async () => {
   const setup = await createTestRenderer({
     width: 80,
