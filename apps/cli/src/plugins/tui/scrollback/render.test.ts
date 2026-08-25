@@ -131,6 +131,80 @@ test("settled tools leave the scrollback cursor on their row for live tool group
   }
 })
 
+test("viewport replay re-prints only the last two viewports of blocks", async () => {
+  const setup = await createTestRenderer({
+    width: 80,
+    height: 10,
+    footerHeight: 1,
+    screenMode: "split-footer",
+    externalOutputMode: "capture-stdout",
+  })
+
+  try {
+    await setup.renderer.setupTerminal()
+    const scrollback = new Scrollback(
+      setup.renderer,
+      0,
+      () => {},
+      { showOutputs: false, showThinking: false },
+      undefined,
+    )
+    for (let index = 0; index < 30; index += 1) {
+      scrollback.append({ kind: "info", text: `entry ${index}` })
+    }
+    setup.externalOutput.clear()
+
+    scrollback.replayViewport()
+
+    const commits = setup.externalOutput.take()
+    const rows = commits.flatMap((commit) => commit.rows)
+    const entries = rows.filter((row) => row.includes("entry"))
+    expect(commits.length).toBe(1)
+    expect(rows.length).toBeGreaterThanOrEqual(20)
+    expect(rows.length).toBeLessThan(30)
+    expect(entries[0]).toContain("entry 20")
+    expect(entries.at(-1)).toContain("entry 29")
+  } finally {
+    setup.renderer.destroy()
+  }
+})
+
+test("session replay defers emission and lands as one viewport batch", async () => {
+  const setup = await createTestRenderer({
+    width: 80,
+    height: 10,
+    footerHeight: 1,
+    screenMode: "split-footer",
+    externalOutputMode: "capture-stdout",
+  })
+
+  try {
+    const scrollback = new Scrollback(
+      setup.renderer,
+      0,
+      () => {},
+      { showOutputs: false, showThinking: false },
+      undefined,
+    )
+    scrollback.beginReplay()
+    scrollback.clear()
+    for (let index = 0; index < 30; index += 1) {
+      scrollback.append({ kind: "info", text: `entry ${index}` })
+    }
+    expect(setup.externalOutput.take()).toEqual([])
+
+    scrollback.endReplay()
+
+    const commits = setup.externalOutput.take()
+    const entries = commits.flatMap((commit) => commit.rows).filter((row) => row.includes("entry"))
+    expect(commits.length).toBe(1)
+    expect(entries[0]).toContain("entry 20")
+    expect(entries.at(-1)).toContain("entry 29")
+  } finally {
+    setup.renderer.destroy()
+  }
+})
+
 test("assistant markdown commits only its visible columns", async () => {
   const setup = await createTestRenderer({
     width: 80,

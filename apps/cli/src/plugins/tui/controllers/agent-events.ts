@@ -126,12 +126,14 @@ export class AgentEventController {
         this.goalId = undefined
         this.reasoningStreamed = false
         this.replaying = event.resumed
+        if (event.resumed) scrollback.beginReplay()
         this.screen.startSession(event.title, event.cwd, event.model, event.thinking, event.mode)
         statusBar.resetGoal()
         this.trackContextWindow()
         break
       case "session_replay_finished":
         this.replaying = false
+        scrollback.endReplay()
         break
       case "session_title_changed":
         this.screen.setSessionTitle(event.title)

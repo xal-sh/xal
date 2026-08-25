@@ -72,6 +72,7 @@ export class Scrollback {
   private committed = 0
   private origin: number
   private active = true
+  private deferred = false
   private userBackground = userMessageBackground(COLORS.background)
 
   constructor(
@@ -182,12 +183,28 @@ export class Scrollback {
     return flushed
   }
 
+  beginReplay(): void {
+    this.deferred = true
+  }
+
+  endReplay(): void {
+    if (!this.deferred) return
+    this.deferred = false
+    if (!this.active) return
+    this.emitTranscript(false)
+  }
+
   clear(): void {
     this.endStream()
     this.blocks.length = 0
     this.checkpoints.length = 0
     this.header.length = 0
     this.redos.length = 0
+    if (this.deferred) {
+      this.origin = this.rows
+      this.committed = 0
+      return
+    }
     this.reset()
     if (this.active) this.renderer.resetSplitFooterForReplay({ clearSavedLines: true })
   }
@@ -221,23 +238,82 @@ export class Scrollback {
   }
 
   replay(): void {
-    if (!this.active) return
+    this.replayBlocks(true)
+  }
+
+  replayViewport(): void {
+    this.replayBlocks(false)
+  }
+
+  private replayBlocks(fromStart: boolean): void {
+    if (!this.emitting) return
+    this.renderer.resetSplitFooterForReplay({ clearSavedLines: fromStart })
+    this.reset()
+    this.emitTranscript(fromStart)
+  }
+
+  private emitTranscript(fromStart: boolean): void {
     const streaming = this.stream
     if (streaming) {
       streaming.surface?.destroy()
       this.stream = undefined
     }
-    this.renderer.resetSplitFooterForReplay({ clearSavedLines: true })
-    this.reset()
-    let previous: Block | undefined
-    for (const block of this.blocks) {
-      if (block === streaming?.block || !this.visible(block)) continue
-      this.emit(block, previous)
-      previous = block
+    const blocks = this.blocks.filter((block) => block !== streaming?.block && this.visible(block))
+    if (fromStart) {
+      for (const [index, block] of blocks.entries()) this.emit(block, blocks[index - 1])
+    } else {
+      this.emitBatch(blocks, this.viewportStart(blocks))
     }
     if (!streaming) return
     this.stream = this.openRedactedStream(streaming.block, streaming.redactor)
-    this.flush(this.stream, false)
+    this.flush(this.stream, false, !fromStart)
+  }
+
+  private emitBatch(blocks: Block[], start: number): void {
+    if (start >= blocks.length) return
+    const surface = this.renderer.createScrollbackSurface()
+    try {
+      for (let index = start; index < blocks.length; index += 1) {
+        surface.root.add(
+          renderBlock(
+            surface.renderContext,
+            blocks[index]!,
+            this.expanded,
+            this.userBackground,
+            this.detailsShortcut,
+            blocks[index - 1],
+          ),
+        )
+      }
+      surface.render()
+      this.onCommit(surface.height)
+      surface.commitRows(0, surface.height, { trailingNewline: false })
+      this.committed += surface.height
+    } finally {
+      surface.destroy()
+    }
+  }
+
+  private viewportStart(blocks: Block[]): number {
+    let rows = 0
+    for (let index = blocks.length - 1; index > 0; index -= 1) {
+      rows += this.measure(blocks[index]!, blocks[index - 1])
+      if (rows >= this.renderer.terminalHeight * 2) return index
+    }
+    return 0
+  }
+
+  private measure(block: Block, previous: Block | undefined): number {
+    const surface = this.renderer.createScrollbackSurface()
+    try {
+      surface.root.add(
+        renderBlock(surface.renderContext, block, this.expanded, this.userBackground, this.detailsShortcut, previous),
+      )
+      surface.render()
+      return surface.height
+    } finally {
+      surface.destroy()
+    }
   }
 
   private restore(blocks: Block[], checkpoints: TranscriptCheckpoint[]): void {
@@ -257,11 +333,15 @@ export class Scrollback {
     return Math.max(1, this.renderer.terminalHeight - this.renderer.footerHeight - 1)
   }
 
+  private get emitting(): boolean {
+    return this.active && !this.deferred
+  }
+
   private appendBlock(block: Block): void {
     this.endStream()
     const previous = this.blocks.findLast((candidate) => this.visible(candidate))
     this.blocks.push(block)
-    if (this.active) this.emit(block, previous)
+    if (this.emitting) this.emit(block, previous)
   }
 
   private drop(block: Block): void {
@@ -282,15 +362,15 @@ export class Scrollback {
   }
 
   private openRedactedStream(block: StreamBlock, redactor: RedactedStream): Stream {
-    if (!this.active) return { block, committed: 0, flushedAt: 0, redactor }
+    if (!this.emitting) return { block, committed: 0, flushedAt: 0, redactor }
     const surface = this.renderer.createScrollbackSurface()
     const { view, text } = streamView(surface.renderContext, block)
     surface.root.add(view)
     return { block, surface, text, committed: 0, flushedAt: 0, redactor }
   }
 
-  private flush(stream: Stream, final: boolean): void {
-    if (!this.active || !stream.surface || !stream.text || !this.visible(stream.block)) return
+  private flush(stream: Stream, final: boolean, batch = false): void {
+    if (!this.emitting || !stream.surface || !stream.text || !this.visible(stream.block)) return
     const rendered = streamContent(stream.block, contentWidth(stream.surface.renderContext))
     stream.text.content = rendered.content
     stream.text.height = rendered.rows
@@ -301,7 +381,8 @@ export class Scrollback {
     if (target <= stream.committed) return
     const rows = target - stream.committed
     this.onCommit(rows)
-    this.commitStreamRows(stream.surface, rendered, stream.committed, target, final)
+    if (batch) stream.surface.commitRows(stream.committed, target, { trailingNewline: true })
+    else this.commitStreamRows(stream.surface, rendered, stream.committed, target, final)
     this.committed += rows
     stream.committed = target
   }

@@ -164,7 +164,7 @@ export async function startTui(events: EventService, config: TuiConfig, options:
   const replayLayout = (): void => {
     screen.composer.reflow()
     screen.syncFooter()
-    screen.scrollback.replay()
+    screen.scrollback.replayViewport()
   }
   renderer.on(CliRenderEvents.RESIZE, () => {
     if (renderer.terminalWidth === lastWidth && renderer.terminalHeight === lastHeight) return
