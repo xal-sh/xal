@@ -75,39 +75,125 @@ async function findSkillFiles(directory: string): Promise<string[]> {
   return (await walkFiles(directory)).filter((path) => basename(path) === "SKILL.md")
 }
 
+function sanitizeSingleLine(value: string): string {
+  return value.split(/\s+/).filter(Boolean).join(" ")
+}
+
+function repairFrontmatterScalarFields(frontmatter: string): string | undefined {
+  let changed = false
+  let blockScalarIndent: number | undefined
+  const repaired: string[] = []
+
+  for (const line of frontmatter.split("\n")) {
+    const indent = /^ */.exec(line)?.[0].length ?? 0
+    if (blockScalarIndent !== undefined) {
+      if (!line.trim() || indent > blockScalarIndent) {
+        repaired.push(line)
+        continue
+      }
+      blockScalarIndent = undefined
+    }
+
+    const separator = line.indexOf(":")
+    if (separator < 0) {
+      repaired.push(line)
+      continue
+    }
+    const key = line.slice(0, separator)
+    const value = line.slice(separator + 1)
+    if (!key.trim() || (value[0] !== undefined && !/\s/.test(value[0]))) {
+      repaired.push(line)
+      continue
+    }
+
+    const trimmedStart = value.trimStart()
+    const leadingWhitespace = value.slice(0, value.length - trimmedStart.length)
+    let scalar = trimmedStart
+    let comment = ""
+    for (let index = 0; index < trimmedStart.length; index++) {
+      if (trimmedStart[index] !== "#" || (index > 0 && !/\s/.test(trimmedStart[index - 1]!))) continue
+      const commentStart = trimmedStart.slice(0, index).trimEnd().length
+      scalar = trimmedStart.slice(0, commentStart)
+      comment = trimmedStart.slice(commentStart)
+      break
+    }
+
+    scalar = scalar.trimEnd()
+    const first = scalar[0]
+    if (first === undefined) {
+      repaired.push(line)
+      continue
+    }
+    if (first === "|" || first === ">") {
+      blockScalarIndent = indent
+      repaired.push(line)
+      continue
+    }
+    if (first === "'" || first === '"') {
+      repaired.push(line)
+      continue
+    }
+
+    let invalidFlowLikeScalar = false
+    if (first === "[" || first === "{" || first === "@" || first === "`") {
+      try {
+        Bun.YAML.parse(scalar)
+      } catch {
+        invalidFlowLikeScalar = true
+      }
+    }
+    if (!/:\s/.test(scalar) && !invalidFlowLikeScalar) {
+      repaired.push(line)
+      continue
+    }
+
+    repaired.push(`${key}:${leadingWhitespace}'${scalar.replaceAll("'", "''")}'${comment}`)
+    changed = true
+  }
+
+  return changed ? repaired.join("\n") : undefined
+}
+
+function parseFrontmatter(path: string, frontmatter: string): unknown {
+  try {
+    return Bun.YAML.parse(frontmatter)
+  } catch (error) {
+    const repaired = repairFrontmatterScalarFields(frontmatter)
+    if (repaired !== undefined) {
+      try {
+        return Bun.YAML.parse(repaired)
+      } catch (repairError) {
+        const reason = error instanceof Error ? error.message : String(error)
+        throw new Error(`${path}: invalid YAML frontmatter: ${reason}`, { cause: repairError })
+      }
+    }
+    const reason = error instanceof Error ? error.message : String(error)
+    throw new Error(`${path}: invalid YAML frontmatter: ${reason}`, { cause: error })
+  }
+}
+
 function parseSkill(path: string, content: string): SkillDocument {
   const normalized = content
     .replace(/^\uFEFF/, "")
     .replaceAll("\r\n", "\n")
     .replaceAll("\r", "\n")
-  const frontmatter = /^---\n([\s\S]*?)\n---(?:\n|$)/.exec(normalized)
+  const frontmatter = /^[ \t]*---[ \t]*\n([\s\S]*?)\n[ \t]*---[ \t]*(?:\n|$)/.exec(normalized)
   if (!frontmatter) throw new Error(`${path}: SKILL.md must begin with closed YAML frontmatter`)
 
-  let fields: unknown
-  try {
-    fields = Bun.YAML.parse(frontmatter[1] ?? "")
-  } catch (error) {
-    const reason = error instanceof Error ? error.message : String(error)
-    throw new Error(`${path}: invalid YAML frontmatter: ${reason}`, { cause: error })
-  }
+  const fields = parseFrontmatter(path, frontmatter[1] ?? "")
   if (!isRecord(fields)) throw new Error(`${path}: frontmatter must be an object`)
 
-  const name = asString(fields.name)?.trim()
-  if (!name || name.length > 64 || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(name)) {
-    throw new Error(`${path}: name must use 1-64 lower-case letters, numbers, and single hyphens`)
-  }
-  if (basename(dirname(path)) !== name) {
-    throw new Error(`${path}: parent directory must be named ${name}`)
-  }
+  const rawName = fields.name === undefined ? basename(dirname(path)) : asString(fields.name)
+  if (rawName === undefined) throw new Error(`${path}: name must be a string`)
+  const name = sanitizeSingleLine(rawName) || basename(dirname(path))
+  if ([...name].length > 64) throw new Error(`${path}: name must not exceed 64 characters`)
 
-  const description = asString(fields.description)?.trim()
-  if (!description || description.length > 1024) {
-    throw new Error(`${path}: description must contain 1-1024 characters`)
-  }
+  const rawDescription = asString(fields.description)
+  if (rawDescription === undefined) throw new Error(`${path}: description is required`)
+  const description = sanitizeSingleLine(rawDescription)
+  if (!description) throw new Error(`${path}: description is required`)
 
-  const body = normalized.slice(frontmatter[0].length).trim()
-  if (!body) throw new Error(`${path}: skill instructions must not be empty`)
-  return { name, description, body }
+  return { name, description, body: normalized.slice(frontmatter[0].length).trim() }
 }
 
 async function loadSkill(path: string, source: SkillSource): Promise<Skill> {

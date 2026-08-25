@@ -56,32 +56,54 @@ test("ignores a missing root and finds skills nested below it", async () => {
   })
 })
 
-test("skips invalid skill documents without dropping valid skills", async () => {
+test("repairs common plain scalar YAML and accepts relaxed skill metadata", async () => {
   await withSkillsRoot(async (root) => {
-    const cases: [string, string, string][] = [
-      ["no-frontmatter", "", "body without frontmatter"],
-      ["bad-name", "name: Bad_Name\ndescription: fine", "body"],
-      ["mismatched", "name: other\ndescription: fine", "body"],
-      ["empty-body", "name: empty-body\ndescription: fine", ""],
-      ["no-description", "name: no-description", "body"],
-      ["broken-yaml", "name: [unclosed\ndescription: fine", "body"],
-    ]
+    await writeSkill(
+      root,
+      "release-swift",
+      "description: Cut a release (Swift app): pick a version\nargument-hint: <duration: e.g. 7d>\ntags: [next,@release]\nmetadata:\n  notes: |-\n    Keep this: unchanged",
+      "",
+    )
+    await writeSkill(root, "directory-name", "name:  Display   Name\ndescription:  Multiple\n  words", "body")
 
-    for (const [name, frontmatter, body] of cases) {
+    const { skills, failures } = await loadSkills(roots([root, "user"]))
+
+    expect(failures).toEqual([])
+    expect(skills).toHaveLength(2)
+    expect(skills.find((skill) => skill.path.endsWith("directory-name/SKILL.md"))).toMatchObject({
+      name: "Display Name",
+      description: "Multiple words",
+      body: "body",
+    })
+    expect(skills.find((skill) => skill.path.endsWith("release-swift/SKILL.md"))).toMatchObject({
+      name: "release-swift",
+      description: "Cut a release (Swift app): pick a version",
+      body: "",
+    })
+  })
+})
+
+test("skips structurally invalid skill documents without dropping valid skills", async () => {
+  await withSkillsRoot(async (root) => {
+    const invalidDocuments: [string, string][] = [
+      ["no-frontmatter", "body without frontmatter"],
+      ["no-description", "---\nname: no-description\n---\nbody"],
+      ["invalid-yaml", '---\nname: invalid-yaml\ndescription: "unterminated\n---\nbody'],
+      ["long-name", `---\nname: ${"x".repeat(65)}\ndescription: fine\n---\nbody`],
+    ]
+    for (const [name, document] of invalidDocuments) {
       const directory = join(root, name)
       await mkdir(directory, { recursive: true })
-      await writeFile(join(directory, "SKILL.md"), frontmatter ? `---\n${frontmatter}\n---\n\n${body}\n` : `${body}\n`)
+      await writeFile(join(directory, "SKILL.md"), document)
     }
-    await writeSkill(root, "valid", "name: valid\ndescription: fine", "body")
+    await writeSkill(root, "valid", `name: valid\ndescription: ${"x".repeat(1_025)}`, "body")
 
     const { skills, failures } = await loadSkills(roots([root, "user"]))
 
     expect(skills.map((skill) => skill.name)).toEqual(["valid"])
-    expect(failures).toHaveLength(cases.length)
-    expect(failures.map((failure) => failure.path)).toEqual(
-      cases.map(([name]) => join(root, name, "SKILL.md")).sort((left, right) => left.localeCompare(right)),
-    )
-    expect(failures.find((failure) => failure.path.endsWith("broken-yaml/SKILL.md"))?.reason).toContain(
+    expect(skills[0]?.description).toHaveLength(1_025)
+    expect(failures).toHaveLength(invalidDocuments.length)
+    expect(failures.find((failure) => failure.path.endsWith("invalid-yaml/SKILL.md"))?.reason).toContain(
       "invalid YAML frontmatter",
     )
   })
