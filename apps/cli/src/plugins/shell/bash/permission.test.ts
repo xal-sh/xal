@@ -72,7 +72,11 @@ describe("bash permission suggestion", () => {
   })
 
   test("drops the suggestion for shell control forms", () => {
-    for (const command of ["if true; then rm -rf /; fi", "while true; do echo hi; done"]) {
+    for (const command of [
+      "if true; then rm -rf /; fi",
+      "while true; do echo hi; done",
+      "coproc echo safe && echo done",
+    ]) {
       expect(bashTool.permission?.({ command }, { cwd: "/workspace", sessionId: "s" })).toEqual({
         subject: command,
       })

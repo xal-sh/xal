@@ -473,6 +473,7 @@ export function isAssignmentPrefix(input: string): boolean {
 }
 
 const CONTROL_KEYWORDS = new Set([
+  "coproc",
   "if",
   "then",
   "elif",
@@ -490,7 +491,7 @@ const CONTROL_KEYWORDS = new Set([
 function isControlPrefix(prefix: string): boolean {
   const first = prefix.split(/\s+/)[0]!
   if (first === "!" || CONTROL_KEYWORDS.has(first)) return true
-  return /^(?:if|then|elif|else|while|until|do|for|select|function|case)\b/.test(prefix)
+  return /^(?:coproc|if|then|elif|else|while|until|do|for|select|function|case)\b/.test(prefix)
 }
 
 export function commandPrefix(command: string): { prefix: string; rest: string } | undefined {

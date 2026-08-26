@@ -93,5 +93,6 @@ describe("commandPrefix", () => {
     ]) {
       expect(commandPrefix(command)).toBeUndefined()
     }
+    expect(commandPrefix("coproc echo safe && echo done")).toBeUndefined()
   })
 })

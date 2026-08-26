@@ -191,7 +191,11 @@ describe("interactive permission suggestions", () => {
   })
 
   test("drops exec_command suggestions for shell control forms", () => {
-    for (const command of ["if true; then rm -rf /; fi", "while true; do echo hi; done"]) {
+    for (const command of [
+      "if true; then rm -rf /; fi",
+      "while true; do echo hi; done",
+      "coproc echo safe && echo done",
+    ]) {
       expect(execCommandTool.permission?.({ cmd: command }, { cwd: "/workspace", sessionId: "s" })).toEqual({
         subject: command,
       })
