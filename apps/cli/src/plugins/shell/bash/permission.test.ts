@@ -51,7 +51,11 @@ describe("bash permission suggestion", () => {
   })
 
   test("drops the suggestion when the prefix is not safely reusable", () => {
-    for (const command of ["echo $(date) && echo done", "{ echo grouped; } && echo done"]) {
+    for (const command of [
+      "echo $(date) && echo done",
+      "{ echo grouped; } && echo done",
+      "FOO=1 pnpm test && pnpm lint",
+    ]) {
       expect(bashTool.permission?.({ command }, { cwd: "/workspace", sessionId: "s" })).toEqual({
         subject: command,
       })

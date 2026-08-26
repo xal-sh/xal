@@ -73,6 +73,11 @@ describe("commandPrefix", () => {
     expect(commandPrefix("FOO=1 && echo done")).toBeUndefined()
   })
 
+  test("rejects a leading environment-assignment prefix", () => {
+    expect(commandPrefix("FOO=1 pnpm test && pnpm lint")).toBeUndefined()
+    expect(commandPrefix("A_B=2 npm run build && git status")).toBeUndefined()
+  })
+
   test("rejects a first segment that is a control-group body", () => {
     expect(commandPrefix("{ echo grouped; } && echo done")).toBeUndefined()
   })
