@@ -467,3 +467,13 @@ export function commandSegments(command: string): string[] | undefined {
   const normalized = segments.map(controlBody).filter(Boolean)
   return normalized.length === 0 ? undefined : normalized
 }
+
+export function commandPrefix(command: string): { prefix: string; rest: string } | undefined {
+  const segments = splitCommand(command)
+  if (!segments || segments.length === 0) return undefined
+  const prefix = segments[0]!.trim()
+  if (prefix.includes("$()")) return undefined
+  if (prefix.startsWith("=")) return undefined
+  if (prefix.split(/\s+/).length < 2) return undefined
+  return { prefix, rest: segments.slice(1).join(" && ") }
+}

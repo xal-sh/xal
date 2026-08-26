@@ -3,7 +3,7 @@ import { isAbsolute, relative, resolve, sep } from "node:path"
 import { asNumber, asString } from "../../../lib/json"
 import type { Tool } from "../../../tools/types"
 import { sandboxAccessOf, sandboxAvailable, sandboxRequested, type SandboxAccess } from "../sandbox"
-import { splitCommand } from "../split"
+import { commandPrefix, splitCommand } from "../split"
 import {
   createSessionEmitter,
   disposeInteractiveSessions,
@@ -78,6 +78,24 @@ function sessionIdOf(args: Record<string, unknown>): number | undefined {
 
 export function charsOf(args: Record<string, unknown>): string {
   return asString(args.chars) ?? ""
+}
+
+export function inputSubject(chars: string): string {
+  const content = chars.trim()
+  if (!content) return ""
+  const segments = splitCommand(content)
+  if (!segments || segments.length === 0) return content
+  const first = segments[0]!
+  if (segments.length === 1) return first
+  const prefix = commandPrefix(content)
+  return prefix && prefix.prefix === first ? first : content
+}
+
+export function inputSuggestion(subject: string): string | undefined {
+  if (!subject || subject.includes("\n")) return undefined
+  const prefix = commandPrefix(subject)?.prefix
+  if (!prefix || prefix.includes("$()") || prefix.split(/\s+/).length < 2) return undefined
+  return `write_stdin(${prefix}*)`
 }
 
 async function collectSessionOutput(
@@ -163,8 +181,14 @@ export const execCommandTool: Tool = {
   permission(args) {
     const command = commandOf(args)
     const segments = splitCommand(command)
-    if (!segments || segments.length > 1) return { subject: command }
-    const words = segments[0]!.split(/\s+/)
+    if (!segments) return { subject: command }
+    const first = segments[0]!
+    if (segments.length > 1) {
+      const prefix = commandPrefix(command)
+      if (prefix && prefix.prefix === first) return { subject: command, suggestion: `exec_command(${first}*)` }
+      return { subject: command }
+    }
+    const words = first.split(/\s+/)
     if (words.length < 2) return { subject: command, suggestion: `exec_command(${command})` }
     return { subject: command, suggestion: `exec_command(${words[0]} ${words[1]}*)` }
   },
@@ -261,7 +285,12 @@ export const writeStdinTool: Tool = {
     const chars = charsOf(args)
     const id = sessionIdOf(args)
     const session = id === undefined ? undefined : interactiveSession(id, ctx.sessionId)
-    return { subject: chars ? (session?.inputSubject(chars) ?? chars) : resizeOf(args) ? RESIZE_SUBJECT : "" }
+    if (!chars) return { subject: resizeOf(args) ? RESIZE_SUBJECT : "" }
+    const sessionSubject = session?.inputSubject(chars)
+    const subject = sessionSubject ?? inputSubject(chars)
+    if (!subject) return { subject: chars }
+    const suggestion = inputSuggestion(subject)
+    return suggestion ? { subject, suggestion } : { subject }
   },
   async execute(args, ctx) {
     const id = sessionIdOf(args)

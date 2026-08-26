@@ -95,7 +95,7 @@ describe("interactive session", () => {
         { session_id: session.id, chars: "/etc/hosts\n" },
         { cwd: process.cwd(), sessionId: "other" },
       ),
-    ).toEqual({ subject: "/etc/hosts\n" })
+    ).toEqual({ subject: "/etc/hosts" })
     session.write("/etc/hosts\n")
     session.write("rm \\\n")
     expect(

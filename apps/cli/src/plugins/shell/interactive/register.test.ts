@@ -4,7 +4,7 @@ import { evaluatePolicy, registerPolicyRule } from "../../../permissions/service
 import type { PermissionRequest } from "../../../permissions/types"
 import { sandboxAvailable } from "../sandbox"
 import { registerInteractiveShell } from "../plugin"
-import { execCommandTool, workdirEscapesWorkspace, writeStdinTool } from "./tool"
+import { execCommandTool, inputSuggestion, inputSubject, workdirEscapesWorkspace, writeStdinTool } from "./tool"
 
 registerInteractiveShell({
   registerPermissionRules: contributeRules,
@@ -150,6 +150,70 @@ describe("interactive shell policy", () => {
     } finally {
       setUserRules({})
     }
+  })
+})
+
+describe("interactive permission suggestions", () => {
+  test("suggests a reusable prefix for compound exec_command input", () => {
+    expect(execCommandTool.permission?.({ cmd: "pnpm test" }, { cwd: "/workspace", sessionId: "s" })).toEqual({
+      subject: "pnpm test",
+      suggestion: "exec_command(pnpm test*)",
+    })
+    expect(
+      execCommandTool.permission?.({ cmd: "pnpm test && pnpm lint" }, { cwd: "/workspace", sessionId: "s" }),
+    ).toEqual({
+      subject: "pnpm test && pnpm lint",
+      suggestion: "exec_command(pnpm test*)",
+    })
+    expect(
+      execCommandTool.permission?.({ cmd: "npm run dev && echo started" }, { cwd: "/workspace", sessionId: "s" }),
+    ).toEqual({
+      subject: "npm run dev && echo started",
+      suggestion: "exec_command(npm run dev*)",
+    })
+    expect(
+      execCommandTool.permission?.({ cmd: "echo $(date) && echo done" }, { cwd: "/workspace", sessionId: "s" }),
+    ).toEqual({ subject: "echo $(date) && echo done" })
+  })
+
+  test("subjects write_stdin input to the first command segment", () => {
+    expect(inputSubject("pnpm dev && echo ready\n")).toBe("pnpm dev")
+    expect(inputSubject("printf ok\n")).toBe("printf ok")
+    expect(inputSubject("rm -rf node_modules\n")).toBe("rm -rf node_modules")
+    expect(inputSubject("echo $(date) && echo done\n")).toBe("echo $(date) && echo done")
+    expect(inputSubject("")).toBe("")
+  })
+
+  test("suggests write_stdin only for a single safe command line", () => {
+    expect(inputSuggestion("pnpm dev")).toBe("write_stdin(pnpm dev*)")
+    expect(inputSuggestion("pnpm dev && echo ready")).toBe("write_stdin(pnpm dev*)")
+    expect(inputSuggestion("echo $(date) && echo done")).toBeUndefined()
+    expect(inputSuggestion("arn:aws:iam::123:role\n")).toBeUndefined()
+    expect(inputSuggestion("")).toBeUndefined()
+  })
+
+  test("write_stdin permission exposes the safe prefix suggestion", () => {
+    expect(
+      writeStdinTool.permission?.(
+        { session_id: 1, chars: "pnpm dev && echo ready\n" },
+        { cwd: "/workspace", sessionId: "s" },
+      ),
+    ).toEqual({ subject: "pnpm dev", suggestion: "write_stdin(pnpm dev*)" })
+    expect(
+      writeStdinTool.permission?.({ session_id: 1, chars: "printf ok\n" }, { cwd: "/workspace", sessionId: "s" }),
+    ).toEqual({ subject: "printf ok", suggestion: "write_stdin(printf ok*)" })
+    expect(
+      writeStdinTool.permission?.(
+        { session_id: 1, chars: "echo $(date) && echo done\n" },
+        { cwd: "/workspace", sessionId: "s" },
+      ),
+    ).toEqual({ subject: "echo $(date) && echo done" })
+    expect(
+      writeStdinTool.permission?.({ session_id: 1, chars: "", cols: 120 }, { cwd: "/workspace", sessionId: "s" }),
+    ).toEqual({ subject: "resize terminal" })
+    expect(writeStdinTool.permission?.({ session_id: 1, chars: "" }, { cwd: "/workspace", sessionId: "s" })).toEqual({
+      subject: "",
+    })
   })
 })
 

@@ -21,7 +21,7 @@ type ShellRegistrationContext = Pick<
   "registerPermissionRules" | "registerPolicyRule" | "registerPrompt" | "registerTool" | "registerToolSessionDisposer"
 >
 
-function registerBash(ctx: ShellRegistrationContext): void {
+export function registerBash(ctx: ShellRegistrationContext): void {
   ctx.registerTool(bashTool)
   ctx.registerToolSessionDisposer(disposeShellSession)
   ctx.registerPrompt({ id: "environment", text: shellPrompt })

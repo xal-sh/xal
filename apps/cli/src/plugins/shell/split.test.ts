@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { splitCommand } from "./split"
+import { commandPrefix, splitCommand } from "./split"
 
 describe("splitCommand", () => {
   test("splits every supported command separator", () => {
@@ -52,5 +52,28 @@ describe("splitCommand", () => {
     for (const command of ["", "   ", "&& || ; |\n"]) {
       expect(splitCommand(command)).toBeUndefined()
     }
+  })
+})
+
+describe("commandPrefix", () => {
+  test("extracts the first command segment", () => {
+    expect(commandPrefix("pnpm test")).toEqual({ prefix: "pnpm test", rest: "" })
+    expect(commandPrefix("pnpm test && pnpm lint")).toEqual({ prefix: "pnpm test", rest: "pnpm lint" })
+    expect(commandPrefix("git status && git diff")).toEqual({ prefix: "git status", rest: "git diff" })
+    expect(commandPrefix("npm run build && npm test")).toEqual({ prefix: "npm run build", rest: "npm test" })
+  })
+
+  test("returns undefined when the first segment cannot be parsed safely", () => {
+    for (const command of ["echo $(date) && echo done", "echo 'unterminated"]) {
+      expect(commandPrefix(command)).toBeUndefined()
+    }
+  })
+
+  test("rejects a first segment that is only a command assignment", () => {
+    expect(commandPrefix("FOO=1 && echo done")).toBeUndefined()
+  })
+
+  test("rejects a first segment that is a control-group body", () => {
+    expect(commandPrefix("{ echo grouped; } && echo done")).toBeUndefined()
   })
 })
