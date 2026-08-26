@@ -25,7 +25,20 @@ export interface StreamedTextResult {
   usage: Usage | undefined
 }
 
+export class StreamedTextAttemptError extends Error {
+  readonly receivedEvent: boolean
+  readonly attempt: number
+
+  constructor(cause: unknown, receivedEvent: boolean, attempt: number) {
+    super(cause instanceof Error ? cause.message : String(cause), { cause })
+    this.name = cause instanceof Error && cause.name === "AbortError" ? cause.name : "StreamedTextAttemptError"
+    this.receivedEvent = receivedEvent
+    this.attempt = attempt
+  }
+}
+
 export async function collectStreamedText(input: StreamedTextRequest): Promise<StreamedTextResult> {
+  const attempt = input.attempt ?? 1
   const profile = profileProviderRequestStarted(
     input.request.sessionId,
     input.kind ?? "primary",
@@ -33,7 +46,7 @@ export async function collectStreamedText(input: StreamedTextRequest): Promise<S
     input.provider.id,
     input.request.model,
     input.request.thinking,
-    input.attempt ?? 1,
+    attempt,
   )
   let streamed = ""
   let settled = ""
@@ -63,6 +76,6 @@ export async function collectStreamedText(input: StreamedTextRequest): Promise<S
         : "failed",
       usage,
     )
-    throw error
+    throw new StreamedTextAttemptError(error, received, attempt)
   }
 }

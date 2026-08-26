@@ -1,5 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
+import { appendProcessOutput, createProcessJob, drainOwnerDeliveries, finishProcessJob } from "../../background/jobs"
 import { contributeRules } from "../../permissions/rules"
+import { ProviderError } from "../../providers/errors"
 import { registerTool, unregisterTool } from "../../tools/registry"
 import type { ElicitationResult, InteractiveTool, Tool } from "../../tools/types"
 import type { AgentEvent } from "../events"
@@ -266,14 +268,313 @@ describe("AgentSession control flow", () => {
       summaryMessage("Automatic summary"),
       { type: "user_message", text: "Continue after it fills", images: [] },
     ])
-    expect(observed.filter((event) => event.type === "compacted")).toEqual([
-      {
-        type: "compacted",
-        summary: "Automatic summary",
-        replaced: 2,
-        tokensBefore: 90,
+    const compacted = observed.find((event) => event.type === "compacted")
+    expect(compacted).toMatchObject({
+      type: "compacted",
+      summary: "Automatic summary",
+      replaced: 2,
+    })
+    if (!compacted || compacted.type !== "compacted") throw new Error("missing compaction event")
+    expect(compacted.tokensBefore).toBeGreaterThan(90)
+  })
+
+  test("uses the same successful automatic admission path for subagents", async () => {
+    const provider = new ScriptedProvider(
+      [
+        completedRound("s".repeat(1_000), { totalInputTokens: 90 }),
+        completedRound("Subagent summary"),
+        completedRound("Subagent continued"),
+      ],
+      200,
+      90,
+    )
+    const session = harness.createSession(provider, { kind: "subagent" })
+
+    await runSettledTurn(session, { text: "fill", images: [] })
+    const outcome = await runSettledTurn(session, { text: "continue", images: [] })
+
+    expect(outcome.status).toBe("completed")
+    expect(provider.requests.map((request) => request.toolChoice)).toEqual(["auto", "none", "auto"])
+  })
+
+  test("successful compaction clears stale measurement before no-usage tool work", async () => {
+    const toolName = `post_compaction_result_${crypto.randomUUID().replaceAll("-", "_")}`
+    const tool: Tool = {
+      name: toolName,
+      description: "Return post-compaction work",
+      parameters: { type: "object" },
+      title: () => "Return post-compaction work",
+      readOnly: () => true,
+      execute: async () => ({ output: "o".repeat(12_000), maxOutputBytes: 20_000 }),
+    }
+    const provider = new ScriptedProvider(
+      [
+        completedRound("Measured response", { totalInputTokens: 90_000 }),
+        completedRound("Replacement summary"),
+        toolRound("post-compaction-call", toolName, {}),
+        completedRound("Post-compaction work completed"),
+      ],
+      100_000,
+      80_000,
+    )
+    const session = harness.createSession(provider)
+
+    registerTool(tool)
+    try {
+      await runSettledTurn(session, { text: "m".repeat(120_000), images: [] })
+      const outcome = await runSettledTurn(session, { text: "continue", images: [] })
+
+      expect(outcome.status).toBe("completed")
+      expect(provider.requests.map((request) => request.toolChoice)).toEqual(["auto", "none", "auto", "auto"])
+    } finally {
+      unregisterTool(tool)
+    }
+  })
+
+  test("drains a queued large prompt before automatic admission", async () => {
+    const entered = latch()
+    const release = latch()
+    const first = completedRound("Initial response", { totalInputTokens: 10 })
+    const delayed: ProviderRound = async function* (request) {
+      entered.release()
+      await release.promise
+      yield* first(request)
+    }
+    const provider = new ScriptedProvider(
+      [delayed, completedRound("Queued summary"), completedRound("Queued work completed")],
+      4_000,
+      3_000,
+    )
+    const session = harness.createSession(provider)
+
+    const running = runSettledTurn(session, { text: "Start", images: [] })
+    await entered.promise
+    expect(session.send({ text: "q".repeat(12_000), images: [] })).toBe(true)
+    release.release()
+
+    const outcome = await running
+
+    expect(outcome.status).toBe("completed")
+    expect(provider.requests).toHaveLength(3)
+    expect(provider.requests[1]?.toolChoice).toBe("none")
+    expect(
+      provider.requests[1]?.input.some((item) => item.type === "user_message" && item.text.length === 12_000),
+    ).toBe(true)
+    expect(provider.requests[2]?.input).toEqual([summaryMessage("Queued summary")])
+  })
+
+  test("automatically admits a bounded 50 KiB tool result before continuing", async () => {
+    const toolName = `large_result_${crypto.randomUUID().replaceAll("-", "_")}`
+    const tool: Tool = {
+      name: toolName,
+      description: "Return a large result",
+      parameters: { type: "object" },
+      title: () => "Return a large result",
+      readOnly: () => true,
+      execute: async () => ({ output: "t".repeat(60 * 1024) }),
+    }
+    const provider = new ScriptedProvider(
+      [toolRound("large-result-call", toolName, {}), completedRound("Tool summary"), completedRound("Finished")],
+      20_000,
+      8_000,
+    )
+    const session = harness.createSession(provider)
+
+    registerTool(tool)
+    try {
+      const outcome = await runSettledTurn(session, { text: "Run the large tool", images: [] })
+
+      expect(outcome.status).toBe("completed")
+      expect(provider.requests).toHaveLength(3)
+      expect(provider.requests[1]?.toolChoice).toBe("none")
+      const result = provider.requests[1]?.input.find((item) => item.type === "tool_result")
+      if (!result || result.type !== "tool_result") throw new Error("missing bounded tool result")
+      expect(Buffer.byteLength(result.output)).toBeLessThanOrEqual(50 * 1024)
+      expect(Buffer.byteLength(result.output)).toBeGreaterThan(40 * 1024)
+    } finally {
+      unregisterTool(tool)
+    }
+  })
+
+  test("drains a large background delivery before automatic admission", async () => {
+    const provider = new ScriptedProvider(
+      [completedRound("Background summary"), completedRound("Background handled")],
+      4_000,
+      2_000,
+    )
+    const session = harness.createSession(provider)
+    const terminal = Promise.withResolvers<void>()
+    const unsubscribe = session.subscribe((event) => {
+      if (event.type === "turn_ended" || event.type === "turn_failed") terminal.resolve()
+    })
+    const job = createProcessJob("admission-background", session.id, "synthetic command", () => {})
+    appendProcessOutput(job, "b".repeat(12_000))
+
+    try {
+      await finishProcessJob(job, { status: "exited", exitCode: 0 })
+      await drainOwnerDeliveries(session.id)
+      await terminal.promise
+
+      expect(provider.requests).toHaveLength(2)
+      expect(provider.requests[0]?.toolChoice).toBe("none")
+      expect(
+        provider.requests[0]?.input.some(
+          (item) => item.type === "user_message" && item.text.includes("Background job"),
+        ),
+      ).toBe(true)
+    } finally {
+      unsubscribe()
+    }
+  })
+
+  test("includes transient agent questions in hard-window admission", async () => {
+    const provider = new ScriptedProvider([], 3_000, 2_500)
+    const session = harness.createSession(provider)
+    const failed = Promise.withResolvers<string>()
+    const unavailable = Promise.withResolvers<string>()
+    const unsubscribe = session.subscribe((event) => {
+      if (event.type === "turn_failed") failed.resolve(event.message)
+    })
+
+    try {
+      expect(
+        session.receiveAgentQuestion({
+          requestId: "large-question",
+          jobId: "question-agent",
+          question: "q".repeat(12_000),
+          unavailable: (reason) => unavailable.resolve(reason),
+        }),
+      ).toBe(true)
+      expect(await failed.promise).toContain("exceeding the 3000-token context window")
+      expect(await unavailable.promise).toBe("the parent turn failed")
+      expect(provider.requests).toHaveLength(0)
+    } finally {
+      unsubscribe()
+    }
+  })
+
+  test("admits an output-contract correction before retrying the response", async () => {
+    const provider = new ScriptedProvider(
+      [
+        completedRound("Missing structured output", { totalInputTokens: 7_990 }),
+        completedRound("Contract summary"),
+        toolRound("valid-output-after-compaction", "submit_output", { count: 3 }),
+      ],
+      20_000,
+      8_000,
+    )
+    const session = harness.createSession(provider, {
+      outputSchema: {
+        type: "object",
+        properties: { count: { type: "integer" } },
+        required: ["count"],
+        additionalProperties: false,
       },
-    ])
+    })
+
+    const outcome = await runSettledTurn(session, { text: "c".repeat(24_000), images: [] })
+
+    expect(outcome.status).toBe("completed")
+    expect(provider.requests).toHaveLength(3)
+    expect(provider.requests[1]?.toolChoice).toBe("none")
+    expect(
+      provider.requests[2]?.input.some(
+        (item) => item.type === "user_message" && item.text.includes("did not call submit_output"),
+      ),
+    ).toBe(true)
+  })
+
+  test("retries one pre-event automatic compaction failure and fails closed", async () => {
+    for (const kind of ["primary", "subagent"] as const) {
+      const longResponse = Array.from({ length: 200 }, (_, index) => `failureconcept${index}`).join(" ")
+      const provider = new ScriptedProvider(
+        [
+          completedRound(longResponse, { totalInputTokens: 90 }),
+          round([], new ProviderError("temporary compaction failure", { retryable: true, retryAfterMs: 0 })),
+          round([], new ProviderError("repeated compaction failure", { retryable: true, retryAfterMs: 0 })),
+        ],
+        200,
+        90,
+      )
+      const session = harness.createSession(provider, { kind })
+
+      await runSettledTurn(session, { text: "Fill context", images: [] })
+      const outcome = await runSettledTurn(session, { text: "Must compact", images: [] })
+
+      expect(outcome.status).toBe("failed")
+      if (outcome.status !== "failed") throw new Error("expected failed turn")
+      expect(outcome.error).toContain("context compaction failed")
+      expect(provider.requests).toHaveLength(3)
+      expect(provider.requests.slice(1).every((request) => request.toolChoice === "none")).toBe(true)
+      expect(session.providerRequestCount).toBe(3)
+    }
+  })
+
+  test("does not retry automatic compaction after a provider event", async () => {
+    const longResponse = Array.from({ length: 200 }, (_, index) => `receivedconcept${index}`).join(" ")
+    const provider = new ScriptedProvider(
+      [
+        completedRound(longResponse, { totalInputTokens: 90 }),
+        round(
+          [{ type: "text_delta", text: "partial summary" }],
+          new ProviderError("compaction disconnected", { retryable: true, retryAfterMs: 0 }),
+        ),
+      ],
+      200,
+      90,
+    )
+    const session = harness.createSession(provider)
+
+    await runSettledTurn(session, { text: "Fill context", images: [] })
+    const outcome = await runSettledTurn(session, { text: "Must compact", images: [] })
+
+    expect(outcome.status).toBe("failed")
+    expect(provider.requests).toHaveLength(2)
+    expect(provider.requests[1]?.toolChoice).toBe("none")
+  })
+
+  test("does not retry interrupted, empty, or non-retryable automatic compaction", async () => {
+    const interrupted = new Error("compaction interrupted")
+    interrupted.name = "AbortError"
+    const cases = [
+      { name: "interrupted", failure: round([], interrupted), expected: "interrupted" },
+      { name: "empty", failure: round([{ type: "done" }]), expected: "failed" },
+      {
+        name: "non-retryable",
+        failure: round([], new ProviderError("invalid compaction request", { retryable: false })),
+        expected: "failed",
+      },
+    ] as const
+
+    for (const testCase of cases) {
+      const provider = new ScriptedProvider(
+        [completedRound(`${testCase.name}-${"x".repeat(1_000)}`, { totalInputTokens: 90 }), testCase.failure],
+        200,
+        90,
+      )
+      const session = harness.createSession(provider)
+
+      await runSettledTurn(session, { text: "fill", images: [] })
+      const outcome = await runSettledTurn(session, { text: "compact", images: [] })
+
+      expect(outcome.status).toBe(testCase.expected)
+      expect(provider.requests).toHaveLength(2)
+      expect(provider.requests[1]?.toolChoice).toBe("none")
+    }
+  })
+
+  test("does not send a normal request at the hard context window", async () => {
+    const provider = new ScriptedProvider([completedRound("s".repeat(100))], 10, 8)
+    const session = harness.createSession(provider)
+
+    const outcome = await runSettledTurn(session, { text: "r".repeat(100), images: [] })
+
+    expect(outcome.status).toBe("failed")
+    if (outcome.status !== "failed") throw new Error("expected failed turn")
+    expect(outcome.error).toContain("exceeding the 10-token context window")
+    expect(provider.requests).toHaveLength(1)
+    expect(provider.requests[0]?.toolChoice).toBe("none")
+    expect(session.providerRequestCount).toBe(1)
   })
 
   test("interrupts a pending approval and settles without executing the tool", async () => {

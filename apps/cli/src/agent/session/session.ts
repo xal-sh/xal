@@ -58,6 +58,7 @@ import type { DeliveredAgentQuestion, ParentQuestionResult } from "../task/quest
 import type { SessionKind } from "../types"
 import { backgroundResultsMessage, SessionAsyncState } from "./async"
 import { autoCompact, runCompaction, type CompactionHost } from "./compaction"
+import { ContextBudget, requestIdentity } from "./context-budget"
 import { performRedo, performUndo, RedoStack, type HistoryMoveHost } from "./history-moves"
 import { PendingInteractions } from "./interactions"
 import { OutputContract, parseOutputSchema } from "./output-contract"
@@ -107,9 +108,8 @@ export class AgentSession {
   private events: AgentEvent[] = []
   private checkpoints: ConversationCheckpoint[] = []
   private readonly redoStack = new RedoStack()
-  private contextTokens: number | undefined
+  private readonly contextBudget = new ContextBudget()
   private providerRequests = 0
-  private compactionFailures = 0
   private tasks: TrackedTask[] = []
   private readonly listeners = new Set<(event: AgentEvent) => void>()
   private readonly recorder: SessionRecorder | undefined
@@ -260,7 +260,7 @@ export class AgentSession {
   }
 
   private async contextUsage(): Promise<ContextUsage | undefined> {
-    const tokens = this.contextTokens
+    const tokens = this.contextBudget.currentTokens
     if (tokens === undefined) return undefined
     const window = await contextWindow(this.provider, this.selectedProfileId(), this.model)
     return { tokens, ...(window === undefined ? {} : { window }) }
@@ -286,7 +286,8 @@ export class AgentSession {
       correctUnansweredAgentQuestions: () => this.correctUnansweredAgentQuestions(),
       drainQueue: (signal, interjected) => this.drainQueue(signal, interjected),
       restartRequested: () => this.pendingRestart !== undefined,
-      autoCompact: (signal, provider, model) => autoCompact(this.compactionHost(), signal, provider, model),
+      autoCompact: (signal, provider, model, thinking) =>
+        autoCompact(this.compactionHost(), signal, provider, model, thinking),
       beginCheckpoint: async (messageId, input) => {
         this.ensureTitle(input)
         await this.checkpoint(messageId, input)
@@ -304,18 +305,15 @@ export class AgentSession {
       profileId: () => this.selectedProfileId(),
       history: () => this.items,
       prompt: (model) => this.providerPrompt(model),
-      contextTokens: () => this.contextTokens,
-      compactionFailures: () => this.compactionFailures,
+      contextTokens: () => this.contextBudget.currentTokens,
+      buildRequest: (provider, model, thinking, signal) => this.buildStreamRequest(provider, model, thinking, signal),
+      admitRequest: (provider, request) => this.contextBudget.admit(provider.id, this.selectedProfileId(), request),
       onRequestStarted: () => this.recordProviderRequest(),
-      recordFailure: () => {
-        this.compactionFailures += 1
-      },
       observeCompaction: (observation) => profileCompactionShape(this.sessionId, this.kind, observation),
       replaceHistory: (item) => {
         this.items = []
-        this.pushItem(item)
-        this.contextTokens = undefined
-        this.compactionFailures = 0
+        this.saveItem(item)
+        this.contextBudget.reset(this.items)
       },
       setState: (state) => this.setState(state),
       emit: (event) => this.emit(event),
@@ -330,8 +328,7 @@ export class AgentSession {
       restoreConversation: (state) => {
         this.items = state.items
         this.checkpoints = state.checkpoints
-        this.contextTokens = undefined
-        this.compactionFailures = 0
+        this.contextBudget.reset(this.items)
         if (this.tasks.length > 0) this.publishToolEvent({ type: "task_list_updated", tasks: [] })
       },
       recordEvent: (event) => this.recordEvent(event),
@@ -356,7 +353,7 @@ export class AgentSession {
   }
 
   get currentContextTokens(): number | undefined {
-    return this.contextTokens
+    return this.contextBudget.currentTokens
   }
 
   get providerRequestCount(): number {
@@ -507,8 +504,7 @@ export class AgentSession {
     this.checkpoints = []
     this.redoStack.reset()
     this.workspaceUndo = new WorkspaceUndo(this.cwd)
-    this.contextTokens = undefined
-    this.compactionFailures = 0
+    this.contextBudget.reset()
     this.tasks = []
     this.plan = undefined
     this.planHandoffActive = false
@@ -599,8 +595,7 @@ export class AgentSession {
     this.workspaceUndo.seed(
       this.checkpoints.map((checkpoint) => ({ messageId: checkpoint.messageId, prompt: checkpoint.input.text })),
     )
-    this.contextTokens = recordedContext(target.session.events)
-    this.compactionFailures = 0
+    this.contextBudget.restoreDisplayed(recordedContext(target.session.events))
     this.tasks = []
     this.modeBeforePlan = meta.mode === "plan" ? meta.modeBeforePlan : undefined
     this.plan = undefined
@@ -672,6 +667,7 @@ export class AgentSession {
     this.model = model
     this.modelInputModalities = inputModalities
     this.thinking = thinking
+    this.contextBudget.reset(this.items)
     this.emit({ type: "model_changed", provider: provider.id, profile: profileId, model })
     this.emit({ type: "thinking_changed", thinking })
     return true
@@ -683,6 +679,7 @@ export class AgentSession {
     this.profileId = undefined
     this.modelInputModalities = undefined
     this.thinking = undefined
+    this.contextBudget.reset(this.items)
     this.emit({ type: "model_changed", provider: this.provider.id, model: this.model })
     this.emit({ type: "thinking_changed" })
     return true
@@ -1469,8 +1466,13 @@ export class AgentSession {
 
   private pushItem(item: HistoryItem): void {
     const redacted = redactHistoryItem(item)
-    this.items.push(redacted)
-    this.recorder?.item(redacted)
+    this.contextBudget.append(redacted)
+    this.saveItem(redacted)
+  }
+
+  private saveItem(item: HistoryItem): void {
+    this.items.push(item)
+    this.recorder?.item(item)
   }
 
   private setState(state: AgentState): void {
@@ -1494,16 +1496,20 @@ export class AgentSession {
       sessionId: () => this.sessionId,
       profileId: () => this.selectedProfileId(),
       emit: (event) => this.emit(event),
-      pushItem: (item) => this.pushItem(item),
-      buildRequest: (provider, model, thinking, signal) => this.buildStreamRequest(provider, model, thinking, signal),
-      redactOutputItem: redactProviderOutputItem,
-      onRequestStarted: () => this.recordProviderRequest(),
-      onUsage: (turnUsage) => {
+      commitProviderRound: (items, turnUsage, request) => {
+        for (const item of items) this.saveItem(item)
+        this.contextBudget.commitProvider(
+          items,
+          turnUsage,
+          requestIdentity(this.provider.id, this.selectedProfileId(), request),
+        )
+        if (!turnUsage) return
         usage.context = turnUsage
         usage.turn = addUsage(usage.turn, turnUsage)
-        this.contextTokens = occupiedContext(turnUsage)
         this.emit({ type: "context_updated", context: turnUsage })
       },
+      redactOutputItem: redactProviderOutputItem,
+      onRequestStarted: () => this.recordProviderRequest(),
     }
   }
 
@@ -1553,6 +1559,7 @@ export class AgentSession {
       const item = this.items[index]!
       if (item.type !== "tool_call" || item.callId !== call.callId) continue
       this.items[index] = call
+      this.contextBudget.reset(this.items)
       this.emit({ type: "tool_call_updated", callId: call.callId, tool: call.name, args: call.args })
       return
     }

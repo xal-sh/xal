@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import { rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { appendProcessOutput, createProcessJob, drainOwnerDeliveries, finishProcessJob } from "../../background/jobs"
 import { contributeRules } from "../../permissions/rules"
 import { registerTool, unregisterTool } from "../../tools/registry"
 import type { Tool } from "../../tools/types"
@@ -9,18 +10,30 @@ import { ProviderError } from "../../providers/errors"
 import type { Usage } from "../../providers/types"
 import { updatePlanTool } from "../../tasks/tool"
 import type { AgentEvent } from "../events"
+import { registerPrompt } from "../prompt/registry"
 import {
   completedRound,
   round,
   runSettledTurn,
   ScriptedProvider,
   setupAgentSessionTests,
+  type AgentSession,
   type AgentSessionTestHarness,
 } from "./test-support"
 
 let harness: AgentSessionTestHarness
 
 beforeAll(async () => {
+  registerPrompt({
+    id: "session-context-identity-test",
+    text: (context) =>
+      JSON.stringify({
+        cwd: context.cwd,
+        mode: context.mode,
+        plan: context.plan?.markdown,
+        tools: context.tools.map((tool) => tool.name),
+      }),
+  })
   harness = await setupAgentSessionTests("agent-session-test-")
 })
 
@@ -509,6 +522,202 @@ describe("AgentSession", () => {
     }
   })
 
+  test("resume ignores historical context measurement for the next admission", async () => {
+    const provider = new ScriptedProvider([completedRound("Resumed normally")], 40_000, 35_000)
+    const session = harness.createSession(provider)
+    const cwd = session.exportSnapshot().meta.cwd
+    const path = join(tmpdir(), `xal-resume-context-${crypto.randomUUID()}.jsonl`)
+
+    expect(
+      session.resume({
+        session: {
+          meta: {
+            version: 2,
+            id: crypto.randomUUID(),
+            cwd,
+            provider: provider.id,
+            profile: "test-profile",
+            model: "test-model",
+            mode: "ask",
+            startedAt: Date.now(),
+          },
+          items: [{ type: "user_message", text: "r".repeat(50_000), images: [] }],
+          checkpoints: [],
+          events: [{ type: "turn_ended", context: { totalInputTokens: 36_000 } }],
+        },
+        path,
+        cwd,
+        provider,
+        profileId: "test-profile",
+        model: "test-model",
+        mode: "ask",
+        continueGoal: false,
+      }),
+    ).toBe(true)
+
+    const outcome = await runSettledTurn(session, { text: "continue", images: [] })
+
+    expect(outcome.status).toBe("completed")
+    expect(provider.requests).toHaveLength(1)
+    expect(provider.requests[0]?.toolChoice).toBe("auto")
+  })
+
+  test("undo invalidates measured context before the next admission", async () => {
+    const provider = new ScriptedProvider(
+      [completedRound("Initial response", { totalInputTokens: 90_000 }), completedRound("After undo")],
+      100_000,
+      80_000,
+    )
+    const session = harness.createSession(provider, { trackUndoPrompts: true })
+
+    await runSettledTurn(session, { text: "u".repeat(120_000), images: [] })
+    const checkpoint = (await session.undoCheckpoints())[0]
+    if (!checkpoint) throw new Error("missing undo checkpoint")
+    expect(await session.undo(checkpoint.messageId)).toMatchObject({ status: "undone" })
+
+    const outcome = await runSettledTurn(session, { text: "continue", images: [] })
+
+    expect(outcome.status).toBe("completed")
+    expect(provider.requests).toHaveLength(2)
+    expect(provider.requests[1]?.toolChoice).toBe("auto")
+  })
+
+  test("redo invalidates measurement observed after undo", async () => {
+    const provider = new ScriptedProvider(
+      [
+        completedRound("Initial response"),
+        completedRound("Background response", { totalInputTokens: 90_000 }),
+        completedRound("After redo"),
+      ],
+      100_000,
+      80_000,
+    )
+    const session = harness.createSession(provider, { trackUndoPrompts: true })
+
+    await runSettledTurn(session, { text: "r".repeat(120_000), images: [] })
+    const checkpoint = (await session.undoCheckpoints())[0]
+    if (!checkpoint) throw new Error("missing undo checkpoint")
+    expect((await session.undo(checkpoint.messageId)).status).toBe("undone")
+
+    const backgroundTurn = Promise.withResolvers<void>()
+    const unsubscribe = session.subscribe((event) => {
+      if (event.type === "state_changed" && event.state === "idle") backgroundTurn.resolve()
+    })
+    const job = createProcessJob("redo-measurement", session.id, "synthetic command", () => {})
+    appendProcessOutput(job, "background result")
+    try {
+      await finishProcessJob(job, { status: "exited", exitCode: 0 })
+      await drainOwnerDeliveries(session.id)
+      await backgroundTurn.promise
+    } finally {
+      unsubscribe()
+    }
+
+    expect((await session.redo()).status).toBe("redone")
+    const outcome = await runSettledTurn(session, { text: "continue", images: [] })
+
+    expect(outcome.status).toBe("completed")
+    expect(provider.requests).toHaveLength(3)
+    expect(provider.requests[2]?.toolChoice).toBe("auto")
+  })
+
+  test("mode, workspace, and available-tool cache changes reject measured context", async () => {
+    const verify = async (change: (session: AgentSession) => void): Promise<void> => {
+      const provider = new ScriptedProvider(
+        [completedRound("Measured response", { totalInputTokens: 90_000 }), completedRound("Changed response")],
+        100_000,
+        80_000,
+      )
+      const session = harness.createSession(provider)
+      await runSettledTurn(session, { text: "i".repeat(120_000), images: [] })
+      expect(provider.requests).toHaveLength(1)
+      change(session)
+
+      const outcome = await runSettledTurn(session, { text: "continue", images: [] })
+
+      if (outcome.status === "failed") {
+        throw new Error(
+          `${outcome.error}; requests=${provider.requests.length}; tools=${provider.requests.map((request) => request.toolChoice).join(",")}; keys=${provider.requests.map((request) => request.cacheKey).join(",")}`,
+        )
+      }
+      expect(outcome.status).toBe("completed")
+      expect(provider.requests).toHaveLength(2)
+      expect(provider.requests[1]?.toolChoice).toBe("auto")
+      expect(provider.requests[1]?.cacheKey).not.toBe(provider.requests[0]?.cacheKey)
+    }
+
+    await verify((session) => {
+      expect(session.setMode("plan")).toBe(true)
+    })
+    await verify((session) => {
+      session.changeWorkspace(join(tmpdir(), `xal-context-workspace-${crypto.randomUUID()}`))
+    })
+
+    const toolName = `context_identity_${crypto.randomUUID().replaceAll("-", "_")}`
+    const tool: Tool = {
+      name: toolName,
+      description: "Change the prompt tool set",
+      parameters: { type: "object" },
+      title: () => "Change prompt tools",
+      readOnly: () => true,
+      execute: async () => ({ output: "unused" }),
+    }
+    try {
+      await verify(() => registerTool(tool))
+    } finally {
+      unregisterTool(tool)
+    }
+  })
+
+  test("an approved plan cache change rejects measured context", async () => {
+    const toolName = `approve_plan_${crypto.randomUUID().replaceAll("-", "_")}`
+    const tool: Tool = {
+      name: toolName,
+      description: "Approve a synthetic plan",
+      parameters: { type: "object" },
+      title: () => "Approve plan",
+      readOnly: () => true,
+      execute: async () => ({
+        output: "approved",
+        events: [
+          {
+            type: "plan_updated",
+            plan: {
+              path: join(tmpdir(), "approved-plan.md"),
+              markdown: "# Approved plan",
+              status: "approved",
+            },
+          },
+        ],
+      }),
+    }
+    const provider = new ScriptedProvider(
+      [
+        round([
+          { type: "item_done", item: { type: "tool_call", callId: "approve-plan", name: toolName, args: {} } },
+          { type: "done", usage: { totalInputTokens: 90_000 } },
+        ]),
+        completedRound("Continued with approved plan"),
+      ],
+      100_000,
+      80_000,
+    )
+    const session = harness.createSession(provider)
+
+    registerTool(tool)
+    try {
+      const outcome = await runSettledTurn(session, { text: "p".repeat(120_000), images: [] })
+
+      if (outcome.status === "failed") throw new Error(outcome.error)
+      expect(outcome.status).toBe("completed")
+      expect(provider.requests).toHaveLength(2)
+      expect(provider.requests[1]?.toolChoice).toBe("auto")
+      expect(provider.requests[1]?.cacheKey).not.toBe(provider.requests[0]?.cacheKey)
+    } finally {
+      unregisterTool(tool)
+    }
+  })
+
   test("releases queued child questions when the parent turn fails", async () => {
     const provider = new ScriptedProvider([round([], new Error("parent provider failed"))])
     const session = harness.createSession(provider)
@@ -575,5 +784,26 @@ describe("AgentSession", () => {
     })
     expect(provider.requests).toHaveLength(1)
     expect(observed.filter((event) => event.type === "retry_scheduled")).toHaveLength(0)
+  })
+
+  test("commits settled provider output without usage before a mid-stream failure", async () => {
+    const provider = new ScriptedProvider([
+      round(
+        [{ type: "item_done", item: { type: "assistant_message", text: "Settled partial output" } }],
+        new ProviderError("stream failed", { retryable: false }),
+      ),
+      completedRound("Recovered on the next turn"),
+    ])
+    const session = harness.createSession(provider)
+
+    const failed = await runSettledTurn(session, { text: "Start risky stream", images: [] })
+    expect(failed.status).toBe("failed")
+    await runSettledTurn(session, { text: "Continue", images: [] })
+
+    expect(provider.requests[1]?.input).toEqual([
+      { type: "user_message", text: "Start risky stream", images: [] },
+      { type: "assistant_message", text: "Settled partial output" },
+      { type: "user_message", text: "Continue", images: [] },
+    ])
   })
 })

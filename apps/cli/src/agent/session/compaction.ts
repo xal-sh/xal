@@ -3,11 +3,20 @@ import { describeError } from "../../lib/error"
 import { contextWindow, findModel, modelSupportsImageInput } from "../../providers/catalog"
 import { prepareConversation } from "../../providers/conversation"
 import { estimateConversationItemTokens, estimateTextTokens } from "../../providers/request-size"
-import { collectStreamedText } from "../../providers/streamed-text"
-import type { ConversationItem, Provider, ProviderPrompt, ThinkingEffort, UserMessageItem } from "../../providers/types"
+import { collectStreamedText, StreamedTextAttemptError } from "../../providers/streamed-text"
+import { isProviderError } from "../../providers/errors"
+import type {
+  ConversationItem,
+  Provider,
+  ProviderPrompt,
+  StreamRequest,
+  ThinkingEffort,
+  UserMessageItem,
+} from "../../providers/types"
 import type { AgentEvent, AgentState } from "../events"
 import { activeHistory, conversationOnly, directShellMessage, type CompactionItem, type HistoryItem } from "../history"
 import type { SessionKind } from "../types"
+import type { ContextAdmission } from "./context-budget"
 import { isAbortError } from "./types"
 
 export const COMPACTION_TRIGGER_RATIO = 0.85
@@ -152,6 +161,7 @@ export interface SummaryRequest {
   instructions: string | undefined
   imageInput: boolean
   signal: AbortSignal
+  attempt?: number
 }
 
 function summaryRequest(instructions: string | undefined): UserMessageItem {
@@ -172,6 +182,7 @@ export async function summarizeHistory(request: SummaryRequest): Promise<string>
     kind: request.kind,
     phase: "compaction",
     emptyResponseMessage: `${request.provider.name} returned an empty summary`,
+    attempt: request.attempt,
     request: {
       model: request.model,
       ...(request.historyModel === undefined ? {} : { conversationModel: request.historyModel }),
@@ -186,7 +197,17 @@ export async function summarizeHistory(request: SummaryRequest): Promise<string>
   return result.text
 }
 
-const MAX_COMPACTION_FAILURES = 2
+export class ContextCompactionError extends Error {
+  constructor(message: string, cause?: unknown) {
+    super(message, cause === undefined ? undefined : { cause })
+    this.name = "ContextCompactionError"
+  }
+}
+
+function isCompactionInterruption(error: unknown, signal: AbortSignal): boolean {
+  if (signal.aborted || isAbortError(error)) return true
+  return error instanceof StreamedTextAttemptError && isAbortError(error.cause)
+}
 
 export interface CompactionHost {
   readonly kind: SessionKind
@@ -195,9 +216,14 @@ export interface CompactionHost {
   history(): HistoryItem[]
   prompt(model: string): ProviderPrompt
   contextTokens(): number | undefined
-  compactionFailures(): number
+  buildRequest(
+    provider: Provider,
+    model: string,
+    thinking: ThinkingEffort | undefined,
+    signal: AbortSignal,
+  ): StreamRequest
+  admitRequest(provider: Provider, request: StreamRequest): ContextAdmission
   onRequestStarted(): void
-  recordFailure(): void
   observeCompaction(observation: CompactionObservation): void
   replaceHistory(item: CompactionItem): void
   setState(state: AgentState): void
@@ -211,12 +237,13 @@ export async function runCompaction(
   model: string,
   trigger: CompactionTrigger,
   instructions?: string,
+  admittedTokensBefore?: number,
 ): Promise<boolean> {
   const profileId = host.profileId()
   const budget = tailBudget(await contextWindow(provider, profileId, model), trigger)
   const history = host.history()
   const before = activeHistory(history)
-  const tokensBefore = host.contextTokens()
+  const tokensBefore = admittedTokensBefore ?? host.contextTokens()
   const { head, tail, replaced } = splitForCompaction(history, budget)
   if (head.length === 0) {
     host.observeCompaction({
@@ -236,21 +263,39 @@ export async function runCompaction(
   try {
     host.setState("compacting")
     const target = await resolveCompactionTarget(provider, profileId, model)
-    host.onRequestStarted()
-    const summary = await summarizeHistory({
-      provider,
-      profileId,
-      model: target.model,
-      historyModel: model,
-      thinking: target.thinking,
-      prompt: host.prompt(target.model),
-      sessionId: host.sessionId(),
-      kind: host.kind,
-      history: head,
-      instructions,
-      imageInput: target.imageInput,
-      signal,
-    })
+    let summary: string | undefined
+    let attempt = 1
+    while (summary === undefined) {
+      host.onRequestStarted()
+      try {
+        summary = await summarizeHistory({
+          provider,
+          profileId,
+          model: target.model,
+          historyModel: model,
+          thinking: target.thinking,
+          prompt: host.prompt(target.model),
+          sessionId: host.sessionId(),
+          kind: host.kind,
+          history: head,
+          instructions,
+          imageInput: target.imageInput,
+          signal,
+          attempt,
+        })
+      } catch (error) {
+        const retryable =
+          trigger === "auto" &&
+          attempt === 1 &&
+          !signal.aborted &&
+          error instanceof StreamedTextAttemptError &&
+          !error.receivedEvent &&
+          isProviderError(error.cause) &&
+          error.cause.retryable
+        if (!retryable) throw error
+        attempt += 1
+      }
+    }
 
     const checkpoint: CompactionItem = { type: "compaction", summary, replaced, tokensBefore, retained: tail }
     const after = activeHistory([checkpoint])
@@ -272,7 +317,7 @@ export async function runCompaction(
     host.observeCompaction({
       trigger,
       strategy: "legacy",
-      outcome: isAbortError(error) || signal.aborted ? "interrupted" : "failed",
+      outcome: isCompactionInterruption(error, signal) ? "interrupted" : "failed",
       ...(tokensBefore === undefined ? {} : { tokensBefore }),
       before,
       after: before,
@@ -288,23 +333,29 @@ export async function autoCompact(
   signal: AbortSignal,
   provider: Provider,
   model: string,
-): Promise<void> {
-  if (host.compactionFailures() >= MAX_COMPACTION_FAILURES) return
-  const tokens = host.contextTokens() ?? estimateHistoryTokens(activeHistory(host.history()))
+  thinking: ThinkingEffort | undefined,
+): Promise<StreamRequest> {
+  let request = host.buildRequest(provider, model, thinking, signal)
+  let admission = host.admitRequest(provider, request)
   const info = await findModel(provider, host.profileId(), model)
   const tokenLimit =
     info?.autoCompactTokenLimit ??
-    (info?.contextWindow === undefined ? undefined : info.contextWindow * COMPACTION_TRIGGER_RATIO)
-  if (tokenLimit === undefined || tokens < tokenLimit) return
-
-  try {
-    await runCompaction(host, signal, provider, model, "auto")
-  } catch (error) {
-    if (isAbortError(error) || signal.aborted) return
-    host.recordFailure()
-    host.emit({
-      type: "error",
-      message: `context compaction failed: ${describeError(error)} — run /compact to retry`,
-    })
+    (info?.contextWindow === undefined ? undefined : Math.floor(info.contextWindow * COMPACTION_TRIGGER_RATIO))
+  if (tokenLimit !== undefined && admission.activeTokens >= tokenLimit) {
+    try {
+      await runCompaction(host, signal, provider, model, "auto", undefined, admission.activeTokens)
+    } catch (error) {
+      if (isCompactionInterruption(error, signal)) throw error
+      throw new ContextCompactionError(`context compaction failed: ${describeError(error)}`, error)
+    }
+    request = host.buildRequest(provider, model, thinking, signal)
+    admission = host.admitRequest(provider, request)
   }
+
+  if (info?.contextWindow !== undefined && admission.activeTokens >= info.contextWindow) {
+    throw new ContextCompactionError(
+      `request requires approximately ${admission.activeTokens} tokens, exceeding the ${info.contextWindow}-token context window`,
+    )
+  }
+  return request
 }

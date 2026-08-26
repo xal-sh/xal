@@ -44,6 +44,12 @@ Additional context: $ARGUMENTS
 
 After startup, type `/` in the TUI to see discovered commands in the command palette. Selecting one submits the expanded prompt through the same session path as a typed message.
 
+## Context compaction
+
+`/compact [focus]` summarizes the active conversation and atomically replaces older history with a checkpoint. If summary generation is interrupted, empty, or fails, the original history remains unchanged.
+
+Before every normal provider request, Xal drains queued prompts, background results, and pending agent questions, then estimates the complete request including system instructions and tool schemas. At 85% of the selected model's context window, Xal compacts and rechecks a freshly built request. Automatic compaction retries once only when a retryable provider failure occurs before any response event. If required compaction still fails, or the rebuilt request reaches the model's hard context window, the turn fails without sending the normal request.
+
 ## Skills
 
 Xal discovers reusable skill packages from four directories, in increasing priority:

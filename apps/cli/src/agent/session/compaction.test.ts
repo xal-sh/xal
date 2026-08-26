@@ -1,9 +1,12 @@
 import { expect, test } from "bun:test"
-import type { ConversationItem, ProviderPrompt } from "../../providers/types"
+import type { ConversationItem, ProviderPrompt, StreamRequest } from "../../providers/types"
 import { round, ScriptedProvider } from "./test-support"
 import type { HistoryItem } from "../history"
 import { activeHistory, summaryMessage } from "../history"
-import { estimateHistoryTokens, splitForCompaction, summarizeHistory } from "./compaction"
+import type { CompactionHost } from "./compaction"
+import { autoCompact, estimateHistoryTokens, splitForCompaction, summarizeHistory } from "./compaction"
+import { ContextBudget, requestIdentity } from "./context-budget"
+import { StreamBuffer, streamProviderTurn } from "./stream"
 
 const prompt: ProviderPrompt = {
   instructions: "Continue the coding session",
@@ -161,4 +164,88 @@ test("falls back to streamed summary text and rejects an empty summary", async (
       signal: new AbortController().signal,
     }),
   ).rejects.toThrow("Scripted provider returned an empty summary")
+})
+
+test("rebuilds and re-admits after compaction and sends that exact snapshot", async () => {
+  const provider = new ScriptedProvider(
+    [
+      round([
+        { type: "item_done", item: { type: "assistant_message", text: "Replacement summary" } },
+        { type: "done" },
+      ]),
+      round([{ type: "item_done", item: { type: "assistant_message", text: "Continued" } }, { type: "done" }]),
+    ],
+    1_000,
+    500,
+  )
+  let history: HistoryItem[] = [{ type: "user_message", text: "h".repeat(3_000), images: [] }]
+  const budget = new ContextBudget()
+  const built: StreamRequest[] = []
+  const admissions: ReturnType<ContextBudget["admit"]>[] = []
+  const buildRequest = (): StreamRequest => {
+    const request: StreamRequest = {
+      model: "test-model",
+      instructions: prompt.instructions,
+      tools: prompt.tools,
+      cacheKey: prompt.cacheKey,
+      input: activeHistory(history),
+      toolChoice: "auto",
+      sessionId: "admitted-session",
+    }
+    built.push(request)
+    return request
+  }
+  const initial = buildRequest()
+  budget.commitProvider([], { totalInputTokens: 600 }, requestIdentity(provider.id, "test-profile", initial))
+  built.length = 0
+  const host: CompactionHost = {
+    kind: "primary",
+    sessionId: () => "admitted-session",
+    profileId: () => "test-profile",
+    history: () => history,
+    prompt: () => prompt,
+    contextTokens: () => budget.currentTokens,
+    buildRequest,
+    admitRequest: (candidateProvider, request) => {
+      const admission = budget.admit(candidateProvider.id, "test-profile", request)
+      admissions.push(admission)
+      return admission
+    },
+    onRequestStarted: () => {},
+    observeCompaction: () => {},
+    replaceHistory: (item) => {
+      history = [item]
+      budget.reset(history)
+    },
+    setState: () => {},
+    emit: () => {},
+  }
+
+  const admitted = await autoCompact(host, new AbortController().signal, provider, "test-model", undefined)
+
+  expect(built).toHaveLength(2)
+  expect(admissions).toHaveLength(2)
+  const rebuilt = built[1]
+  if (!rebuilt) throw new Error("missing rebuilt request")
+  expect(admitted).toBe(rebuilt)
+  expect(rebuilt).not.toBe(built[0])
+  expect(admissions[1]?.activeTokens).toBe(admissions[1]?.requestEstimate)
+
+  const buffer = new StreamBuffer(() => {})
+  await streamProviderTurn(
+    {
+      kind: "primary",
+      buffer,
+      sessionId: () => "admitted-session",
+      profileId: () => "test-profile",
+      emit: () => {},
+      commitProviderRound: () => {},
+      redactOutputItem: (item) => item,
+      onRequestStarted: () => {},
+    },
+    new AbortController().signal,
+    provider,
+    admitted,
+  )
+  expect(provider.requests[1]).toBe(admitted)
 })

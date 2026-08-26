@@ -16,7 +16,13 @@ export type AgentSession = InstanceType<AgentSessionConstructor>
 export interface AgentSessionTestHarness {
   createSession(
     provider: Provider,
-    options?: { cwd?: string; interactive?: boolean; kind?: SessionKind; outputSchema?: OutputSchema },
+    options?: {
+      cwd?: string
+      interactive?: boolean
+      kind?: SessionKind
+      outputSchema?: OutputSchema
+      trackUndoPrompts?: boolean
+    },
   ): AgentSession
   cleanup(): Promise<void>
 }
@@ -51,7 +57,7 @@ export async function setupAgentSessionTests(prefix: string): Promise<AgentSessi
         interactive: options.interactive ?? false,
         kind: options.kind,
         outputSchema: options.outputSchema,
-        trackUndoPrompts: false,
+        trackUndoPrompts: options.trackUndoPrompts ?? false,
       }),
     cleanup,
   }

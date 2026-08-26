@@ -1,7 +1,7 @@
 import { runTurnEndHooks, type HookReporter } from "../../hooks/registry"
 import type { HookContext } from "../../hooks/types"
 import type { JsonObject } from "../../lib/json"
-import type { Provider, ThinkingEffort, ToolCallItem, UserInput } from "../../providers/types"
+import type { Provider, StreamRequest, ThinkingEffort, ToolCallItem, UserInput } from "../../providers/types"
 import { TOOL_FAILED_PREFIX } from "../../tools/output"
 import type { ToolEvent } from "../../tools/types"
 import type { AgentEvent, AgentState } from "../events"
@@ -32,7 +32,12 @@ export interface TurnHost {
   correctUnansweredAgentQuestions(): boolean
   drainQueue(signal: AbortSignal, interjected: boolean): Promise<boolean>
   restartRequested(): boolean
-  autoCompact(signal: AbortSignal, provider: Provider, model: string): Promise<void>
+  autoCompact(
+    signal: AbortSignal,
+    provider: Provider,
+    model: string,
+    thinking: ThinkingEffort | undefined,
+  ): Promise<StreamRequest>
   beginCheckpoint(messageId: string, input: UserInput): Promise<void>
   stopAcceptingInput(): void
 }
@@ -60,7 +65,6 @@ export async function runTurn(
   while (true) {
     if (host.paused()) return
     if (host.drainBackgroundResults()) toolLoops.reset()
-    await host.autoCompact(signal, provider, model)
     if (host.drainAgentQuestions()) toolLoops.reset()
     if (signal.aborted) {
       host.emit({ type: "turn_interrupted" })
@@ -76,13 +80,12 @@ export async function runTurn(
     const restoringCalls = resumedCalls.length > 0
     resumedCalls = []
     if (toolCalls.length === 0) {
+      const request = await host.autoCompact(signal, provider, model, thinking)
       host.setState("streaming")
       const round = host.streamRound(usage)
-      const streamed = await streamProviderTurn(round, signal, provider, model, thinking)
+      const streamed = await streamProviderTurn(round, signal, provider, request)
       if (!streamed) return
 
-      round.buffer.flush()
-      for (const item of streamed) host.pushItem(item)
       items = streamed
       toolCalls = streamed.filter((item): item is ToolCallItem => item.type === "tool_call")
     }
