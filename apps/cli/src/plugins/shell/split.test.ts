@@ -82,4 +82,16 @@ describe("commandPrefix", () => {
   test("rejects a first segment that is a control-group body", () => {
     expect(commandPrefix("{ echo grouped; } && echo done")).toBeUndefined()
   })
+
+  test("rejects shell control-form prefixes", () => {
+    for (const command of [
+      "if true; then rm -rf /; fi",
+      "while true; do echo hi; done",
+      "for f in x; do echo $f; done",
+      "case x in x) rm -rf /;; esac",
+      "! grep foo && echo done",
+    ]) {
+      expect(commandPrefix(command)).toBeUndefined()
+    }
+  })
 })

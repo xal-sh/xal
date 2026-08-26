@@ -472,12 +472,34 @@ export function isAssignmentPrefix(input: string): boolean {
   return input.startsWith("=") || /^[A-Za-z_][A-Za-z0-9_]*\+?=/.test(input)
 }
 
+const CONTROL_KEYWORDS = new Set([
+  "if",
+  "then",
+  "elif",
+  "else",
+  "while",
+  "until",
+  "do",
+  "for",
+  "select",
+  "function",
+  "case",
+  "time",
+])
+
+function isControlPrefix(prefix: string): boolean {
+  const first = prefix.split(/\s+/)[0]!
+  if (first === "!" || CONTROL_KEYWORDS.has(first)) return true
+  return /^(?:if|then|elif|else|while|until|do|for|select|function|case)\b/.test(prefix)
+}
+
 export function commandPrefix(command: string): { prefix: string; rest: string } | undefined {
   const segments = splitCommand(command)
   if (!segments || segments.length === 0) return undefined
   const prefix = segments[0]!.trim()
   if (prefix.includes("$()")) return undefined
   if (isAssignmentPrefix(prefix)) return undefined
+  if (isControlPrefix(prefix)) return undefined
   if (prefix.split(/\s+/).length < 2) return undefined
   return { prefix, rest: segments.slice(1).join(" && ") }
 }

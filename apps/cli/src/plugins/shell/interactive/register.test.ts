@@ -190,6 +190,14 @@ describe("interactive permission suggestions", () => {
     }
   })
 
+  test("drops exec_command suggestions for shell control forms", () => {
+    for (const command of ["if true; then rm -rf /; fi", "while true; do echo hi; done"]) {
+      expect(execCommandTool.permission?.({ cmd: command }, { cwd: "/workspace", sessionId: "s" })).toEqual({
+        subject: command,
+      })
+    }
+  })
+
   test("subjects write_stdin input to the first command segment", () => {
     expect(inputSubject("pnpm dev && echo ready\n")).toBe("pnpm dev")
     expect(inputSubject("printf ok\n")).toBe("printf ok")

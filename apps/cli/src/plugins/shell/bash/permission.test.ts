@@ -70,6 +70,14 @@ describe("bash permission suggestion", () => {
       })
     }
   })
+
+  test("drops the suggestion for shell control forms", () => {
+    for (const command of ["if true; then rm -rf /; fi", "while true; do echo hi; done"]) {
+      expect(bashTool.permission?.({ command }, { cwd: "/workspace", sessionId: "s" })).toEqual({
+        subject: command,
+      })
+    }
+  })
 })
 
 describe("bash compound permission policy", () => {
