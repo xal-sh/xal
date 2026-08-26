@@ -8,7 +8,7 @@ import { spawnCommand } from "../process"
 import { armPromotion } from "../../../background/promotion"
 import { sandboxAccessOf, sandboxAvailable, sandboxProcessEnvironment, sandboxRequested } from "../sandbox"
 import { executeShellCommand, shellLaunch } from "../shell"
-import { commandPrefix, splitCommand } from "../split"
+import { commandPrefix, isAssignmentPrefix, splitCommand } from "../split"
 
 const DEFAULT_TIMEOUT_S = 120
 const MAX_TIMEOUT_S = 600
@@ -94,6 +94,7 @@ export const bashTool: Tool = {
     }
     const words = first.split(/\s+/)
     if (words.length < 2) return { subject: command, suggestion: `bash(${command})` }
+    if (isAssignmentPrefix(words[0]!)) return { subject: command }
     return { subject: command, suggestion: `bash(${words[0]} ${words[1]}*)` }
   },
   async execute(args, ctx) {

@@ -468,12 +468,16 @@ export function commandSegments(command: string): string[] | undefined {
   return normalized.length === 0 ? undefined : normalized
 }
 
+export function isAssignmentPrefix(input: string): boolean {
+  return input.startsWith("=") || /^[A-Za-z_][A-Za-z0-9_]*\+?=/.test(input)
+}
+
 export function commandPrefix(command: string): { prefix: string; rest: string } | undefined {
   const segments = splitCommand(command)
   if (!segments || segments.length === 0) return undefined
   const prefix = segments[0]!.trim()
   if (prefix.includes("$()")) return undefined
-  if (prefix.startsWith("=") || /^[A-Za-z_][A-Za-z0-9_]*\+?=/.test(prefix)) return undefined
+  if (isAssignmentPrefix(prefix)) return undefined
   if (prefix.split(/\s+/).length < 2) return undefined
   return { prefix, rest: segments.slice(1).join(" && ") }
 }

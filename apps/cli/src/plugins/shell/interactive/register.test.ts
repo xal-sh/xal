@@ -182,6 +182,14 @@ describe("interactive permission suggestions", () => {
     ).toEqual({ subject: "FOO+=1 pnpm test && pnpm lint" })
   })
 
+  test("drops exec_command suggestions for single-segment environment-assignment commands", () => {
+    for (const command of ["FOO=1 pnpm test", "FOO+=1 pnpm test"]) {
+      expect(execCommandTool.permission?.({ cmd: command }, { cwd: "/workspace", sessionId: "s" })).toEqual({
+        subject: command,
+      })
+    }
+  })
+
   test("subjects write_stdin input to the first command segment", () => {
     expect(inputSubject("pnpm dev && echo ready\n")).toBe("pnpm dev")
     expect(inputSubject("printf ok\n")).toBe("printf ok")

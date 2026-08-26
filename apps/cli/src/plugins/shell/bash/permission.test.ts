@@ -62,6 +62,14 @@ describe("bash permission suggestion", () => {
       })
     }
   })
+
+  test("drops the suggestion for single-segment environment-assignment commands", () => {
+    for (const command of ["FOO=1 pnpm test", "FOO+=1 pnpm test"]) {
+      expect(bashTool.permission?.({ command }, { cwd: "/workspace", sessionId: "s" })).toEqual({
+        subject: command,
+      })
+    }
+  })
 })
 
 describe("bash compound permission policy", () => {

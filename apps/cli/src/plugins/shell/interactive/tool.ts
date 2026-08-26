@@ -3,7 +3,7 @@ import { isAbsolute, relative, resolve, sep } from "node:path"
 import { asNumber, asString } from "../../../lib/json"
 import type { Tool } from "../../../tools/types"
 import { sandboxAccessOf, sandboxAvailable, sandboxRequested, type SandboxAccess } from "../sandbox"
-import { commandPrefix, splitCommand } from "../split"
+import { commandPrefix, isAssignmentPrefix, splitCommand } from "../split"
 import {
   createSessionEmitter,
   disposeInteractiveSessions,
@@ -190,6 +190,7 @@ export const execCommandTool: Tool = {
     }
     const words = first.split(/\s+/)
     if (words.length < 2) return { subject: command, suggestion: `exec_command(${command})` }
+    if (isAssignmentPrefix(words[0]!)) return { subject: command }
     return { subject: command, suggestion: `exec_command(${words[0]} ${words[1]}*)` }
   },
   async execute(args, ctx) {
