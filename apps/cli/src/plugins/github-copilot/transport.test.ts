@@ -109,6 +109,7 @@ describe("GitHub Copilot transport", () => {
       accept: "text/event-stream",
       "openai-intent": "conversation-edits",
       "x-initiator": "user",
+      "copilot-vision-request": "true",
     })
     expect(JSON.parse(String(requests[0]!.init.body))).toEqual({
       model: "gpt-5.6-luna",
@@ -188,6 +189,7 @@ describe("GitHub Copilot transport", () => {
     )
 
     expect(requests[0]!.path).toBe("/chat/completions")
+    expect(new Headers(requests[0]!.init.headers).get("copilot-vision-request")).toBe("true")
     expect(JSON.parse(String(requests[0]!.init.body))).toMatchObject({
       model: "claude-sonnet-4.6",
       reasoning_effort: "high",
@@ -219,5 +221,13 @@ describe("GitHub Copilot transport", () => {
       },
       { type: "done", usage: { totalInputTokens: 4, cacheReadInputTokens: undefined, outputTokens: 1 } },
     ])
+  })
+
+  test("omits the vision header when a turn carries no image attachments", async () => {
+    responses.push(sse([{ type: "response.completed", response: { usage: {} } }]))
+
+    await collect(streamResponse("profile-1", request()))
+
+    expect(new Headers(requests[0]!.init.headers).get("copilot-vision-request")).toBeNull()
   })
 })

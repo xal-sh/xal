@@ -18,6 +18,19 @@ function initiator(request: StreamRequest): "user" | "agent" {
   return !last || last.type === "user_message" ? "user" : "agent"
 }
 
+function hasImages(request: StreamRequest): boolean {
+  return request.input.some((item) => item.type === "user_message" && item.images.length > 0)
+}
+
+function streamHeaders(request: StreamRequest): Record<string, string> {
+  return {
+    accept: "text/event-stream",
+    "openai-intent": "conversation-edits",
+    "x-initiator": initiator(request),
+    ...(hasImages(request) ? { "copilot-vision-request": "true" } : {}),
+  }
+}
+
 function chatProvider(accessToken: string, request: StreamRequest): ChatCompletionProvider {
   return {
     id: PROVIDER_ID,
@@ -26,11 +39,7 @@ function chatProvider(accessToken: string, request: StreamRequest): ChatCompleti
     fetch(body, signal) {
       return copilotFetch("/chat/completions", accessToken, {
         method: "POST",
-        headers: {
-          accept: "text/event-stream",
-          "openai-intent": "conversation-edits",
-          "x-initiator": initiator(request),
-        },
+        headers: streamHeaders(request),
         body,
         signal,
       })
@@ -69,11 +78,7 @@ function responsesBody(request: StreamRequest): string {
 async function* streamResponses(accessToken: string, request: StreamRequest): AsyncGenerator<StreamEvent> {
   const response = await copilotFetch("/responses", accessToken, {
     method: "POST",
-    headers: {
-      accept: "text/event-stream",
-      "openai-intent": "conversation-edits",
-      "x-initiator": initiator(request),
-    },
+    headers: streamHeaders(request),
     body: responsesBody(request),
     signal: request.signal,
   })
