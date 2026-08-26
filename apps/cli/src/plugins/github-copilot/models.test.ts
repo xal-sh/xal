@@ -52,7 +52,7 @@ test("Copilot model caches are bound to the credential that discovered them", as
         id: "account-a-model",
         name: "Account A Model",
         contextWindow: 128_000,
-        inputModalities: ["text"],
+        inputModalities: ["text", "image"],
         endpoint: "/chat/completions",
       },
     ]

@@ -26,9 +26,15 @@ describe("chat completions wire conversion", () => {
       { type: "assistant_message", text: "done" },
     ]
 
-    expect(buildChatMessages("system prompt", items)).toEqual([
+    expect(buildChatMessages("system prompt", items, true)).toEqual([
       { role: "system", content: "system prompt" },
-      { role: "user", content: "inspect\n\n[1 image attachment omitted]" },
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "inspect" },
+          { type: "image_url", image_url: { url: "data:image/jpeg;base64,YWJjZA==" } },
+        ],
+      },
       {
         role: "assistant",
         content: "working",
@@ -40,6 +46,21 @@ describe("chat completions wire conversion", () => {
       },
       { role: "tool", tool_call_id: "first", content: "contents" },
       { role: "assistant", content: "done" },
+    ])
+  })
+
+  test("omits image bytes for text-only transports", () => {
+    expect(
+      buildChatMessages("system prompt", [
+        {
+          type: "user_message",
+          text: "inspect",
+          images: [{ mediaType: "image/png", data: "YWJjZA==" }],
+        },
+      ]),
+    ).toEqual([
+      { role: "system", content: "system prompt" },
+      { role: "user", content: "inspect\n\n[1 image attachment omitted]" },
     ])
   })
 
@@ -135,6 +156,7 @@ describe("chat completions wire conversion", () => {
         for await (const event of streamChatCompletions(request, {
           id: "provider",
           name: "Provider",
+          imageInput: false,
           async fetch() {
             return response
           },

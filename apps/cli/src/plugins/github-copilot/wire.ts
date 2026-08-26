@@ -83,6 +83,20 @@ function thinking(raw: unknown): ModelInfo["thinking"] {
   return { options, default: preferred }
 }
 
+function inputModalities(
+  supports: Record<string, unknown> | undefined,
+  limits: Record<string, unknown> | undefined,
+): ModelInfo["inputModalities"] {
+  if (supports?.vision === true) return ["text", "image"]
+  if (supports?.vision === false) return ["text"]
+  const vision = limits && isRecord(limits.vision) ? limits.vision : undefined
+  const rawMediaTypes = vision?.supported_media_types
+  if (!Array.isArray(rawMediaTypes)) return ["text"]
+  const mediaTypes = asStringArray(rawMediaTypes)
+  if (mediaTypes.length !== rawMediaTypes.length) return ["text"]
+  return mediaTypes.includes("image/png") || mediaTypes.includes("image/jpeg") ? ["text", "image"] : ["text"]
+}
+
 function candidate(raw: unknown): ModelCandidate | undefined {
   if (!isRecord(raw)) return undefined
   const id = asString(raw.id)?.trim()
@@ -112,7 +126,7 @@ function candidate(raw: unknown): ModelCandidate | undefined {
       id,
       name,
       ...(contextWindow === undefined ? {} : { contextWindow }),
-      inputModalities: ["text"],
+      inputModalities: inputModalities(supports, limits),
       thinking: thinking(supports?.reasoning_effort),
       endpoint,
     },

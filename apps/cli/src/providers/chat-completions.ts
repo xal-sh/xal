@@ -1,4 +1,5 @@
 import { asNumber, asString, isRecord, type JsonObject } from "../lib/json"
+import { omitUserMessageImages } from "./conversation"
 import { ProviderError } from "./errors"
 import { parseToolArgs, sseEvents, streamError } from "./transport"
 import type {
@@ -30,6 +31,7 @@ export interface ChatCompletionChunk {
 export interface ChatCompletionProvider {
   id: string
   name: string
+  imageInput: boolean
   fetch(body: string, signal?: AbortSignal): Promise<Response>
   requestOptions(request: StreamRequest): JsonObject
   finishReasonError?(finishReason: string): ProviderError | undefined
@@ -45,7 +47,7 @@ function assistantMessage(): JsonObject {
   return { role: "assistant", content: "" }
 }
 
-export function buildChatMessages(instructions: string, items: ConversationItem[]): JsonObject[] {
+export function buildChatMessages(instructions: string, items: ConversationItem[], imageInput = false): JsonObject[] {
   const messages: JsonObject[] = [{ role: "system", content: instructions }]
   let assistant: JsonObject | undefined
 
@@ -68,9 +70,15 @@ export function buildChatMessages(instructions: string, items: ConversationItem[
           content:
             item.images.length === 0
               ? item.text
-              : [item.text, `[${item.images.length} image attachment${item.images.length === 1 ? "" : "s"} omitted]`]
-                  .filter(Boolean)
-                  .join("\n\n"),
+              : imageInput
+                ? [
+                    ...(item.text ? [{ type: "text", text: item.text }] : []),
+                    ...item.images.map((image) => ({
+                      type: "image_url",
+                      image_url: { url: `data:${image.mediaType};base64,${image.data}` },
+                    })),
+                  ]
+                : omitUserMessageImages(item).text,
         })
         break
       case "assistant_message":
@@ -186,7 +194,7 @@ export function chatToolCallItem(
 function buildBody(request: StreamRequest, provider: ChatCompletionProvider): string {
   return JSON.stringify({
     model: request.model,
-    messages: buildChatMessages(request.instructions, request.input),
+    messages: buildChatMessages(request.instructions, request.input, provider.imageInput),
     stream: true,
     stream_options: { include_usage: true },
     ...provider.requestOptions(request),

@@ -1,7 +1,7 @@
 import type { SessionKind } from "../agent/types"
 import { settings } from "../config/settings"
 import { promptCacheKey } from "../providers/cache"
-import { findModel } from "../providers/catalog"
+import { findModel, modelSupportsImageInput } from "../providers/catalog"
 import { prepareConversation } from "../providers/conversation"
 import { collectStreamedText } from "../providers/streamed-text"
 import type { ConversationItem, Provider, ThinkingEffort, Usage, UserMessageItem } from "../providers/types"
@@ -23,6 +23,7 @@ const THINKING_ORDER: ThinkingEffort[] = ["none", "low", "medium", "high", "xhig
 export interface GoalEvaluatorTarget {
   model: string
   thinking: ThinkingEffort | undefined
+  imageInput: boolean
 }
 
 export interface GoalEvaluationContext {
@@ -31,6 +32,7 @@ export interface GoalEvaluationContext {
   sessionModel: string
   evaluatorModel: string
   thinking: ThinkingEffort | undefined
+  imageInput: boolean
   conversation: ConversationItem[]
   sessionId: string
   kind?: SessionKind
@@ -56,11 +58,12 @@ export async function resolveGoalEvaluatorTarget(
   const info = await findModel(provider, profileId, model)
   if (configured && !info)
     throw new Error(`${provider.name} does not offer configured goal evaluator model ${configured}`)
-  if (!info?.thinking) return { model, thinking: undefined }
+  const imageInput = modelSupportsImageInput(provider, info?.inputModalities)
+  if (!info?.thinking) return { model, thinking: undefined, imageInput }
   const thinking = THINKING_ORDER.find((effort) => info.thinking?.options.includes(effort))
   if (!thinking)
     throw new Error(`${provider.name} returned no usable thinking effort for goal evaluator model ${model}`)
-  return { model, thinking }
+  return { model, thinking, imageInput }
 }
 
 function evaluationMessage(condition: string): UserMessageItem {
@@ -72,10 +75,14 @@ function evaluationMessage(condition: string): UserMessageItem {
 }
 
 export async function evaluateGoal(request: GoalEvaluationRequest): Promise<GoalEvaluationResult> {
-  const input = prepareConversation(request.conversation, {
-    provider: request.provider.id,
-    model: request.sessionModel,
-  })
+  const input = prepareConversation(
+    request.conversation,
+    {
+      provider: request.provider.id,
+      model: request.sessionModel,
+    },
+    request.imageInput,
+  )
   input.push(evaluationMessage(request.condition))
   const result = await collectStreamedText({
     provider: request.provider,

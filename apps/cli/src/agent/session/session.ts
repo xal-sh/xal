@@ -14,7 +14,7 @@ import type { PermissionMode, PermissionScope } from "../../permissions/types"
 import type { SessionPlan } from "../../plans/types"
 import { profileAgentEvent, profileSessionCreated } from "../../profiler/profiler"
 import { promptCacheKey } from "../../providers/cache"
-import { contextWindow } from "../../providers/catalog"
+import { contextWindow, modelSupportsImageInput } from "../../providers/catalog"
 import { pendingToolCalls, prepareConversation } from "../../providers/conversation"
 import { occupiedContext } from "../../providers/types"
 import type {
@@ -388,8 +388,7 @@ export class AgentSession {
   }
 
   get supportsImageInput(): boolean {
-    if (!this.provider.capabilities.imageInput) return false
-    return this.modelInputModalities?.includes("image") ?? true
+    return modelSupportsImageInput(this.provider, this.modelInputModalities)
   }
 
   get currentGoal(): GoalSnapshot | undefined {
@@ -1043,6 +1042,7 @@ export class AgentSession {
           sessionModel: this.model,
           evaluatorModel: target.model,
           thinking: target.thinking,
+          imageInput: target.imageInput,
           conversation: activeHistory(this.items),
           sessionId: this.sessionId,
           kind: this.kind,
@@ -1528,7 +1528,11 @@ export class AgentSession {
     thinking: ThinkingEffort | undefined,
     signal: AbortSignal,
   ): StreamRequest {
-    const input = prepareConversation(activeHistory(this.items), { provider: provider.id, model })
+    const input = prepareConversation(
+      activeHistory(this.items),
+      { provider: provider.id, model },
+      this.supportsImageInput,
+    )
     if (this.transientQuestionInput) {
       input.push({ type: "user_message", text: this.transientQuestionInput, images: [] })
     }

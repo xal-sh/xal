@@ -3,12 +3,17 @@ import { cacheDir } from "../../config/paths"
 import { describeError } from "../../lib/error"
 import { readJsonFile, writeSecureJson } from "../../lib/fs"
 import { asNumber, asString, asStringArray, isRecord } from "../../lib/json"
-import { isThinkingEffort, type ModelCatalog, type ThinkingOptions } from "../../providers/types"
+import {
+  isThinkingEffort,
+  type ModelCatalog,
+  type ModelInputModality,
+  type ThinkingOptions,
+} from "../../providers/types"
 import { copilotFetch, githubDomain, isPersonalCopilotEndpoint } from "./api"
 import { token } from "./credential"
 import { parseCopilotModels, type CopilotEndpoint, type CopilotModel } from "./wire"
 
-const CACHE_VERSION = 2
+const CACHE_VERSION = 3
 const modelEndpoints = new Map<string, Map<string, CopilotEndpoint>>()
 
 type CopilotModelCatalog = Omit<ModelCatalog, "models"> & { models: CopilotModel[] }
@@ -36,19 +41,28 @@ function cachedThinking(raw: unknown): ThinkingOptions | undefined {
   return { options, default: preferred }
 }
 
+function cachedInputModalities(raw: unknown): ModelInputModality[] | undefined {
+  if (!Array.isArray(raw)) return undefined
+  const modalities = asStringArray(raw)
+  if (modalities.length !== raw.length) return undefined
+  if (modalities.length === 1 && modalities[0] === "text") return ["text"]
+  if (modalities.length === 2 && modalities[0] === "text" && modalities[1] === "image") return ["text", "image"]
+  return undefined
+}
+
 function cachedModel(raw: unknown): CopilotModel | undefined {
   if (!isRecord(raw)) return undefined
   const id = asString(raw.id)?.trim()
   const name = asString(raw.name)?.trim()
   const endpoint = asString(raw.endpoint)
   if (!id || !name || (endpoint !== "/chat/completions" && endpoint !== "/responses")) return undefined
-  const modalities = asStringArray(raw.inputModalities)
-  if (modalities.length !== 1 || modalities[0] !== "text") return undefined
+  const inputModalities = cachedInputModalities(raw.inputModalities)
+  if (!inputModalities) return undefined
   return {
     id,
     name,
     contextWindow: positiveInteger(raw.contextWindow),
-    inputModalities: ["text"],
+    inputModalities,
     thinking: cachedThinking(raw.thinking),
     endpoint,
   }

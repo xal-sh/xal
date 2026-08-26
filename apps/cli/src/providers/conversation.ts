@@ -33,6 +33,17 @@ function toolCall(item: ToolCallItem, target: ConversationTarget): ToolCallItem 
   return { type: "tool_call", callId: item.callId, name: item.name, args: item.args }
 }
 
+export function omitUserMessageImages(item: UserMessageItem): UserMessageItem {
+  if (item.images.length === 0) return item
+  return {
+    ...item,
+    text: [item.text, `[${item.images.length} image attachment${item.images.length === 1 ? "" : "s"} omitted]`]
+      .filter(Boolean)
+      .join("\n\n"),
+    images: [],
+  }
+}
+
 function userMessage(item: UserMessageItem): UserMessageItem {
   return { type: "user_message", text: item.modelText ?? item.text, images: item.images }
 }
@@ -101,14 +112,21 @@ export function pendingToolCalls(items: ConversationItem[], target: Conversation
   return normalizedConversation(items, target).pending
 }
 
-export function prepareConversation(items: ConversationItem[], target: ConversationTarget): ConversationItem[] {
+export function prepareConversation(
+  items: ConversationItem[],
+  target: ConversationTarget,
+  imageInput: boolean,
+): ConversationItem[] {
   const normalized = normalizedConversation(items, target)
+  const result = imageInput
+    ? normalized.result
+    : normalized.result.map((item) => (item.type === "user_message" ? omitUserMessageImages(item) : item))
   for (const call of normalized.pending) {
-    normalized.result.push({
+    result.push({
       type: "tool_result",
       callId: call.callId,
       output: "Tool execution was interrupted before returning a result.",
     })
   }
-  return normalized.result
+  return result
 }

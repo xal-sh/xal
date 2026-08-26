@@ -1,6 +1,6 @@
 import { resolveThinking } from "../../config/thinking"
 import { describeError } from "../../lib/error"
-import { contextWindow, findModel } from "../../providers/catalog"
+import { contextWindow, findModel, modelSupportsImageInput } from "../../providers/catalog"
 import { prepareConversation } from "../../providers/conversation"
 import { collectStreamedText } from "../../providers/streamed-text"
 import type {
@@ -28,6 +28,7 @@ export type CompactionTrigger = "auto" | "manual"
 export interface CompactionTarget {
   model: string
   thinking: ThinkingEffort | undefined
+  imageInput: boolean
 }
 
 const SUMMARY_INSTRUCTIONS = `Summarize this coding session transcript so the assistant can keep working after the older messages are dropped.
@@ -60,7 +61,12 @@ export async function resolveCompactionTarget(
 ): Promise<CompactionTarget> {
   const fastModel = model.endsWith("-fast") ? model : `${model}-fast`
   const requestModel = fastModel === model || (await findModel(provider, profileId, fastModel)) ? fastModel : model
-  return { model: requestModel, thinking: await resolveThinking(provider, profileId, requestModel, "low") }
+  const info = await findModel(provider, profileId, requestModel)
+  return {
+    model: requestModel,
+    thinking: await resolveThinking(provider, profileId, requestModel, "low"),
+    imageInput: modelSupportsImageInput(provider, info?.inputModalities),
+  }
 }
 
 function textTokens(text: string): number {
@@ -149,6 +155,7 @@ export interface SummaryRequest {
   kind?: SessionKind
   history: HistoryItem[]
   instructions: string | undefined
+  imageInput: boolean
   signal: AbortSignal
 }
 
@@ -159,7 +166,11 @@ function summaryRequest(instructions: string | undefined): UserMessageItem {
 
 export async function summarizeHistory(request: SummaryRequest): Promise<string> {
   const target = { provider: request.provider.id, model: request.historyModel ?? request.model }
-  const input = prepareConversation([...activeHistory(request.history), summaryRequest(request.instructions)], target)
+  const input = prepareConversation(
+    [...activeHistory(request.history), summaryRequest(request.instructions)],
+    target,
+    request.imageInput,
+  )
   const result = await collectStreamedText({
     provider: request.provider,
     profileId: request.profileId,
@@ -224,6 +235,7 @@ export async function runCompaction(
     kind: host.kind,
     history: head,
     instructions,
+    imageInput: target.imageInput,
     signal,
   })
 

@@ -8,7 +8,7 @@ export const githubCopilotProvider: Provider = {
   id: PROVIDER_ID,
   name: "GitHub Copilot",
   aliases: ["copilot"],
-  capabilities: { imageInput: false },
+  capabilities: { imageInput: true },
   connect,
   listModels,
   defaultModel,

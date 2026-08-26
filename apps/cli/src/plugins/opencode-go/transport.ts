@@ -11,6 +11,7 @@ function chatProvider(profileId: string): ChatCompletionProvider {
   return {
     id: PROVIDER_ID,
     name: PROVIDER_NAME,
+    imageInput: true,
     async fetch(body, signal) {
       return goFetch("/chat/completions", await apiKey(profileId), {
         method: "POST",

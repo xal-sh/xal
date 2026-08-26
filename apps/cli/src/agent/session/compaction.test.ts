@@ -88,7 +88,7 @@ test("summarizes the active history with the dedicated request contract", async 
       type: "user_message",
       messageId: "11111111-1111-4111-8111-111111111111",
       text: "Original prompt",
-      images: [],
+      images: [{ mediaType: "image/png", data: "retained-image" }],
     },
     { type: "assistant_message", text: "Original answer" },
   ]
@@ -102,6 +102,7 @@ test("summarizes the active history with the dedicated request contract", async 
     sessionId: "summary-session",
     history,
     instructions: "the unfinished migration",
+    imageInput: false,
     signal: new AbortController().signal,
   })
 
@@ -117,7 +118,7 @@ test("summarizes the active history with the dedicated request contract", async 
   })
   expect(provider.requests[0]?.cacheKey).toHaveLength(64)
   expect(provider.requests[0]?.input.slice(0, -1)).toEqual([
-    { type: "user_message", text: "Original prompt", images: [] },
+    { type: "user_message", text: "Original prompt\n\n[1 image attachment omitted]", images: [] },
     { type: "assistant_message", text: "Original answer" },
   ])
   const summaryRequest = provider.requests[0]?.input.at(-1)
@@ -140,6 +141,7 @@ test("falls back to streamed summary text and rejects an empty summary", async (
       sessionId: "streamed-summary",
       history: [{ type: "user_message", text: "Prompt", images: [] }],
       instructions: undefined,
+      imageInput: true,
       signal: new AbortController().signal,
     }),
   ).toBe("streamed summary")
@@ -155,6 +157,7 @@ test("falls back to streamed summary text and rejects an empty summary", async (
       sessionId: "empty-summary",
       history: [{ type: "user_message", text: "Prompt", images: [] }],
       instructions: undefined,
+      imageInput: true,
       signal: new AbortController().signal,
     }),
   ).rejects.toThrow("Scripted provider returned an empty summary")

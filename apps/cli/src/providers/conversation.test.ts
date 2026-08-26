@@ -46,7 +46,7 @@ describe("prepareConversation", () => {
       { type: "tool_result", callId: "call-id", output: "contents" },
     ]
 
-    const prepared = prepareConversation(items, target)
+    const prepared = prepareConversation(items, target, true)
 
     expect(prepared).toEqual([
       { type: "user_message", text: "hook-transformed prompt", images: [] },
@@ -58,6 +58,29 @@ describe("prepareConversation", () => {
     ])
   })
 
+  test("omits retained images when the selected model is text-only", () => {
+    const items: ConversationItem[] = [
+      {
+        type: "user_message",
+        text: "visible prompt",
+        modelText: "hook-transformed prompt",
+        images: [
+          { mediaType: "image/png", data: "first" },
+          { mediaType: "image/jpeg", data: "second" },
+        ],
+      },
+    ]
+
+    expect(prepareConversation(items, target, false)).toEqual([
+      {
+        type: "user_message",
+        text: "hook-transformed prompt\n\n[2 image attachments omitted]",
+        images: [],
+      },
+    ])
+    expect(items[0]).toMatchObject({ text: "visible prompt", images: [{ data: "first" }, { data: "second" }] })
+  })
+
   test("closes interrupted tool calls before a new conversational item", () => {
     const items: ConversationItem[] = [
       { type: "user_message", text: "run tools", images: [] },
@@ -67,7 +90,7 @@ describe("prepareConversation", () => {
       { type: "assistant_message", text: "continuing" },
     ]
 
-    expect(prepareConversation(items, target)).toEqual([
+    expect(prepareConversation(items, target, true)).toEqual([
       { type: "user_message", text: "run tools", images: [] },
       { type: "tool_call", callId: "first", name: "read", args: {} },
       { type: "tool_call", callId: "second", name: "search", args: {} },
@@ -90,7 +113,7 @@ describe("prepareConversation", () => {
       { type: "tool_result", callId: "orphan", output: "still ignored" },
     ]
 
-    expect(prepareConversation(items, target)).toEqual([
+    expect(prepareConversation(items, target, true)).toEqual([
       call,
       {
         type: "tool_result",

@@ -24,6 +24,7 @@ function provider(profileId: string): ChatCompletionProvider {
   return {
     id: PROVIDER_ID,
     name: PROVIDER_NAME,
+    imageInput: true,
     async fetch(body, signal) {
       return openRouterFetch("/chat/completions", await apiKey(profileId), {
         method: "POST",

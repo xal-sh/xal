@@ -13,6 +13,7 @@ function provider(profileId: string): ChatCompletionProvider {
   return {
     id: PROVIDER_ID,
     name: "Alibaba Cloud",
+    imageInput: false,
     async fetch(body, signal) {
       return alibabaCloudFetch("/chat/completions", await apiKey(profileId), {
         method: "POST",

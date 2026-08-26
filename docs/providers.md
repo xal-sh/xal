@@ -77,7 +77,7 @@ Configure options under `pluginConfig.github-copilot`:
 | `enterpriseDomain` | string | `github.com`             | GitHub Enterprise domain or HTTPS URL used for device login. |
 | `clientName`       | string | Package application name | Client name used in the provider request user agent.         |
 
-Run `xal connect copilot`, open the displayed GitHub device-login URL, and enter its one-time code. Xal uses the resulting GitHub OAuth token directly with the Copilot API and validates that the account returns at least one compatible agent model before storing the token. Personal catalogs that omit endpoint, picker, or policy metadata are accepted unless a model is explicitly incompatible or disabled. Models advertising Responses use that protocol, including newer GPT families, while chat-compatible Claude and other models continue using Chat Completions. For GitHub Enterprise, configure `enterpriseDomain` before connecting.
+Run `xal connect copilot`, open the displayed GitHub device-login URL, and enter its one-time code. Xal uses the resulting GitHub OAuth token directly with the Copilot API and validates that the account returns at least one compatible agent model before storing the token. Personal catalogs that omit endpoint, picker, or policy metadata are accepted unless a model is explicitly incompatible or disabled. Models advertising Responses use that protocol, including newer GPT families, while chat-compatible Claude and other models continue using Chat Completions. Image input is enabled per model from the vision capability advertised by Copilot, so vision-capable models accept PNG and JPEG attachments while text-only models continue to reject them. For GitHub Enterprise, configure `enterpriseDomain` before connecting.
 
 ## xAI
 

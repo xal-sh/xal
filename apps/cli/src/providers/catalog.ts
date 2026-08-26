@@ -25,6 +25,14 @@ export interface CatalogNotice {
   message: string
 }
 
+export function modelSupportsImageInput(
+  provider: Provider,
+  inputModalities: ModelInputModality[] | undefined,
+): boolean {
+  if (!provider.capabilities.imageInput) return false
+  return inputModalities?.includes("image") ?? true
+}
+
 export interface ModelChoices {
   choices: ModelChoice[]
   notices: CatalogNotice[]

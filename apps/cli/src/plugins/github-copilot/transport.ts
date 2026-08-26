@@ -22,6 +22,7 @@ function chatProvider(accessToken: string, request: StreamRequest): ChatCompleti
   return {
     id: PROVIDER_ID,
     name: PROVIDER_NAME,
+    imageInput: true,
     fetch(body, signal) {
       return copilotFetch("/chat/completions", accessToken, {
         method: "POST",

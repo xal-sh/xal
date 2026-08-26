@@ -24,6 +24,7 @@ function provider(profileId: string): ChatCompletionProvider {
   return {
     id: PROVIDER_ID,
     name: "DeepSeek",
+    imageInput: false,
     async fetch(body, signal) {
       return deepSeekFetch("/chat/completions", await apiKey(profileId), {
         method: "POST",

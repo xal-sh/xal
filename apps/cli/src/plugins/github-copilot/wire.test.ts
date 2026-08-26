@@ -4,7 +4,13 @@ import { parseCopilotModels, parseDeviceAuthorization, parseDeviceToken } from "
 function model(
   id: string,
   endpoint: string | undefined,
-  options: { picker?: boolean; policy?: string; toolCalls?: boolean | "omitted" } = {},
+  options: {
+    picker?: boolean
+    policy?: string
+    toolCalls?: boolean | "omitted"
+    vision?: boolean
+    visionMediaTypes?: string[]
+  } = {},
 ): Record<string, unknown> {
   return {
     id,
@@ -13,9 +19,14 @@ function model(
     ...(endpoint === undefined ? {} : { supported_endpoints: [endpoint] }),
     policy: { state: options.policy ?? "enabled" },
     capabilities: {
-      limits: { max_context_window_tokens: 128_000, max_prompt_tokens: 64_000 },
+      limits: {
+        max_context_window_tokens: 128_000,
+        max_prompt_tokens: 64_000,
+        ...(options.visionMediaTypes ? { vision: { supported_media_types: options.visionMediaTypes } } : {}),
+      },
       supports: {
         ...(options.toolCalls === "omitted" ? {} : { tool_calls: options.toolCalls ?? true }),
+        ...(options.vision === undefined ? {} : { vision: options.vision }),
         reasoning_effort: ["low", "medium", "invalid"],
       },
     },
@@ -88,6 +99,32 @@ describe("GitHub Copilot wire parsing", () => {
         thinking: { options: ["low", "medium"], default: "medium" },
         endpoint: "/responses",
       },
+    ])
+  })
+
+  test("maps Copilot vision metadata to model input modalities", () => {
+    const models = parseCopilotModels(
+      {
+        data: [
+          model("vision-flag", "/responses", { picker: true, vision: true }),
+          model("vision-limits", "/chat/completions", {
+            picker: true,
+            visionMediaTypes: ["image/png", "image/jpeg"],
+          }),
+          model("explicitly-text-only", "/responses", {
+            picker: true,
+            vision: false,
+            visionMediaTypes: ["image/png"],
+          }),
+        ],
+      },
+      true,
+    )
+
+    expect(models.map((entry) => [entry.id, entry.inputModalities])).toEqual([
+      ["vision-flag", ["text", "image"]],
+      ["vision-limits", ["text", "image"]],
+      ["explicitly-text-only", ["text"]],
     ])
   })
 
