@@ -1,5 +1,8 @@
 use super::*;
 
+const CR: u16 = b'\r' as u16;
+const LF: u16 = b'\n' as u16;
+
 #[napi(object)]
 pub struct NativeEditRequest {
     pub path: Option<String>,
@@ -47,6 +50,122 @@ fn replace_matches(
     next
 }
 
+fn has_crlf(units: &[u16]) -> bool {
+    units.windows(2).any(|window| window == [CR, LF])
+}
+
+fn to_lf(units: &[u16]) -> Vec<u16> {
+    let mut output = Vec::with_capacity(units.len());
+    let mut index = 0;
+    while index < units.len() {
+        if units[index] == CR && units.get(index + 1) == Some(&LF) {
+            output.push(LF);
+            index += 2;
+            continue;
+        }
+        output.push(units[index]);
+        index += 1;
+    }
+    output
+}
+
+fn to_crlf(units: &[u16]) -> Vec<u16> {
+    let lf = to_lf(units);
+    let mut output = Vec::with_capacity(lf.len());
+    for unit in lf {
+        if unit == LF {
+            output.push(CR);
+            output.push(LF);
+        } else {
+            output.push(unit);
+        }
+    }
+    output
+}
+
+fn align_newlines(haystack: &[u16], needle: &[u16]) -> Vec<u16> {
+    if has_crlf(haystack) {
+        to_crlf(needle)
+    } else {
+        to_lf(needle)
+    }
+}
+
+fn read_line_prefix_len(line: &[u16]) -> Option<usize> {
+    let mut index = 0;
+    while index < line.len() && index < 5 && line[index] == b' ' as u16 {
+        index += 1;
+    }
+    let digits_at = index;
+    while index < line.len() && (b'0' as u16..=b'9' as u16).contains(&line[index]) {
+        index += 1;
+    }
+    if index == digits_at || index < 6 {
+        return None;
+    }
+    if line.get(index).copied() != Some(b':' as u16)
+        || line.get(index + 1).copied() != Some(b' ' as u16)
+    {
+        return None;
+    }
+    Some(index + 2)
+}
+
+fn strip_read_prefixes(units: &[u16]) -> Option<Vec<u16>> {
+    if units.is_empty() {
+        return None;
+    }
+    let mut output = Vec::with_capacity(units.len());
+    let mut start = 0;
+    while start < units.len() {
+        let relative = units[start..].iter().position(|&unit| unit == LF);
+        let end = relative.map_or(units.len(), |index| start + index);
+        let line = &units[start..end];
+        let (content, cr) = if line.last() == Some(&CR) {
+            (&line[..line.len() - 1], true)
+        } else {
+            (line, false)
+        };
+        let prefix = read_line_prefix_len(content)?;
+        output.extend_from_slice(&content[prefix..]);
+        if cr {
+            output.push(CR);
+        }
+        if relative.is_some() {
+            output.push(LF);
+        }
+        start = relative.map_or(units.len(), |_| end + 1);
+    }
+    Some(output)
+}
+
+fn resolve_match(previous: &[u16], old: &[u16], new: &[u16]) -> (Vec<u16>, Vec<u16>, Vec<usize>) {
+    let aligned_new = align_newlines(previous, new);
+    let positions = match_positions(previous, old);
+    if !positions.is_empty() {
+        return (old.to_vec(), aligned_new, positions);
+    }
+
+    let aligned_old = align_newlines(previous, old);
+    if aligned_old != old {
+        let positions = match_positions(previous, &aligned_old);
+        if !positions.is_empty() {
+            return (aligned_old, aligned_new, positions);
+        }
+    }
+
+    let Some(stripped_old) = strip_read_prefixes(old) else {
+        return (old.to_vec(), aligned_new, Vec::new());
+    };
+    let stripped_new = strip_read_prefixes(new).map_or_else(
+        || aligned_new.clone(),
+        |value| align_newlines(previous, &value),
+    );
+    let aligned_stripped_old = align_newlines(previous, &stripped_old);
+    let positions = match_positions(previous, &aligned_stripped_old);
+    (aligned_stripped_old, stripped_new, positions)
+}
+
 pub struct EditTask {
     path: PathBuf,
     display_path: String,
@@ -76,7 +195,7 @@ impl Task for EditTask {
                 ))
             })?;
         let previous = previous_text.encode_utf16().collect::<Vec<_>>();
-        let positions = match_positions(&previous, &self.old);
+        let (old, new, positions) = resolve_match(&previous, &self.old, &self.new);
         let matches = checked_count(positions.len(), "edit match")?;
         if positions.is_empty() {
             return Err(failed(format!(
@@ -90,13 +209,7 @@ impl Task for EditTask {
                 self.display_path
             )));
         }
-        let next = replace_matches(
-            &previous,
-            &self.old,
-            &self.new,
-            &positions,
-            self.replace_all,
-        );
+        let next = replace_matches(&previous, &old, &new, &positions, self.replace_all);
         let diff = unified_diff(&previous, &next);
         fs::write(&self.path, utf16_lossy(&next).as_bytes()).map_err(io_error)?;
         Ok(NativeToolOutput {
@@ -143,7 +256,10 @@ pub fn native_edit_file(request: NativeEditRequest) -> napi::Result<AsyncTask<Ed
 
 #[cfg(test)]
 mod tests {
-    use super::{match_positions, replace_matches, units};
+    use super::{
+        align_newlines, match_positions, read_line_prefix_len, replace_matches, resolve_match,
+        strip_read_prefixes, units,
+    };
 
     #[test]
     fn counts_non_overlapping_utf16_matches() {
@@ -156,5 +272,73 @@ mod tests {
             units("next next next")
         );
         assert!(match_positions(&previous, &[]).is_empty());
+    }
+
+    #[test]
+    fn detects_read_line_prefixes() {
+        assert_eq!(read_line_prefix_len(&units("     1: code")), Some(8));
+        assert_eq!(read_line_prefix_len(&units("    12: code")), Some(8));
+        assert_eq!(read_line_prefix_len(&units("1000000: code")), Some(9));
+        assert_eq!(read_line_prefix_len(&units("1: code")), None);
+        assert_eq!(read_line_prefix_len(&units("code")), None);
+    }
+
+    #[test]
+    fn strips_read_prefixes_only_when_every_line_has_them() {
+        assert_eq!(
+            strip_read_prefixes(&units("     1: alpha\n     2: beta\n")),
+            Some(units("alpha\nbeta\n"))
+        );
+        assert_eq!(strip_read_prefixes(&units("     1: alpha\nbeta\n")), None);
+        assert_eq!(
+            strip_read_prefixes(&units("     1: alpha\r\n     2: beta")),
+            Some(units("alpha\r\nbeta"))
+        );
+    }
+
+    #[test]
+    fn aligns_needle_newlines_to_the_file() {
+        assert_eq!(
+            align_newlines(&units("a\r\nb\r\n"), &units("a\nb\n")),
+            units("a\r\nb\r\n")
+        );
+        assert_eq!(
+            align_newlines(&units("a\nb\n"), &units("a\r\nb\r\n")),
+            units("a\nb\n")
+        );
+        assert_eq!(
+            align_newlines(&units("a\nb\n"), &units("a\rb\n")),
+            units("a\rb\n")
+        );
+        assert_eq!(
+            align_newlines(&units("a\r\nb\r\n"), &units("a\rb\n")),
+            units("a\rb\r\n")
+        );
+    }
+
+    #[test]
+    fn resolve_match_keeps_exact_prefixed_file_content() {
+        let previous = units("     1: kept\n");
+        let (old, new, positions) = resolve_match(
+            &previous,
+            &units("     1: kept\n"),
+            &units("     1: next\n"),
+        );
+        assert_eq!(positions, vec![0]);
+        assert_eq!(old, units("     1: kept\n"));
+        assert_eq!(new, units("     1: next\n"));
+    }
+
+    #[test]
+    fn resolve_match_strips_read_prefixes_and_crlf() {
+        let previous = units("alpha\r\nbeta\r\n");
+        let (old, new, positions) = resolve_match(
+            &previous,
+            &units("     1: alpha\n     2: beta\n"),
+            &units("     1: gamma\n     2: beta\n"),
+        );
+        assert_eq!(positions, vec![0]);
+        assert_eq!(old, units("alpha\r\nbeta\r\n"));
+        assert_eq!(new, units("gamma\r\nbeta\r\n"));
     }
 }

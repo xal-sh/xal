@@ -111,6 +111,49 @@ test("edit reports missing paths and exact no-match failures without mutation", 
   })
 })
 
+test("edit matches text copied from read output and CRLF files", async () => {
+  await withWorkspace(async (workspace) => {
+    const numbered = join(workspace, "numbered.txt")
+    await writeFile(numbered, "alpha\nbeta\n")
+    const numberedResult = await editTool.execute(
+      {
+        file_path: "numbered.txt",
+        old_string: "     1: alpha\n     2: beta\n",
+        new_string: "     1: gamma\n     2: beta\n",
+      },
+      context(workspace),
+    )
+    expect(await readFile(numbered, "utf8")).toBe("gamma\nbeta\n")
+    expect(numberedResult.output).toContain("Updated numbered.txt (+1 -1)")
+    await editTool.execute(
+      {
+        file_path: "numbered.txt",
+        old_string: "     1: gamma\n     2: beta\n",
+        new_string: "delta\nbeta\n",
+      },
+      context(workspace),
+    )
+    expect(await readFile(numbered, "utf8")).toBe("delta\nbeta\n")
+
+    const crlf = join(workspace, "crlf.txt")
+    await writeFile(crlf, "red\r\nkeep\r\nred\r\n")
+    const crlfResult = await editTool.execute(
+      { file_path: "crlf.txt", old_string: "red\n", new_string: "blue\n", replace_all: true },
+      context(workspace),
+    )
+    expect(await readFile(crlf, "utf8")).toBe("blue\r\nkeep\r\nblue\r\n")
+    expect(crlfResult.output).toContain("Updated crlf.txt (+2 -2)")
+
+    const literal = join(workspace, "literal.txt")
+    await writeFile(literal, "     1: kept\n")
+    await editTool.execute(
+      { file_path: "literal.txt", old_string: "     1: kept\n", new_string: "     1: next\n" },
+      context(workspace),
+    )
+    expect(await readFile(literal, "utf8")).toBe("     1: next\n")
+  })
+})
+
 test("edit rejects empty matches and invalid UTF-8 without modifying the file", async () => {
   await withWorkspace(async (workspace) => {
     await expect(
