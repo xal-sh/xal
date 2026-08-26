@@ -76,6 +76,7 @@ describe("commandPrefix", () => {
   test("rejects a leading environment-assignment prefix", () => {
     expect(commandPrefix("FOO=1 pnpm test && pnpm lint")).toBeUndefined()
     expect(commandPrefix("A_B=2 npm run build && git status")).toBeUndefined()
+    expect(commandPrefix("FOO+=1 pnpm test && pnpm lint")).toBeUndefined()
   })
 
   test("rejects a first segment that is a control-group body", () => {

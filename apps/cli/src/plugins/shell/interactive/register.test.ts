@@ -177,6 +177,9 @@ describe("interactive permission suggestions", () => {
     expect(
       execCommandTool.permission?.({ cmd: "FOO=1 pnpm test && pnpm lint" }, { cwd: "/workspace", sessionId: "s" }),
     ).toEqual({ subject: "FOO=1 pnpm test && pnpm lint" })
+    expect(
+      execCommandTool.permission?.({ cmd: "FOO+=1 pnpm test && pnpm lint" }, { cwd: "/workspace", sessionId: "s" }),
+    ).toEqual({ subject: "FOO+=1 pnpm test && pnpm lint" })
   })
 
   test("subjects write_stdin input to the first command segment", () => {
@@ -192,6 +195,7 @@ describe("interactive permission suggestions", () => {
     expect(inputSuggestion("pnpm dev && echo ready")).toBe("write_stdin(pnpm dev*)")
     expect(inputSuggestion("echo $(date) && echo done")).toBeUndefined()
     expect(inputSuggestion("FOO=1 pnpm test && echo ready")).toBeUndefined()
+    expect(inputSuggestion("FOO+=1 pnpm test && echo ready")).toBeUndefined()
     expect(inputSuggestion("arn:aws:iam::123:role\n")).toBeUndefined()
     expect(inputSuggestion("")).toBeUndefined()
   })

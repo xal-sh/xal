@@ -473,7 +473,7 @@ export function commandPrefix(command: string): { prefix: string; rest: string }
   if (!segments || segments.length === 0) return undefined
   const prefix = segments[0]!.trim()
   if (prefix.includes("$()")) return undefined
-  if (prefix.startsWith("=") || /^[A-Za-z_][A-Za-z0-9_]*=/.test(prefix)) return undefined
+  if (prefix.startsWith("=") || /^[A-Za-z_][A-Za-z0-9_]*\+?=/.test(prefix)) return undefined
   if (prefix.split(/\s+/).length < 2) return undefined
   return { prefix, rest: segments.slice(1).join(" && ") }
 }

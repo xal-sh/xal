@@ -55,6 +55,7 @@ describe("bash permission suggestion", () => {
       "echo $(date) && echo done",
       "{ echo grouped; } && echo done",
       "FOO=1 pnpm test && pnpm lint",
+      "FOO+=1 pnpm test && pnpm lint",
     ]) {
       expect(bashTool.permission?.({ command }, { cwd: "/workspace", sessionId: "s" })).toEqual({
         subject: command,
