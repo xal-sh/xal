@@ -12,7 +12,7 @@ import type { HookContext } from "../../hooks/types"
 import { defaultPermissionMode, modeDefinition } from "../../permissions/modes"
 import type { PermissionMode, PermissionScope } from "../../permissions/types"
 import type { SessionPlan } from "../../plans/types"
-import { profileAgentEvent, profileSessionCreated } from "../../profiler/profiler"
+import { profileAgentEvent, profileCompactionShape, profileSessionCreated } from "../../profiler/profiler"
 import { promptCacheKey } from "../../providers/cache"
 import { contextWindow, modelSupportsImageInput } from "../../providers/catalog"
 import { pendingToolCalls, prepareConversation } from "../../providers/conversation"
@@ -310,6 +310,7 @@ export class AgentSession {
       recordFailure: () => {
         this.compactionFailures += 1
       },
+      observeCompaction: (observation) => profileCompactionShape(this.sessionId, this.kind, observation),
       replaceHistory: (item) => {
         this.items = []
         this.pushItem(item)

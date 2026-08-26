@@ -2,15 +2,9 @@ import { resolveThinking } from "../../config/thinking"
 import { describeError } from "../../lib/error"
 import { contextWindow, findModel, modelSupportsImageInput } from "../../providers/catalog"
 import { prepareConversation } from "../../providers/conversation"
+import { estimateConversationItemTokens, estimateTextTokens } from "../../providers/request-size"
 import { collectStreamedText } from "../../providers/streamed-text"
-import type {
-  ConversationItem,
-  Provider,
-  ProviderPrompt,
-  ProviderReplay,
-  ThinkingEffort,
-  UserMessageItem,
-} from "../../providers/types"
+import type { ConversationItem, Provider, ProviderPrompt, ThinkingEffort, UserMessageItem } from "../../providers/types"
 import type { AgentEvent, AgentState } from "../events"
 import { activeHistory, conversationOnly, directShellMessage, type CompactionItem, type HistoryItem } from "../history"
 import type { SessionKind } from "../types"
@@ -18,12 +12,22 @@ import { isAbortError } from "./types"
 
 export const COMPACTION_TRIGGER_RATIO = 0.85
 
-const CHARS_PER_TOKEN = 4
-const IMAGE_TOKENS = 1_500
 const TAIL_RATIO = 0.25
 const MANUAL_TAIL_TOKENS = 16_000
 
 export type CompactionTrigger = "auto" | "manual"
+
+export interface CompactionObservation {
+  trigger: CompactionTrigger
+  strategy: "legacy"
+  outcome: "completed" | "nothing" | "failed" | "interrupted"
+  tokensBefore?: number
+  before: ConversationItem[]
+  after: ConversationItem[]
+  retained: ConversationItem[]
+  summary?: string
+  removedTypes: HistoryItem["type"][]
+}
 
 export interface CompactionTarget {
   model: string
@@ -69,30 +73,21 @@ export async function resolveCompactionTarget(
   }
 }
 
-function textTokens(text: string): number {
-  return Math.ceil(text.length / CHARS_PER_TOKEN)
-}
-
-function replayTokens(replay: ProviderReplay | undefined): number {
-  return replay ? textTokens(JSON.stringify(replay.data)) : 0
-}
-
 function itemTokens(item: HistoryItem): number {
   switch (item.type) {
     case "user_message":
-      return textTokens(item.modelText ?? item.text) + item.images.length * IMAGE_TOKENS
     case "assistant_message":
-      return Math.max(textTokens(item.text), replayTokens(item.replay))
     case "reasoning":
-      return Math.max(textTokens(item.summary), replayTokens(item.replay))
     case "tool_call":
-      return Math.max(textTokens(item.name) + textTokens(JSON.stringify(item.args)), replayTokens(item.replay))
     case "tool_result":
-      return textTokens(item.output)
+      return estimateConversationItemTokens(item)
     case "direct_shell":
-      return itemTokens(directShellMessage(item))
+      return estimateConversationItemTokens(directShellMessage(item))
     case "compaction":
-      return item.retained.reduce((total, retained) => total + itemTokens(retained), textTokens(item.summary))
+      return item.retained.reduce(
+        (total, retained) => total + estimateConversationItemTokens(retained),
+        estimateTextTokens(item.summary),
+      )
   }
 }
 
@@ -203,6 +198,7 @@ export interface CompactionHost {
   compactionFailures(): number
   onRequestStarted(): void
   recordFailure(): void
+  observeCompaction(observation: CompactionObservation): void
   replaceHistory(item: CompactionItem): void
   setState(state: AgentState): void
   emit(event: AgentEvent): void
@@ -218,31 +214,73 @@ export async function runCompaction(
 ): Promise<boolean> {
   const profileId = host.profileId()
   const budget = tailBudget(await contextWindow(provider, profileId, model), trigger)
-  const { head, tail, replaced } = splitForCompaction(host.history(), budget)
-  if (head.length === 0) return false
-
-  host.setState("compacting")
-  const target = await resolveCompactionTarget(provider, profileId, model)
-  host.onRequestStarted()
-  const summary = await summarizeHistory({
-    provider,
-    profileId,
-    model: target.model,
-    historyModel: model,
-    thinking: target.thinking,
-    prompt: host.prompt(target.model),
-    sessionId: host.sessionId(),
-    kind: host.kind,
-    history: head,
-    instructions,
-    imageInput: target.imageInput,
-    signal,
-  })
-
+  const history = host.history()
+  const before = activeHistory(history)
   const tokensBefore = host.contextTokens()
-  host.replaceHistory({ type: "compaction", summary, replaced, tokensBefore, retained: tail })
-  host.emit({ type: "compacted", summary, replaced, tokensBefore })
-  return true
+  const { head, tail, replaced } = splitForCompaction(history, budget)
+  if (head.length === 0) {
+    host.observeCompaction({
+      trigger,
+      strategy: "legacy",
+      outcome: "nothing",
+      ...(tokensBefore === undefined ? {} : { tokensBefore }),
+      before,
+      after: before,
+      retained: [],
+      removedTypes: [],
+    })
+    return false
+  }
+
+  const removedTypes = head.map((item) => item.type)
+  try {
+    host.setState("compacting")
+    const target = await resolveCompactionTarget(provider, profileId, model)
+    host.onRequestStarted()
+    const summary = await summarizeHistory({
+      provider,
+      profileId,
+      model: target.model,
+      historyModel: model,
+      thinking: target.thinking,
+      prompt: host.prompt(target.model),
+      sessionId: host.sessionId(),
+      kind: host.kind,
+      history: head,
+      instructions,
+      imageInput: target.imageInput,
+      signal,
+    })
+
+    const checkpoint: CompactionItem = { type: "compaction", summary, replaced, tokensBefore, retained: tail }
+    const after = activeHistory([checkpoint])
+    host.observeCompaction({
+      trigger,
+      strategy: "legacy",
+      outcome: "completed",
+      ...(tokensBefore === undefined ? {} : { tokensBefore }),
+      before,
+      after,
+      retained: tail,
+      summary,
+      removedTypes,
+    })
+    host.replaceHistory(checkpoint)
+    host.emit({ type: "compacted", summary, replaced, tokensBefore })
+    return true
+  } catch (error) {
+    host.observeCompaction({
+      trigger,
+      strategy: "legacy",
+      outcome: isAbortError(error) || signal.aborted ? "interrupted" : "failed",
+      ...(tokensBefore === undefined ? {} : { tokensBefore }),
+      before,
+      after: before,
+      retained: tail,
+      removedTypes,
+    })
+    throw error
+  }
 }
 
 export async function autoCompact(

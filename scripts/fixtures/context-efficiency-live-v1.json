@@ -1,0 +1,59 @@
+{
+  "version": 1,
+  "scenarios": [
+    {
+      "name": "paired_primary_tool_heavy",
+      "suites": ["paired", "release"],
+      "kind": "primary",
+      "contextWindow": "catalog",
+      "setupTurns": 2,
+      "toolOutputBytes": 48000,
+      "maxEstimatedPostCompactionRequest": 40000
+    },
+    {
+      "name": "paired_subagent_tool_heavy",
+      "suites": ["paired", "release"],
+      "kind": "subagent",
+      "contextWindow": "catalog",
+      "setupTurns": 2,
+      "toolOutputBytes": 48000,
+      "maxEstimatedPostCompactionRequest": 40000
+    },
+    {
+      "name": "automatic_primary_64k",
+      "suites": ["automatic", "release"],
+      "kind": "primary",
+      "contextWindow": 64000,
+      "setupTurns": 64,
+      "toolOutputBytes": 8000,
+      "maxEstimatedPostCompactionRequest": 40000
+    },
+    {
+      "name": "automatic_subagent_64k",
+      "suites": ["automatic", "release"],
+      "kind": "subagent",
+      "contextWindow": 64000,
+      "setupTurns": 64,
+      "toolOutputBytes": 8000,
+      "maxEstimatedPostCompactionRequest": 40000
+    },
+    {
+      "name": "production_primary",
+      "suites": ["production"],
+      "kind": "primary",
+      "contextWindow": "catalog",
+      "setupTurns": 512,
+      "toolOutputBytes": 8000,
+      "maxEstimatedPostCompactionRequest": 32000
+    },
+    {
+      "name": "production_subagent",
+      "suites": ["production"],
+      "kind": "subagent",
+      "contextWindow": "catalog",
+      "setupTurns": 512,
+      "toolOutputBytes": 8000,
+      "maxEstimatedPostCompactionRequest": 32000
+    }
+  ]
+}

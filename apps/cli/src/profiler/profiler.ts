@@ -6,10 +6,19 @@ import { appInfo } from "../app-info"
 import { profilerDir } from "../config/paths"
 import { events, type AppEvent } from "../events"
 import { describeError } from "../lib/error"
-import type { StreamEvent, ThinkingEffort, Usage } from "../providers/types"
+import type { StreamEvent, StreamRequest, ThinkingEffort, Usage } from "../providers/types"
 import { redactText } from "../secrets/redactor"
 import type { ProcessExecution } from "../tools/types"
 import { recordProviderUsage, type UsageOutcome, type UsagePhase } from "../usage/recorder"
+import {
+  compactionShape,
+  type CompactionShapeInput,
+  type CompactionShape,
+  providerRequestShape,
+  type ProviderRequestShape,
+  toolOutputShape,
+  type ToolOutputShape,
+} from "./shapes"
 
 type AnonymousExecution =
   | { status: "exited"; exitCode: number; sandbox?: "read" | "workspace" }
@@ -97,7 +106,7 @@ type AnonymousAppEvent =
   | { type: "plugin_bootstrap_started"; total: number }
   | { type: "plugin_bootstrap_finished"; total: number; failedPhases: string[]; notices: number }
 
-type ProfileRecord =
+export type ProfileRecord =
   | { type: "run_started"; version: string }
   | {
       type: "session_created"
@@ -127,6 +136,15 @@ type ProfileRecord =
       elapsedMs: number
       usage?: Usage
     }
+  | { type: "provider_request_shape"; request: string; shape: ProviderRequestShape }
+  | {
+      type: "tool_output_shape"
+      session: string
+      kind: SessionKind
+      tool: string
+      shape: ToolOutputShape
+    }
+  | { type: "compaction_shape"; session: string; kind: SessionKind; shape: CompactionShape }
   | {
       type: "tool_batch_started"
       batch: string
@@ -214,15 +232,23 @@ function nameProfile(): void {
   })
 }
 
+export function serializeProfileRecord(atMs: number, entry: ProfileRecord): string {
+  return `${JSON.stringify({ atMs, ...entry })}\n`
+}
+
 function record(entry: ProfileRecord): void {
   if (!enabled || failed) return
-  const line = `${JSON.stringify({ atMs: Date.now() - startedAt, ...entry })}\n`
-  const file = path
-  if (!file) {
-    pending.push(line)
-    return
+  try {
+    const line = serializeProfileRecord(Date.now() - startedAt, entry)
+    const file = path
+    if (!file) {
+      pending.push(line)
+      return
+    }
+    enqueue(() => appendFile(file, line, { mode: 0o600 }))
+  } catch (error) {
+    fail(error)
   }
-  enqueue(() => appendFile(file, line, { mode: 0o600 }))
 }
 
 function anonymousExecution(execution: ProcessExecution): AnonymousExecution {
@@ -415,9 +441,15 @@ function anonymousAppEvent(event: AppEvent): AnonymousAppEvent {
 }
 
 export function startProfiler(shouldEnable: boolean): void {
-  if (!shouldEnable) return
+  if (!shouldEnable || enabled) return
   enabled = true
   startedAt = Date.now()
+  path = undefined
+  pending = []
+  queue = Promise.resolve()
+  failed = false
+  labels.clear()
+  labelCounts.clear()
   record({ type: "run_started", version: appInfo.version })
   unsubscribeAppEvents = events.subscribe((event) => record({ type: "app_event", event: anonymousAppEvent(event) }))
 }
@@ -492,6 +524,15 @@ export function profileProviderFirstEvent(profile: ProviderRequestProfile, event
   })
 }
 
+export function profileProviderRequestShape(profile: ProviderRequestProfile, request: StreamRequest): void {
+  if (!enabled || failed) return
+  try {
+    record({ type: "provider_request_shape", request: profile.requestId, shape: providerRequestShape(request) })
+  } catch (error) {
+    fail(error)
+  }
+}
+
 export function profileProviderRequestFinished(
   profile: ProviderRequestProfile,
   outcome: ProfileOutcome,
@@ -541,6 +582,42 @@ export function profileToolBatchFinished(profile: ToolBatchProfile, outcome: Pro
     outcome,
     elapsedMs: Date.now() - profile.startedAt,
   })
+}
+
+export function profileToolOutputShape(
+  sessionId: string,
+  kind: SessionKind,
+  tool: string,
+  original: string,
+  visible: string,
+  bounded: boolean,
+): void {
+  if (!enabled || failed) return
+  try {
+    record({
+      type: "tool_output_shape",
+      session: label("session", sessionId),
+      kind,
+      tool: label("tool", tool),
+      shape: toolOutputShape(original, visible, bounded),
+    })
+  } catch (error) {
+    fail(error)
+  }
+}
+
+export function profileCompactionShape(sessionId: string, kind: SessionKind, input: CompactionShapeInput): void {
+  if (!enabled || failed) return
+  try {
+    record({
+      type: "compaction_shape",
+      session: label("session", sessionId),
+      kind,
+      shape: compactionShape(input),
+    })
+  } catch (error) {
+    fail(error)
+  }
 }
 
 export function profileJobCreated(jobId: string): void {

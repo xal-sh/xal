@@ -2,6 +2,7 @@ import type { SessionKind } from "../agent/types"
 import {
   profileProviderFirstEvent,
   profileProviderRequestFinished,
+  profileProviderRequestShape,
   profileProviderRequestStarted,
   type ProviderPhase,
 } from "../profiler/profiler"
@@ -39,7 +40,9 @@ export async function collectStreamedText(input: StreamedTextRequest): Promise<S
   let received = false
   let usage: Usage | undefined
   try {
-    for await (const event of input.provider.stream(input.profileId, redactStreamRequest(input.request))) {
+    const request = redactStreamRequest(input.request)
+    profileProviderRequestShape(profile, request)
+    for await (const event of input.provider.stream(input.profileId, request)) {
       if (!received) {
         received = true
         profileProviderFirstEvent(profile, event.type)

@@ -26,6 +26,16 @@ The ledger contains no prompts, responses, working directories, profile names, c
 
 Usage dashboards should read this native ledger instead of treating Xal as Codex or asking Xal to write into another tool's home directory. The `provider` field lets a dashboard attribute ChatGPT usage to Codex, Anthropic usage to Claude, xAI usage to Grok, and other supported providers without coupling to Xal's full session format.
 
+## Profiler records
+
+Launch Xal with `--profile` to write an execution profile under `$XAL_HOME/profiler/`, or `~/.xal/profiler/` by default. Profiles use one JSON object per line and measure elapsed time as `atMs` from the start of the process. Session, request, tool, provider, model, mode, profile, hook, batch, and job values are replaced with run-local labels such as `session-1` and `request-2`.
+
+Provider request lifecycle records preserve the session kind, request phase, attempt number, time to first event, total provider time, outcome, and provider-reported usage. Each attempt also receives one `provider_request_shape` record with numeric item counts and estimated tokens split across user, assistant, reasoning, tool-call, and tool-result inputs, plus instruction bytes, tool count, schema bytes, and the total estimated request size. Retries use distinct request labels.
+
+`tool_output_shape` records report original and model-visible byte counts, the visible token estimate, and whether the normal output bound changed the result. `compaction_shape` records report the trigger, strategy, outcome, measured and estimated context sizes, retained authored-user counts and tokens, summary estimate, and numeric removal counts by item type. Both primary and subagent sessions carry their `kind` on these records.
+
+Profiler records never contain prompt, response, summary, tool-output, schema, path, working-directory, argument, call-ID, real session-ID, provider-profile, or credential content. The profiler logs a redacted error and stops recording if its writer fails; a profiler failure does not alter or retry the provider request. Use `bun benchmark:context -- --fixture scripts/fixtures/context-efficiency-v1.json --policy legacy` to replay the committed content-free numeric baseline. Regenerate a fixture only from explicit local inputs with `bun benchmark:context -- --generate --profiler PROFILE_DIRECTORY --sessions SESSION_DIRECTORY --context-window TOKENS --output FIXTURE_JSON`; generation derives all workload events and the legacy baseline from matching profiler and session observations, fails when they cannot be matched uniquely, and never copies a template. Live results retain anonymous provider/model labels, a connection/model/thinking configuration fingerprint, and a per-scenario workload fingerprint so paired comparisons reject changed configuration while release runs may include additional scenarios.
+
 ## Language servers
 
 Xal includes lazy language-server recipes for common languages:

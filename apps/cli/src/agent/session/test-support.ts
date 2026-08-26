@@ -5,6 +5,7 @@ import { appEnvVar, appInfo } from "../../app-info"
 import type { JsonObject } from "../../lib/json"
 import type { ModelCatalog, Provider, StreamEvent, StreamRequest, Usage, UserInput } from "../../providers/types"
 import type { AgentEvent } from "../events"
+import type { SessionKind } from "../types"
 import type { OutputSchema } from "./output-contract"
 import { runAgentTurn, type AgentRunOutcome } from "../run"
 
@@ -15,7 +16,7 @@ export type AgentSession = InstanceType<AgentSessionConstructor>
 export interface AgentSessionTestHarness {
   createSession(
     provider: Provider,
-    options?: { cwd?: string; interactive?: boolean; outputSchema?: OutputSchema },
+    options?: { cwd?: string; interactive?: boolean; kind?: SessionKind; outputSchema?: OutputSchema },
   ): AgentSession
   cleanup(): Promise<void>
 }
@@ -48,6 +49,7 @@ export async function setupAgentSessionTests(prefix: string): Promise<AgentSessi
         cwd: options.cwd,
         persist: false,
         interactive: options.interactive ?? false,
+        kind: options.kind,
         outputSchema: options.outputSchema,
         trackUndoPrompts: false,
       }),

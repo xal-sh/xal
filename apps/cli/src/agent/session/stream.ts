@@ -2,6 +2,7 @@ import { setTimeout as sleep } from "node:timers/promises"
 import {
   profileProviderFirstEvent,
   profileProviderRequestFinished,
+  profileProviderRequestShape,
   profileProviderRequestStarted,
   type ProviderRequestProfile,
 } from "../../profiler/profiler"
@@ -191,7 +192,9 @@ async function consumeStream(
   }
 
   const rawReasoning = createRedactedStream()
-  for await (const event of provider.stream(host.profileId(), host.buildRequest(provider, model, thinking, signal))) {
+  const request = host.buildRequest(provider, model, thinking, signal)
+  profileProviderRequestShape(round.profile, request)
+  for await (const event of provider.stream(host.profileId(), request)) {
     if (!round.received) profileProviderFirstEvent(round.profile, event.type)
     round.received = true
     switch (event.type) {

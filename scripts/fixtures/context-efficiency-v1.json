@@ -1,0 +1,672 @@
+{
+  "version": 1,
+  "sourceBaseline": {
+    "completedAutomaticCompactions": 64,
+    "medianFirstPostCompactionInputTokens": 62597
+  },
+  "baseline": {
+    "policy": "legacy",
+    "threshold": 0.85,
+    "completedAutomaticCompactions": 5,
+    "medianFirstPostCompactionInputTokens": 62597,
+    "roundingTolerance": 0.01
+  },
+  "workloads": [
+    {
+      "name": "primary_tool_heavy",
+      "kind": "primary",
+      "contextWindow": 260000,
+      "events": [
+        {
+          "index": 0,
+          "round": 1,
+          "roundBoundary": "start",
+          "type": "item",
+          "item": {
+            "kind": "user_message",
+            "estimatedModelVisibleTokens": 1,
+            "replayEstimatedTokens": 0,
+            "authoredUser": false,
+            "hasModelText": true,
+            "imageCount": 0,
+            "imageEstimatedTokens": 0
+          }
+        },
+        {
+          "index": 1,
+          "round": 2,
+          "roundBoundary": "end",
+          "type": "request",
+          "staticPrefixTokens": 99,
+          "providerUsageBoundary": true,
+          "usage": {
+            "totalInputTokens": 100,
+            "cacheReadInputTokens": 0,
+            "outputTokens": 0,
+            "latencyMs": 10
+          },
+          "followedCompaction": false
+        },
+        {
+          "index": 2,
+          "round": 2,
+          "roundBoundary": "start",
+          "type": "item",
+          "item": {
+            "kind": "tool_call",
+            "estimatedModelVisibleTokens": 1,
+            "replayEstimatedTokens": 0,
+            "authoredUser": false,
+            "hasModelText": false,
+            "imageCount": 0,
+            "imageEstimatedTokens": 0
+          }
+        },
+        {
+          "index": 3,
+          "round": 2,
+          "roundBoundary": "middle",
+          "type": "item",
+          "item": {
+            "kind": "tool_result",
+            "estimatedModelVisibleTokens": 170000,
+            "replayEstimatedTokens": 0,
+            "authoredUser": false,
+            "hasModelText": false,
+            "imageCount": 0,
+            "imageEstimatedTokens": 0
+          }
+        },
+        {
+          "index": 4,
+          "round": 4,
+          "roundBoundary": "end",
+          "type": "request",
+          "staticPrefixTokens": 5000,
+          "providerUsageBoundary": true,
+          "usage": {
+            "totalInputTokens": 224000,
+            "cacheReadInputTokens": 216000,
+            "outputTokens": 0,
+            "latencyMs": 800
+          },
+          "followedCompaction": false
+        },
+        {
+          "index": 5,
+          "round": 4,
+          "roundBoundary": "start",
+          "type": "item",
+          "item": {
+            "kind": "assistant_message",
+            "estimatedModelVisibleTokens": 50097,
+            "replayEstimatedTokens": 0,
+            "authoredUser": false,
+            "hasModelText": false,
+            "imageCount": 0,
+            "imageEstimatedTokens": 0
+          }
+        },
+        {
+          "index": 6,
+          "round": 5,
+          "roundBoundary": "start",
+          "type": "item",
+          "item": {
+            "kind": "user_message",
+            "estimatedModelVisibleTokens": 2500,
+            "replayEstimatedTokens": 0,
+            "authoredUser": true,
+            "hasModelText": true,
+            "imageCount": 0,
+            "imageEstimatedTokens": 0
+          }
+        },
+        {
+          "index": 7,
+          "round": 6,
+          "roundBoundary": "start",
+          "type": "compaction",
+          "trigger": "automatic",
+          "outcome": "completed",
+          "summaryEstimatedTokens": 4500,
+          "replacementBoundary": 5
+        },
+        {
+          "index": 8,
+          "round": 7,
+          "roundBoundary": "end",
+          "type": "request",
+          "staticPrefixTokens": 5500,
+          "providerUsageBoundary": true,
+          "usage": {
+            "totalInputTokens": 62597,
+            "cacheReadInputTokens": 55000,
+            "outputTokens": 0,
+            "latencyMs": 500
+          },
+          "followedCompaction": true
+        },
+        {
+          "index": 9,
+          "round": 7,
+          "roundBoundary": "start",
+          "type": "item",
+          "item": {
+            "kind": "tool_call",
+            "estimatedModelVisibleTokens": 1,
+            "replayEstimatedTokens": 0,
+            "authoredUser": false,
+            "hasModelText": false,
+            "imageCount": 0,
+            "imageEstimatedTokens": 0
+          }
+        },
+        {
+          "index": 10,
+          "round": 7,
+          "roundBoundary": "middle",
+          "type": "item",
+          "item": {
+            "kind": "tool_result",
+            "estimatedModelVisibleTokens": 170000,
+            "replayEstimatedTokens": 0,
+            "authoredUser": false,
+            "hasModelText": false,
+            "imageCount": 0,
+            "imageEstimatedTokens": 0
+          }
+        },
+        {
+          "index": 11,
+          "round": 9,
+          "roundBoundary": "end",
+          "type": "request",
+          "staticPrefixTokens": 5000,
+          "providerUsageBoundary": true,
+          "usage": {
+            "totalInputTokens": 239000,
+            "cacheReadInputTokens": 230000,
+            "outputTokens": 0,
+            "latencyMs": 900
+          },
+          "followedCompaction": false
+        },
+        {
+          "index": 12,
+          "round": 9,
+          "roundBoundary": "start",
+          "type": "item",
+          "item": {
+            "kind": "assistant_message",
+            "estimatedModelVisibleTokens": 50097,
+            "replayEstimatedTokens": 0,
+            "authoredUser": false,
+            "hasModelText": false,
+            "imageCount": 0,
+            "imageEstimatedTokens": 0
+          }
+        },
+        {
+          "index": 13,
+          "round": 10,
+          "roundBoundary": "start",
+          "type": "item",
+          "item": {
+            "kind": "user_message",
+            "estimatedModelVisibleTokens": 2500,
+            "replayEstimatedTokens": 0,
+            "authoredUser": true,
+            "hasModelText": false,
+            "imageCount": 0,
+            "imageEstimatedTokens": 0
+          }
+        },
+        {
+          "index": 14,
+          "round": 11,
+          "roundBoundary": "start",
+          "type": "compaction",
+          "trigger": "automatic",
+          "outcome": "completed",
+          "summaryEstimatedTokens": 4500,
+          "replacementBoundary": 12
+        },
+        {
+          "index": 15,
+          "round": 12,
+          "roundBoundary": "end",
+          "type": "request",
+          "staticPrefixTokens": 5500,
+          "providerUsageBoundary": true,
+          "usage": {
+            "totalInputTokens": 62597,
+            "cacheReadInputTokens": 55000,
+            "outputTokens": 0,
+            "latencyMs": 500
+          },
+          "followedCompaction": true
+        },
+        {
+          "index": 16,
+          "round": 12,
+          "roundBoundary": "start",
+          "type": "item",
+          "item": {
+            "kind": "assistant_message",
+            "estimatedModelVisibleTokens": 1,
+            "replayEstimatedTokens": 0,
+            "authoredUser": false,
+            "hasModelText": false,
+            "imageCount": 0,
+            "imageEstimatedTokens": 0
+          }
+        }
+      ]
+    },
+    {
+      "name": "primary_repeated_compaction",
+      "kind": "primary",
+      "contextWindow": 260000,
+      "events": [
+        {
+          "index": 0,
+          "round": 1,
+          "roundBoundary": "start",
+          "type": "item",
+          "item": {
+            "kind": "user_message",
+            "estimatedModelVisibleTokens": 1,
+            "replayEstimatedTokens": 0,
+            "authoredUser": false,
+            "hasModelText": true,
+            "imageCount": 0,
+            "imageEstimatedTokens": 0
+          }
+        },
+        {
+          "index": 1,
+          "round": 2,
+          "roundBoundary": "end",
+          "type": "request",
+          "staticPrefixTokens": 99,
+          "providerUsageBoundary": true,
+          "usage": {
+            "totalInputTokens": 100,
+            "cacheReadInputTokens": 0,
+            "outputTokens": 0,
+            "latencyMs": 10
+          },
+          "followedCompaction": false
+        },
+        {
+          "index": 2,
+          "round": 2,
+          "roundBoundary": "start",
+          "type": "item",
+          "item": {
+            "kind": "reasoning",
+            "estimatedModelVisibleTokens": 170000,
+            "replayEstimatedTokens": 175000,
+            "authoredUser": false,
+            "hasModelText": false,
+            "imageCount": 0,
+            "imageEstimatedTokens": 0
+          }
+        },
+        {
+          "index": 3,
+          "round": 3,
+          "roundBoundary": "start",
+          "type": "item",
+          "item": {
+            "kind": "user_message",
+            "estimatedModelVisibleTokens": 1,
+            "replayEstimatedTokens": 0,
+            "authoredUser": false,
+            "hasModelText": true,
+            "imageCount": 0,
+            "imageEstimatedTokens": 0
+          }
+        },
+        {
+          "index": 4,
+          "round": 4,
+          "roundBoundary": "end",
+          "type": "request",
+          "staticPrefixTokens": 5000,
+          "providerUsageBoundary": true,
+          "usage": {
+            "totalInputTokens": 224000,
+            "cacheReadInputTokens": 216000,
+            "outputTokens": 0,
+            "latencyMs": 800
+          },
+          "followedCompaction": false
+        },
+        {
+          "index": 5,
+          "round": 4,
+          "roundBoundary": "start",
+          "type": "item",
+          "item": {
+            "kind": "assistant_message",
+            "estimatedModelVisibleTokens": 50096,
+            "replayEstimatedTokens": 0,
+            "authoredUser": false,
+            "hasModelText": false,
+            "imageCount": 0,
+            "imageEstimatedTokens": 0
+          }
+        },
+        {
+          "index": 6,
+          "round": 5,
+          "roundBoundary": "start",
+          "type": "item",
+          "item": {
+            "kind": "user_message",
+            "estimatedModelVisibleTokens": 2500,
+            "replayEstimatedTokens": 0,
+            "authoredUser": true,
+            "hasModelText": true,
+            "imageCount": 0,
+            "imageEstimatedTokens": 0
+          }
+        },
+        {
+          "index": 7,
+          "round": 6,
+          "roundBoundary": "start",
+          "type": "compaction",
+          "trigger": "automatic",
+          "outcome": "completed",
+          "summaryEstimatedTokens": 4500,
+          "replacementBoundary": 3
+        },
+        {
+          "index": 8,
+          "round": 7,
+          "roundBoundary": "end",
+          "type": "request",
+          "staticPrefixTokens": 5500,
+          "providerUsageBoundary": true,
+          "usage": {
+            "totalInputTokens": 62597,
+            "cacheReadInputTokens": 55000,
+            "outputTokens": 0,
+            "latencyMs": 500
+          },
+          "followedCompaction": true
+        },
+        {
+          "index": 9,
+          "round": 7,
+          "roundBoundary": "start",
+          "type": "item",
+          "item": {
+            "kind": "reasoning",
+            "estimatedModelVisibleTokens": 170000,
+            "replayEstimatedTokens": 175000,
+            "authoredUser": false,
+            "hasModelText": false,
+            "imageCount": 0,
+            "imageEstimatedTokens": 0
+          }
+        },
+        {
+          "index": 10,
+          "round": 8,
+          "roundBoundary": "start",
+          "type": "item",
+          "item": {
+            "kind": "user_message",
+            "estimatedModelVisibleTokens": 1,
+            "replayEstimatedTokens": 0,
+            "authoredUser": false,
+            "hasModelText": true,
+            "imageCount": 0,
+            "imageEstimatedTokens": 0
+          }
+        },
+        {
+          "index": 11,
+          "round": 9,
+          "roundBoundary": "end",
+          "type": "request",
+          "staticPrefixTokens": 5000,
+          "providerUsageBoundary": true,
+          "usage": {
+            "totalInputTokens": 239000,
+            "cacheReadInputTokens": 230000,
+            "outputTokens": 0,
+            "latencyMs": 900
+          },
+          "followedCompaction": false
+        },
+        {
+          "index": 12,
+          "round": 9,
+          "roundBoundary": "start",
+          "type": "item",
+          "item": {
+            "kind": "assistant_message",
+            "estimatedModelVisibleTokens": 50096,
+            "replayEstimatedTokens": 0,
+            "authoredUser": false,
+            "hasModelText": false,
+            "imageCount": 0,
+            "imageEstimatedTokens": 0
+          }
+        },
+        {
+          "index": 13,
+          "round": 10,
+          "roundBoundary": "start",
+          "type": "item",
+          "item": {
+            "kind": "user_message",
+            "estimatedModelVisibleTokens": 2500,
+            "replayEstimatedTokens": 0,
+            "authoredUser": true,
+            "hasModelText": false,
+            "imageCount": 0,
+            "imageEstimatedTokens": 0
+          }
+        },
+        {
+          "index": 14,
+          "round": 11,
+          "roundBoundary": "start",
+          "type": "compaction",
+          "trigger": "automatic",
+          "outcome": "completed",
+          "summaryEstimatedTokens": 4500,
+          "replacementBoundary": 10
+        },
+        {
+          "index": 15,
+          "round": 12,
+          "roundBoundary": "end",
+          "type": "request",
+          "staticPrefixTokens": 5500,
+          "providerUsageBoundary": true,
+          "usage": {
+            "totalInputTokens": 62597,
+            "cacheReadInputTokens": 55000,
+            "outputTokens": 0,
+            "latencyMs": 500
+          },
+          "followedCompaction": true
+        },
+        {
+          "index": 16,
+          "round": 12,
+          "roundBoundary": "start",
+          "type": "item",
+          "item": {
+            "kind": "assistant_message",
+            "estimatedModelVisibleTokens": 1,
+            "replayEstimatedTokens": 0,
+            "authoredUser": false,
+            "hasModelText": false,
+            "imageCount": 0,
+            "imageEstimatedTokens": 0
+          }
+        }
+      ]
+    },
+    {
+      "name": "subagent_tool_heavy",
+      "kind": "subagent",
+      "contextWindow": 260000,
+      "events": [
+        {
+          "index": 0,
+          "round": 1,
+          "roundBoundary": "start",
+          "type": "item",
+          "item": {
+            "kind": "user_message",
+            "estimatedModelVisibleTokens": 1,
+            "replayEstimatedTokens": 0,
+            "authoredUser": false,
+            "hasModelText": true,
+            "imageCount": 0,
+            "imageEstimatedTokens": 0
+          }
+        },
+        {
+          "index": 1,
+          "round": 2,
+          "roundBoundary": "end",
+          "type": "request",
+          "staticPrefixTokens": 99,
+          "providerUsageBoundary": true,
+          "usage": {
+            "totalInputTokens": 100,
+            "cacheReadInputTokens": 0,
+            "outputTokens": 0,
+            "latencyMs": 10
+          },
+          "followedCompaction": false
+        },
+        {
+          "index": 2,
+          "round": 2,
+          "roundBoundary": "start",
+          "type": "item",
+          "item": {
+            "kind": "tool_call",
+            "estimatedModelVisibleTokens": 1,
+            "replayEstimatedTokens": 0,
+            "authoredUser": false,
+            "hasModelText": false,
+            "imageCount": 0,
+            "imageEstimatedTokens": 0
+          }
+        },
+        {
+          "index": 3,
+          "round": 2,
+          "roundBoundary": "middle",
+          "type": "item",
+          "item": {
+            "kind": "tool_result",
+            "estimatedModelVisibleTokens": 170000,
+            "replayEstimatedTokens": 0,
+            "authoredUser": false,
+            "hasModelText": false,
+            "imageCount": 0,
+            "imageEstimatedTokens": 0
+          }
+        },
+        {
+          "index": 4,
+          "round": 4,
+          "roundBoundary": "end",
+          "type": "request",
+          "staticPrefixTokens": 5000,
+          "providerUsageBoundary": true,
+          "usage": {
+            "totalInputTokens": 224000,
+            "cacheReadInputTokens": 216000,
+            "outputTokens": 0,
+            "latencyMs": 800
+          },
+          "followedCompaction": false
+        },
+        {
+          "index": 5,
+          "round": 4,
+          "roundBoundary": "start",
+          "type": "item",
+          "item": {
+            "kind": "assistant_message",
+            "estimatedModelVisibleTokens": 50097,
+            "replayEstimatedTokens": 0,
+            "authoredUser": false,
+            "hasModelText": false,
+            "imageCount": 0,
+            "imageEstimatedTokens": 0
+          }
+        },
+        {
+          "index": 6,
+          "round": 5,
+          "roundBoundary": "start",
+          "type": "item",
+          "item": {
+            "kind": "user_message",
+            "estimatedModelVisibleTokens": 2500,
+            "replayEstimatedTokens": 0,
+            "authoredUser": true,
+            "hasModelText": true,
+            "imageCount": 0,
+            "imageEstimatedTokens": 0
+          }
+        },
+        {
+          "index": 7,
+          "round": 6,
+          "roundBoundary": "start",
+          "type": "compaction",
+          "trigger": "automatic",
+          "outcome": "completed",
+          "summaryEstimatedTokens": 4500,
+          "replacementBoundary": 5
+        },
+        {
+          "index": 8,
+          "round": 7,
+          "roundBoundary": "end",
+          "type": "request",
+          "staticPrefixTokens": 5500,
+          "providerUsageBoundary": true,
+          "usage": {
+            "totalInputTokens": 62597,
+            "cacheReadInputTokens": 55000,
+            "outputTokens": 0,
+            "latencyMs": 500
+          },
+          "followedCompaction": true
+        },
+        {
+          "index": 9,
+          "round": 7,
+          "roundBoundary": "start",
+          "type": "item",
+          "item": {
+            "kind": "assistant_message",
+            "estimatedModelVisibleTokens": 1,
+            "replayEstimatedTokens": 0,
+            "authoredUser": false,
+            "hasModelText": false,
+            "imageCount": 0,
+            "imageEstimatedTokens": 0
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -4,7 +4,7 @@ import { describeError } from "../../lib/error"
 import { modeDefinition } from "../../permissions/modes"
 import { evaluatePolicy } from "../../permissions/service"
 import type { PermissionMode, PermissionScope } from "../../permissions/types"
-import { profileToolBatchFinished, profileToolBatchStarted } from "../../profiler/profiler"
+import { profileToolBatchFinished, profileToolBatchStarted, profileToolOutputShape } from "../../profiler/profiler"
 import type { ContextUsage, ModelInputModality, Provider, ThinkingEffort, ToolCallItem } from "../../providers/types"
 import { createRedactedStream, redactJsonObject, redactText } from "../../secrets/redactor"
 import { boundToolOutput, TOOL_FAILED_PREFIX, TOOL_OUTPUT_UNSAVED_PREFIX } from "../../tools/output"
@@ -446,11 +446,15 @@ export class ToolCallRunner {
       }
     }
     output = redactText(output)
+    const originalOutput = output
+    let bounded = false
     try {
       output = await boundToolOutput(this.host.outputDirectory(), output, maxOutputBytes)
+      bounded = output !== originalOutput
     } catch (error) {
       output = `${TOOL_OUTPUT_UNSAVED_PREFIX}${describeError(error)}. The operation may have changed state; inspect it before retrying.`
     }
+    profileToolOutputShape(this.host.sessionId(), this.host.kind, call.name, originalOutput, output, bounded)
     return this.outcome(call, title, readOnly, output, undefined, events, execution)
   }
 

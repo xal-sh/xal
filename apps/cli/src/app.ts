@@ -57,7 +57,7 @@ const ctx: CliContext = {
   },
 }
 
-function registerCore(settings: Settings): void {
+export function registerCore(settings: Settings): void {
   registerBasePrompt()
   registerPermissions(settings)
   registerRedaction(settings)

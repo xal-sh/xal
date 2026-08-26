@@ -25,6 +25,7 @@
     "native:check": "bun run native:ensure && cargo fmt --all -- --check && cargo check --workspace --locked && cargo test --workspace --locked && cargo clippy --workspace --all-targets --locked -- -D warnings",
     "native:benchmark": "bun run native:ensure && bun scripts/native/benchmark.ts",
     "native:benchmark:startup": "bun scripts/native/startup.ts",
+    "benchmark:context": "bun scripts/context-efficiency.ts",
     "checks": "bun run native:check && bun run native:benchmark && bun run typecheck && bun run lint && bun run format && bun run test && bun run build && bun run release:check",
     "checks:fix": "bun run lint:fix && bun run format:fix && bun run native:fix && bun run checks"
   },
