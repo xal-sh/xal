@@ -359,3 +359,37 @@ test("a live stream is charged to the scrollback row budget", async () => {
     setup.renderer.destroy()
   }
 })
+
+test("a block that would overflow the row budget is dropped, including the oldest", async () => {
+  const setup = await createTestRenderer({
+    width: 80,
+    height: 24,
+    footerHeight: 1,
+    screenMode: "split-footer",
+    externalOutputMode: "capture-stdout",
+  })
+
+  try {
+    await setup.renderer.setupTerminal()
+    const scrollback = new Scrollback(
+      setup.renderer,
+      0,
+      () => {},
+      { showOutputs: false, showThinking: false, scrollbackRows: 5 },
+      undefined,
+    )
+    for (let index = 0; index < 3; index += 1) {
+      scrollback.append({ kind: "info", text: `entry ${index}` })
+    }
+    setup.externalOutput.clear()
+
+    scrollback.replay()
+
+    const rows = setup.externalOutput.take().flatMap((commit) => commit.rows)
+    expect(rows.filter((row) => row.includes("entry")).length).toBe(2)
+    expect(rows.some((row) => row.includes("entry 0"))).toBe(false)
+    expect(rows.some((row) => row.includes("entry 2"))).toBe(true)
+  } finally {
+    setup.renderer.destroy()
+  }
+})

@@ -302,9 +302,10 @@ export class Scrollback {
     const surface = this.renderer.createScrollbackSurface()
     try {
       let rows = streaming && this.visible(streaming) ? this.measure(surface, streaming, blocks.at(-1)) : 0
-      for (let index = blocks.length - 1; index > 0; index -= 1) {
-        if (rows >= this.maxRows) return index + 1
-        rows += this.measure(surface, blocks[index]!, blocks[index - 1])
+      for (let index = blocks.length - 1; index >= 0; index -= 1) {
+        const height = this.measure(surface, blocks[index]!, blocks[index - 1])
+        if (rows > 0 && rows + height > this.maxRows) return index + 1
+        rows += height
       }
       return 0
     } finally {
