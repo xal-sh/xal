@@ -55,6 +55,21 @@ test("redacts secrets from shell and compaction history the session persists", (
       replaced: 4,
       retained: [{ type: "assistant_message", text: `still ${SECRET}` }],
     },
+    {
+      type: "compaction",
+      strategy: "user_messages_v1",
+      summary: `current ${SECRET}`,
+      replaced: 4,
+      retained: [
+        {
+          type: "user_message",
+          messageId: "11111111-1111-4111-8111-111111111111",
+          text: `visible ${SECRET}`,
+          modelText: `model ${SECRET}`,
+          images: [],
+        },
+      ],
+    },
   ]
 
   for (const item of items) expect(serialized(redactHistoryItem(item))).not.toContain(SECRET)
@@ -87,6 +102,25 @@ test("recomputes the prompt cache key from the redacted request", () => {
   expect(serialized(redacted)).not.toContain(SECRET)
   expect(redacted.cacheKey).toBe(promptCacheKey(redacted.model, redacted.instructions, redacted.tools))
   expect(redacted.cacheKey).not.toBe(promptCacheKey(request.model, request.instructions, request.tools))
+})
+
+test("uses the redacted conversation model for fast-target cache identity", () => {
+  const request: StreamRequest = {
+    model: `model-fast-${SECRET}`,
+    conversationModel: `model-base-${SECRET}`,
+    instructions: `never reveal ${SECRET}`,
+    tools: [],
+    cacheKey: "stale",
+    input: [],
+    toolChoice: "none",
+    sessionId: "session",
+  }
+
+  const redacted = redactStreamRequest(request)
+
+  if (redacted.conversationModel === undefined) throw new Error("missing conversation model")
+  expect(redacted.cacheKey).toBe(promptCacheKey(redacted.conversationModel, redacted.instructions, redacted.tools))
+  expect(redacted.cacheKey).not.toBe(promptCacheKey(redacted.model, redacted.instructions, redacted.tools))
 })
 
 test("keeps a redacted absolute path absolute when the secret covers its root", () => {

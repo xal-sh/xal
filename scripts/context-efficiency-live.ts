@@ -27,6 +27,51 @@ import { registerTool, unregisterTool } from "../apps/cli/src/tools/registry"
 import type { RegisteredTool } from "../apps/cli/src/tools/types"
 
 type LiveSuite = "paired" | "automatic" | "release" | "production"
+const CONTINUATION_PROBE_VERSION = 2
+
+export interface ContinuationFacts {
+  constraint: string
+  taskState: string
+  recordedFailure: string
+  lateToolFact: string
+}
+
+function continuationFacts(scenario: LiveScenario, run: number, lateToolFact: string): ContinuationFacts {
+  return {
+    constraint: `constraint-${scenario.name}-${run}`,
+    taskState: `task-state-${scenario.name}-${run}`,
+    recordedFailure: `recorded-failure-${scenario.name}-${run}`,
+    lateToolFact,
+  }
+}
+
+export function continuationProbePassed(text: string, facts: ContinuationFacts): boolean {
+  return [
+    "XAL_CONTEXT_CONTINUATION_OK",
+    `constraint=${facts.constraint}`,
+    `task_state=${facts.taskState}`,
+    `recorded_failure=${facts.recordedFailure}`,
+    `late_tool_fact=${facts.lateToolFact}`,
+  ].every((value) => text.includes(value))
+}
+
+function continuationPrompt(): string {
+  return `Recover the benchmark state that existed before compaction. Reply with exactly five lines using these keys and no extra text:
+XAL_CONTEXT_CONTINUATION_OK
+constraint
+task_state
+recorded_failure
+late_tool_fact`
+}
+
+function setupPrompt(facts: ContinuationFacts, nonce: string): string {
+  return `Keep these benchmark facts for later recovery:
+constraint=${facts.constraint}
+task_state=${facts.taskState}
+recorded_failure=${facts.recordedFailure}
+
+Call context_efficiency_probe exactly once with nonce ${nonce}, then reply only SETUP_COMPLETE.`
+}
 
 export interface LiveScenario {
   name:
@@ -184,7 +229,7 @@ class MeasuringProvider implements Provider {
   readonly aliases: string[]
   readonly capabilities: Provider["capabilities"]
   readonly measurements: RequestMeasurement[] = []
-  markerPassed = false
+  continuationPassed = false
   private calibrating = false
   private calibrationEstimate: number | undefined
   private calibrationInputEstimate: number | undefined
@@ -193,7 +238,6 @@ class MeasuringProvider implements Provider {
     private readonly target: Provider,
     private readonly model: string,
     private readonly contextWindowOverride: number | undefined,
-    private readonly marker: string,
   ) {
     this.id = target.id
     this.name = target.name
@@ -234,6 +278,13 @@ class MeasuringProvider implements Provider {
     return { requestTokens: this.calibrationEstimate, inputTokens: this.calibrationInputEstimate }
   }
 
+  private continuationFacts: ContinuationFacts | undefined
+
+  beginContinuation(facts: ContinuationFacts): void {
+    this.continuationPassed = false
+    this.continuationFacts = facts
+  }
+
   async *stream(profileId: string, request: StreamRequest): AsyncGenerator<StreamEvent> {
     const estimatedRequestTokens = estimateRequestTokens(request)
     if (this.calibrating) {
@@ -248,16 +299,21 @@ class MeasuringProvider implements Provider {
     }
     const startedAt = performance.now()
     let usage: Usage | undefined
+    let assistantText = ""
     try {
       for await (const event of this.target.stream(profileId, request)) {
-        if (event.type === "text_delta" && event.text.includes(this.marker)) this.markerPassed = true
+        if (event.type === "text_delta") assistantText += event.text
         if (event.type === "item_done" && event.item.type === "assistant_message") {
-          if (event.item.text.includes(this.marker)) this.markerPassed = true
+          assistantText = event.item.text
         }
         if (event.type === "done") usage = event.usage
         yield event
       }
     } finally {
+      if (request.toolChoice !== "none" && this.continuationFacts) {
+        this.continuationPassed = continuationProbePassed(assistantText, this.continuationFacts)
+        this.continuationFacts = undefined
+      }
       this.measurements.push({
         phase: request.toolChoice === "none" ? "compaction" : "turn",
         elapsedMs: performance.now() - startedAt,
@@ -332,8 +388,10 @@ function benchmarkTool(bytes: number): RegisteredTool {
     readOnly: () => true,
     async execute(args) {
       const nonce = typeof args.nonce === "string" ? args.nonce : "invalid"
+      const fact = `late_tool_fact=${nonce}\n`
       const unit = `synthetic-state-${nonce}-0123456789abcdef\n`
-      return { output: unit.repeat(Math.ceil(bytes / Buffer.byteLength(unit))).slice(0, bytes) }
+      const fillerBytes = Math.max(0, bytes - Buffer.byteLength(fact))
+      return { output: fact + unit.repeat(Math.ceil(fillerBytes / Buffer.byteLength(unit))).slice(0, fillerBytes) }
     },
   }
 }
@@ -367,7 +425,6 @@ export async function runLiveScenario(
   run: number,
   cwd: string,
 ): Promise<{ result: LiveRunResult; effectiveContextWindow: number }> {
-  const marker = "XAL_CONTEXT_CONTINUATION_OK"
   const catalogModel = await findModel(target, profileId, model, true)
   if (!catalogModel?.contextWindow) throw new Error(`model ${model} has no context window`)
   const effectiveContextWindow =
@@ -379,7 +436,6 @@ export async function runLiveScenario(
     target,
     model,
     scenario.contextWindow === "catalog" ? undefined : scenario.contextWindow,
-    marker,
   )
   clearModelCatalog(profileId)
   const modelInfo = await findModel(provider, profileId, model, true)
@@ -406,13 +462,9 @@ export async function runLiveScenario(
   }
   try {
     if (scenario.suites.includes("paired")) {
+      const facts = continuationFacts(scenario, run, `paired-${run}-${scenario.setupTurns - 1}`)
       for (let turn = 0; turn < scenario.setupTurns; turn++) {
-        await completedTurn(
-          session,
-          `Call context_efficiency_probe exactly once with nonce paired-${run}-${turn}, then reply only SETUP_COMPLETE.`,
-          noteCompacted,
-          noteTool,
-        )
+        await completedTurn(session, setupPrompt(facts, `paired-${run}-${turn}`), noteCompacted, noteTool)
       }
       const outcome = await session.compact("Preserve the synthetic state and the user's continuation requirement.")
       if (outcome !== "compacted") throw new Error(`${scenario.name} manual compaction returned ${outcome}`)
@@ -424,24 +476,28 @@ export async function runLiveScenario(
       if (!session.reset()) throw new Error(`${scenario.name} could not reset after request calibration`)
       const staticPrefixTokens = calibration.requestTokens - calibration.inputTokens
       const threshold = modelInfo.autoCompactTokenLimit ?? modelInfo.contextWindow * 0.85
-      const continuationPrompt = `Continue from the synthetic notices and reply with exactly ${marker}.`
+      const probePrompt = continuationPrompt()
       const continuationTokens = estimateConversationItemTokens({
         type: "user_message",
-        text: continuationPrompt,
+        text: probePrompt,
         images: [],
       })
       let estimatedHistoryTokens = 0
+      let lastNotice = "none"
       for (
         let notice = 0;
         notice < scenario.setupTurns && estimatedHistoryTokens + continuationTokens < threshold;
         notice++
       ) {
         const seed = `synthetic-notice-${scenario.name}-${run}-${notice}-0123456789abcdef\n`
+        lastNotice = `notice-${scenario.name}-${run}-${notice}`
+        const facts = continuationFacts(scenario, run, lastNotice)
         const text = seed
           .repeat(Math.ceil(scenario.toolOutputBytes / Buffer.byteLength(seed)))
           .slice(0, scenario.toolOutputBytes)
-        const wrapped = `<system-notice>\n${text}\n</system-notice>`
-        session.recordSystemNotice(text)
+        const noticeText = `constraint=${facts.constraint}\ntask_state=${facts.taskState}\nrecorded_failure=${facts.recordedFailure}\nlate_tool_fact=${facts.lateToolFact}\n${text}`
+        const wrapped = `<system-notice>\n${noticeText}\n</system-notice>`
+        session.recordSystemNotice(noticeText)
         estimatedHistoryTokens += estimateConversationItemTokens({ type: "user_message", text: wrapped, images: [] })
       }
       const completeRequestEstimate = staticPrefixTokens + estimatedHistoryTokens + continuationTokens
@@ -451,23 +507,18 @@ export async function runLiveScenario(
       if (completeRequestEstimate >= effectiveContextWindow) {
         throw new Error(`${scenario.name} setup request estimate reached its hard context window`)
       }
-      provider.markerPassed = false
-      await completedTurn(session, continuationPrompt, noteCompacted, noteTool)
+      provider.beginContinuation(continuationFacts(scenario, run, lastNotice))
+      await completedTurn(session, probePrompt, noteCompacted, noteTool)
       if (!compacted) throw new Error(`${scenario.name} did not reach automatic compaction`)
     }
     if (scenario.suites.includes("paired")) {
       if (toolCalls !== scenario.setupTurns) {
         throw new Error(`${scenario.name} did not execute exactly one benchmark tool call per setup turn`)
       }
-      provider.markerPassed = false
-      await completedTurn(
-        session,
-        `Continue from the compacted state and reply with exactly ${marker}.`,
-        noteCompacted,
-        noteTool,
-      )
+      provider.beginContinuation(continuationFacts(scenario, run, `paired-${run}-${scenario.setupTurns - 1}`))
+      await completedTurn(session, continuationPrompt(), noteCompacted, noteTool)
     }
-    const result = numericRun(provider.measurements, provider.markerPassed)
+    const result = numericRun(provider.measurements, provider.continuationPassed)
     if (result.firstPostCompactionInputTokens === undefined) {
       throw new Error(`${scenario.name} has no provider input measurement after compaction`)
     }
@@ -625,7 +676,9 @@ export function configurationFingerprint(
 
 export function workloadFingerprint(scenario: LiveScenario): string {
   return createHash("sha256")
-    .update(JSON.stringify({ ...scenario, suites: scenario.suites.toSorted() }))
+    .update(
+      JSON.stringify({ probeVersion: CONTINUATION_PROBE_VERSION, ...scenario, suites: scenario.suites.toSorted() }),
+    )
     .digest("hex")
 }
 

@@ -367,7 +367,13 @@ function retainedCandidate(items: ItemEvent[], budget: number): ItemEvent[] {
     if (item.item.kind !== "user_message" || !item.item.authoredUser) continue
     const available = budget - tokens
     if (available <= 0) break
-    const retainedTokens = Math.min(item.item.estimatedModelVisibleTokens, available)
+    const omissionTokens =
+      item.item.imageCount === 0
+        ? 0
+        : estimateTextTokens(
+            `[${item.item.imageCount} image attachment${item.item.imageCount === 1 ? "" : "s"} omitted]`,
+          )
+    const retainedTokens = Math.min(item.item.estimatedModelVisibleTokens + omissionTokens, available)
     retained.unshift({
       ...item,
       item: { ...item.item, estimatedModelVisibleTokens: retainedTokens, imageCount: 0, imageEstimatedTokens: 0 },
@@ -413,7 +419,10 @@ function replayWorkload(
         const retained =
           policy === "legacy"
             ? retainedLegacy(items, Math.floor(workload.contextWindow * 0.25))
-            : retainedCandidate(items, 20_000)
+            : retainedCandidate(
+                items,
+                Math.min(20_000, Math.max(0, 32_000 - event.staticPrefixTokens - pending.summaryEstimatedTokens)),
+              )
         if (policy === "legacy") {
           const boundary = retained[0]?.index ?? event.index
           if (boundary !== pending.replacementBoundary) {
@@ -441,7 +450,7 @@ function replayWorkload(
     if (compacted) {
       const retainedTokens = items.reduce((total, item) => total + replayItemTokens(item), 0)
       const estimated = event.staticPrefixTokens + baseTokens + retainedTokens
-      firstPostCompactionInputTokens.push(policy === "candidate" ? Math.min(32_000, estimated) : estimated)
+      firstPostCompactionInputTokens.push(estimated)
     }
     if (policy === "candidate" && (compacted || event.followedCompaction)) matchesRecordedState = false
     measured =
@@ -1018,8 +1027,12 @@ async function runFixture(args: string[]): Promise<void> {
     }
   }
   const gate = option(args, "--gate")
-  if (gate === "retention" && result.operationalTailViolations !== 0) {
-    throw new Error("candidate retention replay retained operational tail items")
+  if (
+    gate === "retention" &&
+    (result.operationalTailViolations !== 0 ||
+      result.workloads.some((workload) => workload.firstPostCompactionInputTokens.some((tokens) => tokens > 32_000)))
+  ) {
+    throw new Error("candidate retention replay failed replacement retention or size gates")
   }
   if (gate === "release") {
     const legacy = replayFixture(fixture, "legacy", 0.85)

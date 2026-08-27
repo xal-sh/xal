@@ -1,7 +1,7 @@
 {
   "version": 1,
   "suite": "paired",
-  "label": "legacy-probe-v2",
+  "label": "selective-85-no-summary-tools",
   "provider": "provider-1",
   "model": "model-1",
   "configurationFingerprint": "28af407431191b0d47e2978ac1690fde97d537b5a390f993eee9c8ccf236b613",
@@ -12,14 +12,14 @@
       "workloadFingerprint": "810168fd160065a81e62bf1ad0727aee1b44431af0fed46aac791c99909f31b5",
       "effectiveContextWindow": 260000,
       "runs": 3,
-      "totalUncachedInputTokens": 245445,
-      "medianTotalProviderLatencyMs": 24028.514042000003,
-      "p95NormalLatencyMs": 5442.507915999999,
+      "totalUncachedInputTokens": 241774,
+      "medianTotalProviderLatencyMs": 23021.651792000004,
+      "p95NormalLatencyMs": 4071.022541999999,
       "continuationPassRate": 1,
       "normalRequests": 15,
       "compactionRequests": 3,
-      "firstPostCompactionInputTokens": [21917, 21887, 21890],
-      "firstPostCompactionEstimatedTokens": [18306, 18273, 18258]
+      "firstPostCompactionInputTokens": [4617, 4596, 4623],
+      "firstPostCompactionEstimatedTokens": [6362, 6333, 6353]
     },
     {
       "scenario": "paired_subagent_tool_heavy",
@@ -27,14 +27,14 @@
       "workloadFingerprint": "c1a2eae84e358f79aac72c315f98ef4aae9854ea275e44abb7b9769d8354811d",
       "effectiveContextWindow": 260000,
       "runs": 3,
-      "totalUncachedInputTokens": 248985,
-      "medianTotalProviderLatencyMs": 23161.638789999997,
-      "p95NormalLatencyMs": 6744.880916000009,
+      "totalUncachedInputTokens": 240094,
+      "medianTotalProviderLatencyMs": 23914.852500000008,
+      "p95NormalLatencyMs": 6716.945791999999,
       "continuationPassRate": 1,
       "normalRequests": 15,
       "compactionRequests": 3,
-      "firstPostCompactionInputTokens": [21435, 21411, 21434],
-      "firstPostCompactionEstimatedTokens": [17575, 17560, 17597]
+      "firstPostCompactionInputTokens": [4085, 4135, 4105],
+      "firstPostCompactionEstimatedTokens": [5584, 5625, 5616]
     }
   ]
 }

@@ -35,13 +35,29 @@ function toolCall(item: ToolCallItem, target: ConversationTarget): ToolCallItem 
 
 export function omitUserMessageImages(item: UserMessageItem): UserMessageItem {
   if (item.images.length === 0) return item
+  const notice = `[${item.images.length} image attachment${item.images.length === 1 ? "" : "s"} omitted]`
   return {
     ...item,
-    text: [item.text, `[${item.images.length} image attachment${item.images.length === 1 ? "" : "s"} omitted]`]
-      .filter(Boolean)
-      .join("\n\n"),
+    text: [item.text, notice].filter(Boolean).join("\n\n"),
+    ...(item.modelText === undefined ? {} : { modelText: [item.modelText, notice].filter(Boolean).join("\n\n") }),
     images: [],
   }
+}
+
+export function conversationForSummary(items: ConversationItem[]): ConversationItem[] {
+  return items.map((item) => {
+    switch (item.type) {
+      case "user_message":
+      case "tool_result":
+        return item
+      case "assistant_message":
+        return { type: "assistant_message", text: item.text }
+      case "reasoning":
+        return { type: "assistant_message", text: `<reasoning-summary>\n${item.summary}\n</reasoning-summary>` }
+      case "tool_call":
+        return { type: "tool_call", callId: item.callId, name: item.name, args: item.args }
+    }
+  })
 }
 
 function userMessage(item: UserMessageItem): UserMessageItem {

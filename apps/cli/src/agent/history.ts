@@ -1,13 +1,23 @@
 import type { ConversationItem, UserInput, UserMessageItem } from "../providers/types"
 import type { DirectShellResult } from "./events"
 
-export interface CompactionItem {
-  type: "compaction"
-  summary: string
-  replaced: number
-  tokensBefore?: number
-  retained: ConversationItem[]
-}
+export type CompactionItem =
+  | {
+      type: "compaction"
+      summary: string
+      replaced: number
+      tokensBefore?: number
+      retained: ConversationItem[]
+      strategy?: never
+    }
+  | {
+      type: "compaction"
+      strategy: "user_messages_v1"
+      summary: string
+      replaced: number
+      tokensBefore?: number
+      retained: UserMessageItem[]
+    }
 
 export interface DirectShellItem extends DirectShellResult {
   type: "direct_shell"
@@ -50,6 +60,14 @@ export function summaryMessage(summary: string): UserMessageItem {
   }
 }
 
+export function continuationSummaryMessage(summary: string): UserMessageItem {
+  return {
+    type: "user_message",
+    text: `The retained user requests and authoritative state summary below describe the coding work to continue.\n\n<conversation-summary>\n${summary}\n</conversation-summary>`,
+    images: [],
+  }
+}
+
 export function directShellMessage(item: DirectShellItem): UserMessageItem {
   return {
     type: "user_message",
@@ -75,7 +93,11 @@ export function activeHistory(items: HistoryItem[]): ConversationItem[] {
     }
     if (item.type === "compaction") {
       active.length = 0
-      active.push(summaryMessage(item.summary), ...item.retained)
+      if (item.strategy === "user_messages_v1") {
+        active.push(...item.retained, continuationSummaryMessage(item.summary))
+      } else {
+        active.push(summaryMessage(item.summary), ...item.retained)
+      }
       continue
     }
     active.push(item)

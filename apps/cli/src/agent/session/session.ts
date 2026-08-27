@@ -307,6 +307,8 @@ export class AgentSession {
       prompt: (model) => this.providerPrompt(model),
       contextTokens: () => this.contextBudget.currentTokens,
       buildRequest: (provider, model, thinking, signal) => this.buildStreamRequest(provider, model, thinking, signal),
+      buildRequestWithHistory: (history, provider, model, thinking, signal) =>
+        this.buildStreamRequest(provider, model, thinking, signal, history),
       admitRequest: (provider, request) => this.contextBudget.admit(provider.id, this.selectedProfileId(), request),
       onRequestStarted: () => this.recordProviderRequest(),
       observeCompaction: (observation) => profileCompactionShape(this.sessionId, this.kind, observation),
@@ -1534,12 +1536,9 @@ export class AgentSession {
     model: string,
     thinking: ThinkingEffort | undefined,
     signal: AbortSignal,
+    history = this.items,
   ): StreamRequest {
-    const input = prepareConversation(
-      activeHistory(this.items),
-      { provider: provider.id, model },
-      this.supportsImageInput,
-    )
+    const input = prepareConversation(activeHistory(history), { provider: provider.id, model }, this.supportsImageInput)
     if (this.transientQuestionInput) {
       input.push({ type: "user_message", text: this.transientQuestionInput, images: [] })
     }

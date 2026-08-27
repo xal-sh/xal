@@ -59,10 +59,20 @@ test("numeric shape calculators never retain source content", () => {
       summary: secret,
       removedTypes: ["assistant_message", "tool_result"],
     }),
+    compactionShape({
+      trigger: "manual",
+      strategy: "user_messages_v1",
+      outcome: "completed",
+      before: request().input,
+      after: [{ type: "user_message", text: secret, images: [] }],
+      retained: [{ type: "user_message", text: secret, images: [], messageId: secret }],
+      summary: secret,
+      removedTypes: ["assistant_message", "tool_result"],
+    }),
   ]
 
   expect(JSON.stringify(shapes)).not.toContain(secret)
-  expect(strings(shapes)).toEqual(["auto", "legacy", "completed"])
+  expect(strings(shapes)).toEqual(["auto", "legacy", "completed", "manual", "user_messages_v1", "completed"])
 })
 
 test("runtime profiling records retries and bounded tools without affecting requests on writer failure", async () => {
@@ -140,7 +150,7 @@ test("runtime profiling records retries and bounded tools without affecting requ
     expect(JSON.stringify(records)).not.toContain(secret)
     for (const value of strings(shapeRecords)) {
       expect(
-        /^(provider_request_shape|tool_output_shape|compaction_shape|request-\d+|session-\d+|tool-\d+|primary|subagent|auto|manual|legacy|completed|nothing|failed|interrupted)$/.test(
+        /^(provider_request_shape|tool_output_shape|compaction_shape|request-\d+|session-\d+|tool-\d+|primary|subagent|auto|manual|legacy|user_messages_v1|completed|nothing|failed|interrupted)$/.test(
           value,
         ),
       ).toBe(true)

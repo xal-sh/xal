@@ -13,11 +13,32 @@ import live from "./fixtures/context-efficiency-live-v1.json"
 import { generateFixture, parseContextEfficiencyFixture, replayFixture } from "./context-efficiency"
 import {
   aggregateLiveRuns,
+  continuationProbePassed,
   parseLiveCaptureResult,
   parseLiveScenarios,
   runLiveScenario,
   workloadFingerprint,
 } from "./context-efficiency-live"
+
+test("continuation probe requires every pre-compaction fact", () => {
+  const facts = {
+    constraint: "constraint-value",
+    taskState: "task-state-value",
+    recordedFailure: "failure-value",
+    lateToolFact: "late-tool-value",
+  }
+  const lines = [
+    "XAL_CONTEXT_CONTINUATION_OK",
+    `constraint=${facts.constraint}`,
+    `task_state=${facts.taskState}`,
+    `recorded_failure=${facts.recordedFailure}`,
+    `late_tool_fact=${facts.lateToolFact}`,
+  ]
+  expect(continuationProbePassed(lines.join("\n"), facts)).toBe(true)
+  for (let index = 0; index < lines.length; index++) {
+    expect(continuationProbePassed(lines.filter((_, lineIndex) => lineIndex !== index).join("\n"), facts)).toBe(false)
+  }
+})
 
 test("numeric fixture strictly round trips", () => {
   const parsed = parseContextEfficiencyFixture(fixture)
@@ -337,6 +358,30 @@ test("live results round trip only anonymous labels and numeric metrics", () => 
   expect(JSON.stringify(result)).not.toContain("connection")
 })
 
+function requestText(request: StreamRequest): string {
+  return request.input
+    .flatMap((item) => {
+      switch (item.type) {
+        case "user_message":
+          return [item.text, item.modelText ?? ""]
+        case "assistant_message":
+          return [item.text]
+        case "reasoning":
+          return [item.summary]
+        case "tool_call":
+          return [JSON.stringify(item.args)]
+        case "tool_result":
+          return [item.output]
+      }
+    })
+    .join("\n")
+}
+
+function factValue(source: string, key: string): string {
+  const matches = [...source.matchAll(new RegExp(`(?:^|\\n)${key}=([^\\n]+)`, "g"))]
+  return matches.at(-1)?.[1] ?? `missing-${key}`
+}
+
 class SyntheticLiveProvider implements Provider {
   readonly id = "synthetic-live-provider"
   readonly name = "Synthetic live provider"
@@ -362,7 +407,14 @@ class SyntheticLiveProvider implements Provider {
     this.requests.push(request)
     const usage = { totalInputTokens: estimateRequestTokens(request), outputTokens: 4 }
     if (request.toolChoice === "none") {
-      yield { type: "item_done", item: { type: "assistant_message", text: "synthetic summary" } }
+      const source = requestText(request)
+      const summary = [
+        `constraint=${factValue(source, "constraint")}`,
+        `task_state=${factValue(source, "task_state")}`,
+        `recorded_failure=${factValue(source, "recorded_failure")}`,
+        `late_tool_fact=${factValue(source, "late_tool_fact")}`,
+      ].join("\n")
+      yield { type: "item_done", item: { type: "assistant_message", text: summary } }
       yield { type: "done", usage }
       return
     }
@@ -379,20 +431,31 @@ class SyntheticLiveProvider implements Provider {
       yield { type: "done", usage }
       return
     }
-    if (last?.type === "user_message" && last.text.includes("XAL_CONTEXT_CONTINUATION_OK")) {
-      yield { type: "item_done", item: { type: "assistant_message", text: "XAL_CONTEXT_CONTINUATION_OK" } }
+    if (
+      request.input.some((item) => item.type === "user_message" && item.text.includes("XAL_CONTEXT_CONTINUATION_OK"))
+    ) {
+      const source = requestText(request)
+      const response = [
+        "XAL_CONTEXT_CONTINUATION_OK",
+        `constraint=${factValue(source, "constraint")}`,
+        `task_state=${factValue(source, "task_state")}`,
+        `recorded_failure=${factValue(source, "recorded_failure")}`,
+        `late_tool_fact=${factValue(source, "late_tool_fact")}`,
+      ].join("\n")
+      yield { type: "item_done", item: { type: "assistant_message", text: response } }
       yield { type: "done", usage }
       return
     }
     for (let call = 0; call < this.toolCallsPerRound; call++) {
       this.call += 1
+      const nonce = last?.type === "user_message" ? /nonce (paired-\d+-\d+)/.exec(last.text)?.[1] : undefined
       yield {
         type: "item_done",
         item: {
           type: "tool_call",
           callId: `synthetic-call-${this.call}`,
           name: "context_efficiency_probe",
-          args: {},
+          args: nonce ? { nonce } : {},
         },
       }
     }
@@ -405,10 +468,17 @@ test("live scenarios exercise public manual and automatic compaction paths", asy
   const tool: RegisteredTool = {
     name: "context_efficiency_probe",
     description: "Return synthetic benchmark state",
-    parameters: { type: "object", additionalProperties: false },
+    parameters: {
+      type: "object",
+      properties: { nonce: { type: "string" } },
+      required: ["nonce"],
+      additionalProperties: false,
+    },
     title: () => "Read benchmark state",
     readOnly: () => true,
-    execute: async () => ({ output: "state".repeat(9_600) }),
+    execute: async (args) => ({
+      output: `late_tool_fact=${typeof args.nonce === "string" ? args.nonce : "invalid"}\n${"state".repeat(9_600)}`,
+    }),
   }
   const scenarios = parseLiveScenarios(live).scenarios
   const paired = scenarios.find((scenario) => scenario.name === "paired_primary_tool_heavy")

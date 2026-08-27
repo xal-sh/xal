@@ -92,11 +92,18 @@ export function redactHistoryItem(item: HistoryItem): HistoryItem {
     }
   }
   if (item.type !== "compaction") return redactConversationItem(item)
-  return {
-    ...item,
-    summary: redactText(item.summary),
-    retained: item.retained.map(redactConversationItem),
+  if (item.strategy === "user_messages_v1") {
+    return {
+      ...item,
+      summary: redactText(item.summary),
+      retained: item.retained.map((retained) => {
+        const redacted = redactConversationItem(retained)
+        if (redacted.type !== "user_message") throw new Error("invalid retained user message")
+        return redacted
+      }),
+    }
   }
+  return { ...item, summary: redactText(item.summary), retained: item.retained.map(redactConversationItem) }
 }
 
 function redactToolDefinition(tool: ToolDefinition): ToolDefinition {
@@ -110,16 +117,17 @@ function redactToolDefinition(tool: ToolDefinition): ToolDefinition {
 
 export function redactStreamRequest(request: StreamRequest): StreamRequest {
   const model = redactText(request.model)
+  const conversationModel = request.conversationModel === undefined ? undefined : redactText(request.conversationModel)
   const instructions = redactText(request.instructions)
   const tools = request.tools.map(redactToolDefinition)
   return {
     ...request,
     model,
-    ...(request.conversationModel === undefined ? {} : { conversationModel: redactText(request.conversationModel) }),
+    ...(conversationModel === undefined ? {} : { conversationModel }),
     instructions,
     input: request.input.map(redactConversationItem),
     tools,
-    cacheKey: promptCacheKey(model, instructions, tools),
+    cacheKey: promptCacheKey(conversationModel ?? model, instructions, tools),
     sessionId: redactText(request.sessionId),
   }
 }

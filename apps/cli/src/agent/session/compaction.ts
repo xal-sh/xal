@@ -1,8 +1,10 @@
 import { resolveThinking } from "../../config/thinking"
 import { describeError } from "../../lib/error"
-import { contextWindow, findModel, modelSupportsImageInput } from "../../providers/catalog"
-import { prepareConversation } from "../../providers/conversation"
-import { estimateConversationItemTokens, estimateTextTokens } from "../../providers/request-size"
+import { truncateUtf8Middle } from "../../lib/text"
+import { findModel, modelSupportsImageInput } from "../../providers/catalog"
+import { promptCacheKey } from "../../providers/cache"
+import { conversationForSummary, omitUserMessageImages, prepareConversation } from "../../providers/conversation"
+import { estimateConversationItemTokens, estimateRequestTokens } from "../../providers/request-size"
 import { collectStreamedText, StreamedTextAttemptError } from "../../providers/streamed-text"
 import { isProviderError } from "../../providers/errors"
 import type {
@@ -14,21 +16,22 @@ import type {
   UserMessageItem,
 } from "../../providers/types"
 import type { AgentEvent, AgentState } from "../events"
-import { activeHistory, conversationOnly, directShellMessage, type CompactionItem, type HistoryItem } from "../history"
+import { activeHistory, type CompactionItem, type HistoryItem } from "../history"
 import type { SessionKind } from "../types"
 import type { ContextAdmission } from "./context-budget"
 import { isAbortError } from "./types"
 
 export const COMPACTION_TRIGGER_RATIO = 0.85
 
-const TAIL_RATIO = 0.25
-const MANUAL_TAIL_TOKENS = 16_000
+export const MAX_RETAINED_USER_TOKENS = 20_000
+export const MAX_REPLACEMENT_REQUEST_TOKENS = 32_000
+const TRUNCATION_MARKER = "\n\n[older user message truncated]\n\n"
 
 export type CompactionTrigger = "auto" | "manual"
 
 export interface CompactionObservation {
   trigger: CompactionTrigger
-  strategy: "legacy"
+  strategy: "legacy" | "user_messages_v1"
   outcome: "completed" | "nothing" | "failed" | "interrupted"
   tokensBefore?: number
   before: ConversationItem[]
@@ -61,12 +64,6 @@ Rules:
 - Omit pleasantries and narration; write for a reader who must resume work immediately.
 - Output the summary only, with no preamble.`
 
-export function tailBudget(window: number | undefined, trigger: CompactionTrigger): number {
-  if (window === undefined) return MANUAL_TAIL_TOKENS
-  const budget = Math.floor(window * TAIL_RATIO)
-  return trigger === "manual" ? Math.min(budget, MANUAL_TAIL_TOKENS) : budget
-}
-
 export async function resolveCompactionTarget(
   provider: Provider,
   profileId: string,
@@ -82,70 +79,52 @@ export async function resolveCompactionTarget(
   }
 }
 
-function itemTokens(item: HistoryItem): number {
-  switch (item.type) {
-    case "user_message":
-    case "assistant_message":
-    case "reasoning":
-    case "tool_call":
-    case "tool_result":
-      return estimateConversationItemTokens(item)
-    case "direct_shell":
-      return estimateConversationItemTokens(directShellMessage(item))
-    case "compaction":
-      return item.retained.reduce(
-        (total, retained) => total + estimateConversationItemTokens(retained),
-        estimateTextTokens(item.summary),
-      )
+function truncateUserMessage(item: UserMessageItem, maximumTokens: number): UserMessageItem | undefined {
+  if (maximumTokens < estimateConversationItemTokens({ type: "user_message", text: TRUNCATION_MARKER, images: [] })) {
+    return undefined
+  }
+  const truncate = (text: string): string => {
+    let low = 0
+    let high = maximumTokens * 4
+    let result = truncateUtf8Middle(text, high, TRUNCATION_MARKER)
+    while (low < high) {
+      const middle = Math.ceil((low + high) / 2)
+      const candidate = truncateUtf8Middle(text, middle, TRUNCATION_MARKER)
+      if (estimateConversationItemTokens({ type: "user_message", text: candidate, images: [] }) <= maximumTokens) {
+        low = middle
+        result = candidate
+      } else {
+        high = middle - 1
+      }
+    }
+    return result
+  }
+  return {
+    ...item,
+    text: truncate(item.text),
+    ...(item.modelText === undefined ? {} : { modelText: truncate(item.modelText) }),
   }
 }
 
-export function estimateHistoryTokens(items: HistoryItem[]): number {
-  return items.reduce((total, item) => total + itemTokens(item), 0)
-}
-
-export interface CompactionSplit {
-  head: HistoryItem[]
-  tail: ConversationItem[]
-  replaced: number
-}
-
-function startsRound(items: HistoryItem[], index: number): boolean {
-  const item = items[index]!
-  if (item.type === "tool_result") return false
-  if (item.type === "user_message" || item.type === "direct_shell") return true
-  const previous = items[index - 1]
-  if (!previous) return true
-  return (
-    previous.type === "user_message" ||
-    previous.type === "tool_result" ||
-    previous.type === "direct_shell" ||
-    previous.type === "compaction"
-  )
-}
-
-function tailStart(items: HistoryItem[], boundary: number): number {
-  for (let index = boundary; index < items.length; index++) {
-    if (startsRound(items, index)) return index
-  }
-  return items.length
-}
-
-export function splitForCompaction(items: HistoryItem[], tailTokens: number): CompactionSplit {
-  const floor = items.findLastIndex((item) => item.type === "compaction") + 1
-  let boundary = items.length
+export function retainAuthoredUsers(items: ConversationItem[], maximumTokens: number): UserMessageItem[] {
+  const retained: UserMessageItem[] = []
   let tokens = 0
-
-  while (boundary > floor) {
-    const next = tokens + itemTokens(items[boundary - 1]!)
-    if (next > tailTokens) break
-    tokens = next
-    boundary -= 1
+  for (const item of items.toReversed()) {
+    if (item.type !== "user_message" || item.messageId === undefined) continue
+    const portable = omitUserMessageImages(item)
+    const available = maximumTokens - tokens
+    if (available <= 0) break
+    const itemTokens = estimateConversationItemTokens(portable)
+    if (itemTokens <= available) {
+      retained.unshift(portable)
+      tokens += itemTokens
+      continue
+    }
+    const truncated = truncateUserMessage(portable, available)
+    if (truncated) retained.unshift(truncated)
+    break
   }
-
-  if (boundary <= floor) return { head: [], tail: [], replaced: 0 }
-  const start = tailStart(items, boundary)
-  return { head: items.slice(0, start), tail: conversationOnly(items.slice(start)), replaced: start - floor }
+  return retained
 }
 
 export interface SummaryRequest {
@@ -171,8 +150,13 @@ function summaryRequest(instructions: string | undefined): UserMessageItem {
 
 export async function summarizeHistory(request: SummaryRequest): Promise<string> {
   const target = { provider: request.provider.id, model: request.historyModel ?? request.model }
+  const prompt = {
+    instructions: request.prompt.instructions,
+    tools: [],
+    cacheKey: promptCacheKey(target.model, request.prompt.instructions, []),
+  }
   const input = prepareConversation(
-    [...activeHistory(request.history), summaryRequest(request.instructions)],
+    [...conversationForSummary(activeHistory(request.history)), summaryRequest(request.instructions)],
     target,
     request.imageInput,
   )
@@ -187,7 +171,7 @@ export async function summarizeHistory(request: SummaryRequest): Promise<string>
       model: request.model,
       ...(request.historyModel === undefined ? {} : { conversationModel: request.historyModel }),
       thinking: request.thinking,
-      ...request.prompt,
+      ...prompt,
       input,
       toolChoice: "none",
       sessionId: request.sessionId,
@@ -222,6 +206,13 @@ export interface CompactionHost {
     thinking: ThinkingEffort | undefined,
     signal: AbortSignal,
   ): StreamRequest
+  buildRequestWithHistory(
+    history: HistoryItem[],
+    provider: Provider,
+    model: string,
+    thinking: ThinkingEffort | undefined,
+    signal: AbortSignal,
+  ): StreamRequest
   admitRequest(provider: Provider, request: StreamRequest): ContextAdmission
   onRequestStarted(): void
   observeCompaction(observation: CompactionObservation): void
@@ -240,15 +231,14 @@ export async function runCompaction(
   admittedTokensBefore?: number,
 ): Promise<boolean> {
   const profileId = host.profileId()
-  const budget = tailBudget(await contextWindow(provider, profileId, model), trigger)
   const history = host.history()
   const before = activeHistory(history)
   const tokensBefore = admittedTokensBefore ?? host.contextTokens()
-  const { head, tail, replaced } = splitForCompaction(history, budget)
-  if (head.length === 0) {
+  const latest = history.at(-1)
+  if (before.length === 0 || (latest?.type === "compaction" && latest.strategy === "user_messages_v1")) {
     host.observeCompaction({
       trigger,
-      strategy: "legacy",
+      strategy: "user_messages_v1",
       outcome: "nothing",
       ...(tokensBefore === undefined ? {} : { tokensBefore }),
       before,
@@ -259,7 +249,6 @@ export async function runCompaction(
     return false
   }
 
-  const removedTypes = head.map((item) => item.type)
   try {
     host.setState("compacting")
     const target = await resolveCompactionTarget(provider, profileId, model)
@@ -274,10 +263,10 @@ export async function runCompaction(
           model: target.model,
           historyModel: model,
           thinking: target.thinking,
-          prompt: host.prompt(target.model),
+          prompt: host.prompt(model),
           sessionId: host.sessionId(),
           kind: host.kind,
-          history: head,
+          history,
           instructions,
           imageInput: target.imageInput,
           signal,
@@ -297,32 +286,68 @@ export async function runCompaction(
       }
     }
 
-    const checkpoint: CompactionItem = { type: "compaction", summary, replaced, tokensBefore, retained: tail }
+    const baseCheckpoint: CompactionItem = {
+      type: "compaction",
+      strategy: "user_messages_v1",
+      summary,
+      replaced: before.length,
+      tokensBefore,
+      retained: [],
+    }
+    const baseRequest = host.buildRequestWithHistory([baseCheckpoint], provider, model, undefined, signal)
+    const baseEstimate = estimateRequestTokens(baseRequest)
+    if (baseEstimate > MAX_REPLACEMENT_REQUEST_TOKENS) {
+      throw new ContextCompactionError(
+        `context replacement requires approximately ${baseEstimate} tokens before retaining user messages, exceeding the ${MAX_REPLACEMENT_REQUEST_TOKENS}-token replacement budget`,
+      )
+    }
+    const retained = retainAuthoredUsers(
+      before,
+      Math.min(MAX_RETAINED_USER_TOKENS, MAX_REPLACEMENT_REQUEST_TOKENS - baseEstimate),
+    )
+    const retainedIds = new Set(retained.map((item) => item.messageId))
+    const removedTypes = before.flatMap((item) =>
+      item.type === "user_message" && item.messageId !== undefined && retainedIds.has(item.messageId)
+        ? []
+        : [item.type],
+    )
+    const checkpoint: CompactionItem = {
+      ...baseCheckpoint,
+      replaced: removedTypes.length,
+      retained,
+    }
+    const replacementRequest = host.buildRequestWithHistory([checkpoint], provider, model, undefined, signal)
+    const replacementEstimate = estimateRequestTokens(replacementRequest)
+    if (replacementEstimate > MAX_REPLACEMENT_REQUEST_TOKENS) {
+      throw new ContextCompactionError(
+        `context replacement requires approximately ${replacementEstimate} tokens, exceeding the ${MAX_REPLACEMENT_REQUEST_TOKENS}-token replacement budget`,
+      )
+    }
     const after = activeHistory([checkpoint])
     host.observeCompaction({
       trigger,
-      strategy: "legacy",
+      strategy: "user_messages_v1",
       outcome: "completed",
       ...(tokensBefore === undefined ? {} : { tokensBefore }),
       before,
       after,
-      retained: tail,
+      retained,
       summary,
       removedTypes,
     })
     host.replaceHistory(checkpoint)
-    host.emit({ type: "compacted", summary, replaced, tokensBefore })
+    host.emit({ type: "compacted", summary, replaced: checkpoint.replaced, tokensBefore })
     return true
   } catch (error) {
     host.observeCompaction({
       trigger,
-      strategy: "legacy",
+      strategy: "user_messages_v1",
       outcome: isCompactionInterruption(error, signal) ? "interrupted" : "failed",
       ...(tokensBefore === undefined ? {} : { tokensBefore }),
       before,
       after: before,
-      retained: tail,
-      removedTypes,
+      retained: [],
+      removedTypes: before.map((item) => item.type),
     })
     throw error
   }

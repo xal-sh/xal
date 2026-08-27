@@ -368,3 +368,32 @@ test("uses a compaction item as the authoritative persisted history floor", asyn
     expect(loaded?.events).toEqual([discardedEvent, compacted, retainedEvent])
   })
 })
+
+test("loads a user-only compaction floor without rewriting the version-2 session", async () => {
+  await withSessionFile(async (path) => {
+    const compaction: HistoryItem = {
+      type: "compaction",
+      strategy: "user_messages_v1",
+      summary: "Current state",
+      replaced: 5,
+      tokensBefore: 220_000,
+      retained: [
+        {
+          type: "user_message",
+          messageId: "11111111-1111-4111-8111-111111111111",
+          text: "Retained request",
+          modelText: "Retained model request",
+          images: [],
+        },
+      ],
+    }
+    const encoded = record({ type: "meta", meta }) + record({ type: "item", item: compaction })
+    await writeFile(path, encoded)
+
+    const loaded = await loadSession(path)
+
+    expect(loaded?.meta.version).toBe(2)
+    expect(loaded?.items).toEqual([compaction])
+    expect(await readFile(path, "utf8")).toBe(encoded)
+  })
+})

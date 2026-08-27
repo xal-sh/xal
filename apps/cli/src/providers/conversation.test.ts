@@ -1,8 +1,42 @@
 import { describe, expect, test } from "bun:test"
 import type { ConversationItem } from "./types"
-import { prepareConversation } from "./conversation"
+import { conversationForSummary, omitUserMessageImages, prepareConversation } from "./conversation"
 
 const target = { provider: "target-provider", model: "target-model" }
+
+describe("conversationForSummary", () => {
+  test("preserves semantic history without provider replay payloads", () => {
+    const items: ConversationItem[] = [
+      { type: "user_message", text: "request", images: [] },
+      {
+        type: "assistant_message",
+        text: "answer",
+        replay: { provider: target.provider, data: { opaque: "assistant" } },
+      },
+      {
+        type: "reasoning",
+        summary: "checked the boundary",
+        replay: { provider: target.provider, data: { opaque: "reasoning" } },
+      },
+      {
+        type: "tool_call",
+        callId: "call-id",
+        name: "read",
+        args: { path: "file.ts" },
+        replay: { provider: target.provider, data: { opaque: "tool" } },
+      },
+      { type: "tool_result", callId: "call-id", output: "contents" },
+    ]
+
+    expect(conversationForSummary(items)).toEqual([
+      { type: "user_message", text: "request", images: [] },
+      { type: "assistant_message", text: "answer" },
+      { type: "assistant_message", text: "<reasoning-summary>\nchecked the boundary\n</reasoning-summary>" },
+      { type: "tool_call", callId: "call-id", name: "read", args: { path: "file.ts" } },
+      { type: "tool_result", callId: "call-id", output: "contents" },
+    ])
+  })
+})
 
 describe("prepareConversation", () => {
   test("keeps only portable provider replay data and sends transformed prompt text", () => {
@@ -78,6 +112,14 @@ describe("prepareConversation", () => {
         images: [],
       },
     ])
+    expect(prepareConversation(items, target, false)[0]).toMatchObject({
+      text: "hook-transformed prompt\n\n[2 image attachments omitted]",
+    })
+    const original = items[0]
+    if (!original || original.type !== "user_message") throw new Error("missing user message")
+    const omitted = omitUserMessageImages(original)
+    expect(omitted.text).toBe("visible prompt\n\n[2 image attachments omitted]")
+    expect(omitted.modelText).toBe("hook-transformed prompt\n\n[2 image attachments omitted]")
     expect(items[0]).toMatchObject({ text: "visible prompt", images: [{ data: "first" }, { data: "second" }] })
   })
 

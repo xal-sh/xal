@@ -5,7 +5,7 @@ import { ProviderError } from "../../providers/errors"
 import { registerTool, unregisterTool } from "../../tools/registry"
 import type { ElicitationResult, InteractiveTool, Tool } from "../../tools/types"
 import type { AgentEvent } from "../events"
-import { summaryMessage } from "../history"
+import { continuationSummaryMessage } from "../history"
 import { interjectionMessage, interjectionResumeMessage } from "./queue"
 import {
   completedRound,
@@ -154,7 +154,7 @@ describe("AgentSession control flow", () => {
     }
   })
 
-  test("manually compacts long history and uses only the summary on the next turn", async () => {
+  test("manually compacts long history into authored users followed by the summary", async () => {
     const longResponse = longNovelResponse("compactionconcept")
     const provider = new ScriptedProvider([
       completedRound(longResponse),
@@ -182,7 +182,7 @@ describe("AgentSession control flow", () => {
         {
           type: "compacted",
           summary: "Condensed history",
-          replaced: 2,
+          replaced: 1,
           tokensBefore: undefined,
         },
       ])
@@ -196,7 +196,8 @@ describe("AgentSession control flow", () => {
         context: undefined,
       })
       expect(provider.requests[2]?.input).toEqual([
-        summaryMessage("Condensed history"),
+        { type: "user_message", text: "Build the original feature", images: [] },
+        continuationSummaryMessage("Condensed history"),
         { type: "user_message", text: "Continue", images: [] },
       ])
     } finally {
@@ -256,6 +257,7 @@ describe("AgentSession control flow", () => {
     expect(provider.requests[1]?.input.slice(0, -1)).toEqual([
       { type: "user_message", text: "Fill the context", images: [] },
       { type: "assistant_message", text: longResponse },
+      { type: "user_message", text: "Continue after it fills", images: [] },
     ])
     expect(provider.requests[1]?.cacheKey).toBe(provider.requests[0]?.cacheKey)
     expect(provider.requests[1]?.instructions).toBe(provider.requests[0]?.instructions)
@@ -265,14 +267,15 @@ describe("AgentSession control flow", () => {
     if (!summaryRequest || summaryRequest.type !== "user_message") throw new Error("missing summary request")
     expect(summaryRequest.text).toContain("Preserve exact identifiers")
     expect(provider.requests[2]?.input).toEqual([
-      summaryMessage("Automatic summary"),
+      { type: "user_message", text: "Fill the context", images: [] },
       { type: "user_message", text: "Continue after it fills", images: [] },
+      continuationSummaryMessage("Automatic summary"),
     ])
     const compacted = observed.find((event) => event.type === "compacted")
     expect(compacted).toMatchObject({
       type: "compacted",
       summary: "Automatic summary",
-      replaced: 2,
+      replaced: 1,
     })
     if (!compacted || compacted.type !== "compacted") throw new Error("missing compaction event")
     expect(compacted.tokensBefore).toBeGreaterThan(90)
@@ -360,7 +363,11 @@ describe("AgentSession control flow", () => {
     expect(
       provider.requests[1]?.input.some((item) => item.type === "user_message" && item.text.length === 12_000),
     ).toBe(true)
-    expect(provider.requests[2]?.input).toEqual([summaryMessage("Queued summary")])
+    expect(provider.requests[2]?.input).toEqual([
+      { type: "user_message", text: "Start", images: [] },
+      { type: "user_message", text: "q".repeat(12_000), images: [] },
+      continuationSummaryMessage("Queued summary"),
+    ])
   })
 
   test("automatically admits a bounded 50 KiB tool result before continuing", async () => {
@@ -478,10 +485,15 @@ describe("AgentSession control flow", () => {
     expect(provider.requests).toHaveLength(3)
     expect(provider.requests[1]?.toolChoice).toBe("none")
     expect(
-      provider.requests[2]?.input.some(
+      provider.requests[1]?.input.some(
         (item) => item.type === "user_message" && item.text.includes("did not call submit_output"),
       ),
     ).toBe(true)
+    expect(
+      provider.requests[2]?.input.some(
+        (item) => item.type === "user_message" && item.text.includes("did not call submit_output"),
+      ),
+    ).toBe(false)
   })
 
   test("retries one pre-event automatic compaction failure and fails closed", async () => {

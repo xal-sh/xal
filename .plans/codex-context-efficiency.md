@@ -1,6 +1,6 @@
 # Codex-level context efficiency without provider lock-in
 
-Status: reviewed implementation plan. No implementation has started.
+Status: implementation in progress through Phase 3.
 
 This file is the handoff contract for a fresh implementation session. Execute one phase at a time, keep Xal buildable and runnable after every phase, run each phase's verification before proceeding, and update `Progress` only after the phase is green. File and line citations describe the planning-time tree on 2026-08-26; if the tree drifts, relocate the cited symbol before editing instead of trusting a stale line number.
 
@@ -158,12 +158,12 @@ Keep the current compaction target policy: the same underlying model, its option
 
 For the request itself:
 
-- Use complete active history plus the existing summary instruction as the final user message.
-- Keep the normal system instructions and complete tool definitions, with `toolChoice: "none"`.
+- Use a provider-neutral semantic projection of complete active history plus the existing summary instruction as the final user message. Preserve user and assistant text, reasoning summaries, tool calls, and tool results while removing opaque provider replay payloads.
+- Keep the normal system instructions with `toolChoice: "none"`. Omit tool definitions because the summary request cannot call them, and recompute `cacheKey` from the exact schema-free prompt.
 - Build `instructions`, `tools`, and `cacheKey` through `host.prompt(originalConversationModel)`, while sending the request to the resolved compaction target and setting `conversationModel` to the original model.
 - Update `redactStreamRequest` to validate/recompute cache identity from the redacted `conversationModel ?? model`, not unconditionally from the transmitted fast target. It currently overwrites `cacheKey` from `request.model` (`apps/cli/src/secrets/data.ts:111-123`).
 
-Normal requests rebuild complete active history with the same prompt prefix (`apps/cli/src/agent/session/session.ts:1509-1547`). OpenAI transports send the stable prompt cache key (`apps/cli/src/plugins/openai/chatgpt-transport.ts:20-44`, `apps/cli/src/plugins/openai/api-transport.ts:23-48`). Keeping instructions and tools unchanged lets the full-history summary request extend the immediately preceding cached prefix; omitting tools would alter an early prefix solely to save a small static schema. Cache reuse across base and fast service tiers remains a measured gate, not an assumption.
+Normal requests rebuild complete active history with the normal prompt prefix (`apps/cli/src/agent/session/session.ts:1509-1547`). OpenAI transports send the stable prompt cache key (`apps/cli/src/plugins/openai/chatgpt-transport.ts:20-44`, `apps/cli/src/plugins/openai/api-transport.ts:23-48`). Live profiling on 2026-08-27 showed no cache reads across either base/fast service tiers or high/low reasoning tiers for the summary request. Omitting unusable tool schemas reduced uncached input enough to pass both paired gates while preserving the complete semantic transcript.
 
 ### 5. Threshold metadata
 
@@ -361,7 +361,7 @@ Work:
 1. Add the legacy/new compaction union and strategy-specific active-history ordering. Preserve the legacy branch exactly.
 2. Implement authored-user selection, the dynamic 32k replacement-request budget with a 20k user ceiling, image omission, boundary middle truncation, full-history summary input, repeated-compaction behavior, and the new summary-last handoff message. Preserve the legacy preamble only for legacy records.
 3. Parse, redact, persist, load, resume, rewind, and redo both formats. Unknown strategies and invalid new retained items fail loudly. Do not bump session metadata version and do not rewrite a session merely because it was loaded.
-4. Build the summary prompt/cache identity from the original conversation model while retaining the existing fast/low target and unchanged prompt/tool prefix. Make redaction recompute/validate from `conversationModel ?? model` so it cannot silently switch back to the fast-target identity.
+4. Build the summary prompt/cache identity from the original conversation model while retaining the existing fast/low target. Preserve instructions, omit unusable tool definitions, and recompute the schema-free cache identity. Make redaction recompute/validate from `conversationModel ?? model` so it cannot silently switch back to the fast-target identity.
 5. Add the candidate simulator and continuation fixtures/probes. The deterministic probe must include exact user constraints, current task state, a recorded failure, and late tool facts so loss is observable.
 
 Critical tests:
@@ -374,7 +374,7 @@ Critical tests:
 - A byte-for-byte legacy record parses/loads without semantic rewrite; a new record writes and reads in the same shape.
 - Resume both formats produces the expected next provider input; compacting a resumed legacy session writes the new strategy.
 - Rewind and redo work across both compaction floors.
-- The summary request has complete history, `toolChoice: "none"`, unchanged instructions/tools, the original model's cache key, the resolved compaction target, and no mutation on empty/failed output. `redactStreamRequest` preserves the original conversation-model cache identity for a fast-target request.
+- The summary request has complete semantic history without opaque replay, `toolChoice: "none"`, unchanged instructions, no tool definitions, a cache key recomputed from that exact original-model prompt, the resolved compaction target, and no mutation on empty/failed output. `redactStreamRequest` preserves the original conversation-model cache identity for a fast-target request.
 - Existing tool-output tests prove the shared truncation extraction did not alter tool output.
 
 Phase verification:
@@ -529,7 +529,7 @@ Engineering guardrails:
 
 ## Known unverified facts
 
-- Whether OpenAI cache entries are shared between base and priority/`-fast` service requests. Phase 3 measures this; the plan does not assume it.
+- OpenAI cache entries were not reused by the Phase 3 summary request across base and priority/`-fast` service tiers or across high/low reasoning tiers in the authorized paired workload. The shipped schema-free summary prompt does not depend on cross-tier cache reuse.
 - Whether every ChatGPT runtime model includes `auto_compact_token_limit`. Parsing is optional and 90% remains the portable fallback.
 - Whether production-scale full-history summaries fit the 32k replacement target and yield provider-reported input under 35k. The dynamic user budget, conservative replay sensitivity, atomic oversize failure, and production-scale live probe are the mitigation and gate.
 - Continuation quality after removing every operational tail item. Full-history summarization and the fixed probe are the mitigation and gate.
@@ -541,3 +541,4 @@ Engineering guardrails:
 
 - [x] Phase 1 — Instrument and freeze the baseline. The deterministic legacy replay reproduces five automatic compactions with a 62,597-token median. The authorized three-run paired baseline for `Saeed` / `gpt-5.6-sol` passed for primary and subagent workloads with continuation rate 1, anonymous configuration/workload fingerprints, and no raw content. Targeted tests, `bun checks:fix`, CLI smoke, privacy validation, and independent review passed on 2026-08-27.
 - [x] Phase 2 — Make accounting and admission correct. The session-owned ledger admits the exact request after all local drains, invalidates incompatible measurements, commits provider output and usage without double counting, retries only eligible pre-event compaction failures, and fails closed at required compaction or the hard window for primary and subagent sessions. The exact targeted suite passed 53 tests, the frozen legacy replay remained at five automatic compactions and a 62,597-token median, `bun checks:fix`, CLI smoke, and independent review passed on 2026-08-27.
+- [x] Phase 3 — Replace the operational tail. New `user_messages_v1` checkpoints retain only image-free authored users before an authoritative summary, remain compatible with legacy records and repeated compaction, and enforce the 20k authored-user ceiling plus 32k complete-request budget. The corrected fact-recovery probe passed 6/6 live continuations. Against the recaptured probe-v2 baseline, primary/subagent uncached input improved from 245,445/248,985 to 241,774/240,094, primary latency improved within the gate and subagent latency stayed within 5% noise, and first post-compaction input fell from roughly 21.4–21.9k to 4.1–4.6k. The deterministic gate reported five compactions, a 12,500-token median, and zero operational tails; 75 targeted tests, 541 CLI tests, 17 website tests, checks/build/release, profiler health, and CLI smoke passed on 2026-08-27.

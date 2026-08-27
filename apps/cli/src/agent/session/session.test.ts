@@ -562,6 +562,136 @@ describe("AgentSession", () => {
     expect(provider.requests[0]?.toolChoice).toBe("auto")
   })
 
+  test("resumes legacy and user-only checkpoints with their strategy-specific ordering", async () => {
+    for (const strategy of ["legacy", "user_messages_v1"] as const) {
+      const provider = new ScriptedProvider([completedRound("Continued")])
+      const session = harness.createSession(provider)
+      const cwd = session.exportSnapshot().meta.cwd
+      const path = join(tmpdir(), `xal-resume-${strategy}-${crypto.randomUUID()}.jsonl`)
+      const retainedUser = {
+        type: "user_message" as const,
+        messageId: "11111111-1111-4111-8111-111111111111",
+        text: "Retained request",
+        images: [],
+      }
+      const checkpoint =
+        strategy === "legacy"
+          ? {
+              type: "compaction" as const,
+              summary: "Legacy state",
+              replaced: 2,
+              retained: [{ type: "assistant_message" as const, text: "Legacy tail" }],
+            }
+          : {
+              type: "compaction" as const,
+              strategy,
+              summary: "Current state",
+              replaced: 2,
+              retained: [retainedUser],
+            }
+
+      try {
+        expect(
+          session.resume({
+            session: {
+              meta: {
+                version: 2,
+                id: crypto.randomUUID(),
+                cwd,
+                provider: provider.id,
+                profile: "test-profile",
+                model: "test-model",
+                mode: "ask",
+                startedAt: Date.now(),
+              },
+              items: [checkpoint],
+              checkpoints: [],
+              events: [],
+            },
+            path,
+            cwd,
+            provider,
+            profileId: "test-profile",
+            model: "test-model",
+            mode: "ask",
+            continueGoal: false,
+          }),
+        ).toBe(true)
+        expect((await runSettledTurn(session, { text: "Continue now", images: [] })).status).toBe("completed")
+        expect(provider.requests[0]?.input).toEqual(
+          strategy === "legacy"
+            ? [
+                { type: "user_message", text: expect.stringContaining("Legacy state"), images: [] },
+                { type: "assistant_message", text: "Legacy tail" },
+                { type: "user_message", text: "Continue now", images: [] },
+              ]
+            : [
+                { type: "user_message", text: "Retained request", images: [] },
+                { type: "user_message", text: expect.stringContaining("Current state"), images: [] },
+                { type: "user_message", text: "Continue now", images: [] },
+              ],
+        )
+      } finally {
+        await session.flushPersistence()
+        await rm(path, { force: true })
+      }
+    }
+  })
+
+  test("converts a resumed legacy checkpoint on its next compaction", async () => {
+    const provider = new ScriptedProvider([completedRound("Converted state"), completedRound("Continued")])
+    const session = harness.createSession(provider)
+    const cwd = session.exportSnapshot().meta.cwd
+    const path = join(tmpdir(), `xal-resume-convert-${crypto.randomUUID()}.jsonl`)
+    const messageId = "11111111-1111-4111-8111-111111111111"
+
+    try {
+      expect(
+        session.resume({
+          session: {
+            meta: {
+              version: 2,
+              id: crypto.randomUUID(),
+              cwd,
+              provider: provider.id,
+              profile: "test-profile",
+              model: "test-model",
+              mode: "ask",
+              startedAt: Date.now(),
+            },
+            items: [
+              {
+                type: "compaction",
+                summary: "Legacy state",
+                replaced: 2,
+                retained: [{ type: "user_message", messageId, text: "Retained request", images: [] }],
+              },
+            ],
+            checkpoints: [],
+            events: [],
+          },
+          path,
+          cwd,
+          provider,
+          profileId: "test-profile",
+          model: "test-model",
+          mode: "ask",
+          continueGoal: false,
+        }),
+      ).toBe(true)
+      expect(await session.compact()).toBe("compacted")
+      expect((await runSettledTurn(session, { text: "Continue now", images: [] })).status).toBe("completed")
+      expect(provider.requests[1]?.input).toEqual([
+        { type: "user_message", text: "Retained request", images: [] },
+        { type: "user_message", text: expect.stringContaining("Converted state"), images: [] },
+        { type: "user_message", text: "Continue now", images: [] },
+      ])
+    } finally {
+      await session.flushPersistence()
+      await rm(path, { force: true })
+    }
+  })
+
   test("undo invalidates measured context before the next admission", async () => {
     const provider = new ScriptedProvider(
       [completedRound("Initial response", { totalInputTokens: 90_000 }), completedRound("After undo")],

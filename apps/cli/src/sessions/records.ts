@@ -19,6 +19,7 @@ import {
   type ProviderReplay,
   type ThinkingEffort,
   type Usage,
+  type UserMessageItem,
 } from "../providers/types"
 import { parseTaskList } from "../tasks/types"
 import type { ProcessExecution, ProcessSandbox } from "../tools/types"
@@ -493,13 +494,28 @@ function parseCompaction(raw: Record<string, unknown>): CompactionItem | undefin
   const summary = asString(raw.summary)
   const replaced = asNumber(raw.replaced)
   if (!summary || replaced === undefined || !Array.isArray(raw.retained)) return undefined
+  const strategy = asString(raw.strategy)
+  if (raw.strategy !== undefined && strategy !== "user_messages_v1") return undefined
+  const tokensBefore = asNumber(raw.tokensBefore)
+  if (raw.tokensBefore !== undefined && tokensBefore === undefined) return undefined
+  if (strategy === "user_messages_v1") {
+    const retained: UserMessageItem[] = []
+    for (const entry of raw.retained) {
+      const item = parseConversationItem(entry)
+      if (!item || item.type !== "user_message" || !isMessageId(item.messageId) || item.images.length !== 0) {
+        return undefined
+      }
+      retained.push(item)
+    }
+    return { type: "compaction", strategy, summary, replaced, tokensBefore, retained }
+  }
   const retained: ConversationItem[] = []
   for (const entry of raw.retained) {
     const item = parseConversationItem(entry)
     if (!item) return undefined
     retained.push(item)
   }
-  return { type: "compaction", summary, replaced, tokensBefore: asNumber(raw.tokensBefore), retained }
+  return { type: "compaction", summary, replaced, tokensBefore, retained }
 }
 
 function parseItem(raw: unknown): HistoryItem | undefined {

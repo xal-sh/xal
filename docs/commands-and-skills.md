@@ -46,9 +46,13 @@ After startup, type `/` in the TUI to see discovered commands in the command pal
 
 ## Context compaction
 
-`/compact [focus]` summarizes the active conversation and atomically replaces older history with a checkpoint. If summary generation is interrupted, empty, or fails, the original history remains unchanged.
+`/compact [focus]` summarizes the complete active conversation and atomically replaces it with a provider-neutral checkpoint. New checkpoints retain only the newest authored user requests, without images, within a 20,000-token ceiling; the authoritative continuation summary follows them. The complete replacement request, including instructions and tools, must fit an estimated 32,000-token budget. Assistant output, reasoning, tool calls and results, direct-shell output, provider replay, and synthetic notices are summarized but never retained directly. If summary generation is interrupted, empty, fails, or cannot fit the replacement budget, the original history remains unchanged.
 
 Before every normal provider request, Xal drains queued prompts, background results, and pending agent questions, then estimates the complete request including system instructions and tool schemas. At 85% of the selected model's context window, Xal compacts and rechecks a freshly built request. Automatic compaction retries once only when a retryable provider failure occurs before any response event. If required compaction still fails, or the rebuilt request reaches the model's hard context window, the turn fails without sending the normal request.
+
+Version-2 sessions remain compatible. Existing checkpoints without a strategy keep their original summary-first retained-tail ordering when loaded. Their next successful compaction writes the new `user_messages_v1` format; loading alone never rewrites session data.
+
+Compaction uses the conversation model's low-effort fast variant when available. Its complete semantic history projection removes opaque provider replay payloads while preserving assistant text, reasoning summaries, tool calls, and tool results. The summary request disables tools and omits their schemas because it cannot call them; its cache identity is recomputed from that exact prompt. This keeps the checkpoint provider-neutral without paying to resend unusable schemas or encrypted transport state.
 
 ## Skills
 
