@@ -58,6 +58,7 @@ type AnonymousAgentEvent =
   | { type: "state_changed"; state: Extract<AgentEvent, { type: "state_changed" }>["state"] }
   | { type: "mode_changed"; mode: string }
   | { type: "model_changed"; provider: string; profile?: string; model: string }
+  | { type: "context_window_changed" }
   | { type: "thinking_changed"; thinking?: ThinkingEffort }
   | { type: "user_message"; imageCount: number }
   | { type: "conversation_rewound"; removedMessages: number; fileCount: number }
@@ -314,6 +315,7 @@ function anonymousAgentEvent(event: AgentEvent): AnonymousAgentEvent | undefined
         mode: label("mode", event.mode),
       }
     case "session_replay_finished":
+    case "context_window_changed":
     case "session_title_changed":
     case "workspace_changed":
     case "elicitation_resolved":

@@ -86,6 +86,7 @@ export class AttentionController {
       case "workspace_changed":
       case "mode_changed":
       case "model_changed":
+      case "context_window_changed":
       case "thinking_changed":
       case "user_message":
       case "conversation_rewound":

@@ -1,10 +1,14 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test"
+import type { Provider } from "../../providers/types"
 
 const cached = new Map<string, unknown>()
 const responses: (Response | Error)[] = []
 const requests: { path: string; key: string }[] = []
 
 mock.module("../../lib/fs", () => ({
+  async pathExists(): Promise<boolean> {
+    return false
+  },
   async readJsonFile(path: string): Promise<unknown> {
     return cached.get(path)
   },
@@ -32,8 +36,19 @@ mock.module("./api-client", () => ({
   },
 }))
 
+const { clearModelCatalog, findModel, modelCatalog } = await import("../../providers/catalog")
 const { setContextWindowCap } = await import("./context-window")
 const { defaultModel, listModels } = await import("./api-models")
+
+const provider: Provider = {
+  id: "openai",
+  name: "OpenAI",
+  aliases: [],
+  capabilities: { imageInput: true },
+  listModels,
+  defaultModel,
+  async *stream() {},
+}
 
 function modelsResponse(ids: string[]): Response {
   return Response.json({ data: ids.map((id) => ({ id, object: "model", owned_by: "openai" })) })
@@ -76,19 +91,29 @@ describe("OpenAI model catalog", () => {
     expect(requests).toEqual([{ path: "/models", key: "sk-test" }])
   })
 
-  test("adds synthetic 1M models for the GPT-5.6 family", async () => {
-    responses.push(modelsResponse(["gpt-5.6-sol", "gpt-5.6-terra"]))
+  test("advertises configurable context windows for Sol, Terra, and Luna", async () => {
+    responses.push(modelsResponse(["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.6"]))
 
     const models = (await listModels("profile-1", true)).models
 
-    expect(models.map((model) => model.id)).toEqual([
-      "gpt-5.6-sol",
-      "gpt-5.6-sol-1m",
-      "gpt-5.6-terra",
-      "gpt-5.6-terra-1m",
-    ])
-    expect(models[1]).toMatchObject({ contextWindow: 1_000_000, autoCompactTokenLimit: 900_000 })
-    expect(models[3]).toMatchObject({ contextWindow: 1_000_000, autoCompactTokenLimit: 900_000 })
+    expect(models.map((model) => model.id)).toEqual(["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.6"])
+    expect(models[0]?.aliases).toEqual([{ id: "gpt-5.6-sol-1m", contextWindow: 1_000_000 }])
+    expect(models[0]?.contextWindows).toEqual([260_000, 400_000, 600_000, 800_000, 1_000_000])
+    expect(models[1]?.contextWindows).toEqual([260_000, 400_000, 600_000, 800_000, 1_000_000])
+    expect(models[2]?.contextWindows).toEqual([260_000, 400_000, 600_000, 800_000, 1_000_000])
+    expect(models[3]?.contextWindows).toBeUndefined()
+  })
+
+  test("resolves legacy large-context IDs without listing them", async () => {
+    responses.push(modelsResponse(["gpt-5.6"]))
+
+    const catalog = await modelCatalog(provider, "profile-legacy-context", true)
+    const model = await findModel(provider, "profile-legacy-context", "gpt-5.6-1m")
+
+    expect(catalog.models.map((entry) => entry.id)).toEqual(["gpt-5.6"])
+    expect(model).toMatchObject({ id: "gpt-5.6", contextWindow: 1_000_000 })
+    expect(model?.contextWindows).toBeUndefined()
+    clearModelCatalog("profile-legacy-context")
   })
 
   test("advertises model-specific reasoning ranges", async () => {
@@ -100,15 +125,15 @@ describe("OpenAI model catalog", () => {
       options: ["none", "low", "medium", "high", "xhigh", "max"],
       default: "medium",
     })
-    expect(models[2]?.thinking).toEqual({
+    expect(models[1]?.thinking).toEqual({
       options: ["none", "low", "medium", "high", "xhigh"],
       default: "medium",
     })
-    expect(models[3]?.thinking).toEqual({
+    expect(models[2]?.thinking).toEqual({
       options: ["none", "low", "medium", "high", "xhigh"],
       default: "none",
     })
-    expect(models[4]?.thinking).toEqual({ options: ["medium", "high", "xhigh"], default: "medium" })
+    expect(models[3]?.thinking).toEqual({ options: ["medium", "high", "xhigh"], default: "medium" })
   })
 
   test("reuses the profile cache when live discovery fails", async () => {
@@ -129,7 +154,10 @@ describe("OpenAI model catalog", () => {
     await listModels("profile-2", true)
     requests.length = 0
 
-    expect((await listModels("profile-1", false)).models.map((model) => model.id)).toEqual(["gpt-5.6", "gpt-5.6-1m"])
+    const first = await listModels("profile-1", false)
+    expect(first.models.map((model) => model.id)).toEqual(["gpt-5.6"])
+    expect(first.models[0]?.aliases).toEqual([{ id: "gpt-5.6-1m", contextWindow: 1_000_000 }])
+    expect(first.models[0]?.contextWindows).toBeUndefined()
     expect((await listModels("profile-2", false)).models.map((model) => model.id)).toEqual(["gpt-4.1"])
     expect(requests).toHaveLength(0)
   })

@@ -231,6 +231,8 @@ export function redactAgentEvent(event: AgentEvent): AgentEvent {
       return { ...event, title: redactText(event.title) }
     case "workspace_changed":
       return { ...event, cwd: redactPath(event.cwd), previous: redactPath(event.previous) }
+    case "context_window_changed":
+      return event
     case "model_changed":
       return {
         ...event,

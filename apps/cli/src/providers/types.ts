@@ -53,10 +53,17 @@ export type ProviderOutputItem = AssistantMessageItem | ReasoningItem | ToolCall
 
 export type ConversationItem = UserMessageItem | ProviderOutputItem | ToolResultItem
 
+export interface ModelAlias {
+  id: string
+  contextWindow?: number
+}
+
 export interface ModelInfo {
   id: string
   name: string
+  aliases?: ModelAlias[]
   contextWindow?: number
+  contextWindows?: number[]
   autoCompactTokenLimit?: number
   inputModalities: ModelInputModality[]
   thinking?: ThinkingOptions

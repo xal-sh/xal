@@ -150,6 +150,7 @@ function lastState(loaded: LoadedSession): {
       case "session_replay_finished":
       case "session_title_changed":
       case "state_changed":
+      case "context_window_changed":
       case "user_message":
       case "conversation_rewound":
       case "conversation_redone":

@@ -675,6 +675,10 @@ export class AgentSession {
     return true
   }
 
+  contextWindowChanged(): void {
+    this.notify({ type: "context_window_changed" })
+  }
+
   disconnectProfile(profileId: string): boolean {
     if (this.profileId !== profileId) return true
     if (this.currentState !== "idle") return false

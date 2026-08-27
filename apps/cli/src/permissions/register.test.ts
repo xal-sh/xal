@@ -34,6 +34,7 @@ test("makes the current writable mode override stale plan-mode context", () => {
     agents: { maxConcurrent: 4, timeoutMinutes: 10, maxTurns: 24 },
     pluginConfig: {},
     thinking: {},
+    contextWindows: {},
   } satisfies Settings)
 
   const yolo = composeSystemPrompt(prompt("yolo"))

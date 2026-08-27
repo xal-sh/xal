@@ -106,7 +106,7 @@ The `openai` plugin registers both OpenAI providers: `openai` for OpenAI Platfor
 | `contextWindow` | Positive integer | `260000`       | Context-window cap for ChatGPT and assumed context window for OpenAI models. |
 | `clientName`    | string           | `codex_cli_rs` | Client name used in both providers' request user agent.                      |
 
-When a model advertises a maximum context window larger than its default — the whole GPT-5.6 family (Sol, Terra, and Luna) does — `/model` also lists a synthetic `-1m` variant, such as `gpt-5.6-sol-1m`. ChatGPT profiles that advertise fast service also list a `-1m-fast` variant. Both synthetic models use the same underlying wire model with the advertised maximum context budget (872,000 tokens on ChatGPT profiles, one million on the OpenAI API) and start automatic compaction at ninety percent of it unless the provider advertises a lower limit; the fast variant additionally requests priority service. Choose them only when your OpenAI access supports the documented larger context window. The ordinary entries keep Xal's tuned default cap.
+GPT-5.6 Sol, Terra, and Luna support configurable context windows. Select one of those models, then run `/context-window` to choose its default 2xxK window, 400K, 600K, 800K, or the provider-advertised maximum. The maximum is 872K for ChatGPT profiles and 1M for OpenAI API profiles. Xal remembers the choice separately for each provider and model, uses it for context tracking and hard request admission, and starts automatic compaction at ninety percent unless the provider advertises a lower limit. Other providers can expose the same command by advertising multiple context-window options for a model.
 
 ### OpenAI API
 

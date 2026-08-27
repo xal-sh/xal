@@ -83,6 +83,7 @@ export type AgentEvent =
   | { type: "state_changed"; state: AgentState }
   | { type: "mode_changed"; mode: PermissionMode }
   | { type: "model_changed"; provider: string; profile?: string; model: string }
+  | { type: "context_window_changed" }
   | { type: "thinking_changed"; thinking?: ThinkingEffort }
   | { type: "user_message"; messageId?: string; text: string; imageCount: number; sentAt: number }
   | {

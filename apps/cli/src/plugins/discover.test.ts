@@ -31,6 +31,7 @@ function settings(plugins: string[] = [], pluginConfig: Settings["pluginConfig"]
     agents: { maxConcurrent: 4, timeoutMinutes: 10, maxTurns: 24 },
     pluginConfig,
     thinking: {},
+    contextWindows: {},
   }
 }
 

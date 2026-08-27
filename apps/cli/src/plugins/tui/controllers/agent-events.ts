@@ -244,6 +244,9 @@ export class AgentEventController {
           text: event.profile ? `model: ${event.model} · ${event.provider}` : `disconnected: ${event.provider}`,
         })
         break
+      case "context_window_changed":
+        this.trackContextWindow()
+        break
       case "thinking_changed":
         statusBar.setThinking(event.thinking)
         break

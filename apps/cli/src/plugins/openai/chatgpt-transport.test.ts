@@ -172,7 +172,7 @@ describe("ChatGPT transport", () => {
     })
   })
 
-  test("sends the synthetic 1M Sol model as its underlying wire model", async () => {
+  test("sends a legacy 1M Sol model ID as its underlying wire model", async () => {
     responses.push(sse([{ type: "response.completed", response: {} }]))
 
     await collect(streamResponse("test-profile", { ...request(), model: "gpt-5.6-sol-1m" }))
@@ -184,7 +184,7 @@ describe("ChatGPT transport", () => {
     expect(sent).not.toHaveProperty("service_tier")
   })
 
-  test("sends the synthetic fast 1M Sol model with priority service", async () => {
+  test("sends a legacy fast 1M Sol model ID with priority service", async () => {
     responses.push(sse([{ type: "response.completed", response: {} }]))
 
     await collect(streamResponse("test-profile", { ...request(), model: "gpt-5.6-sol-1m-fast" }))

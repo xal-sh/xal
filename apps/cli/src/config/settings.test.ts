@@ -3,6 +3,9 @@ import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { appEnvVar, appInfo } from "../app-info"
+import { clearModelCatalog, findModel } from "../providers/catalog"
+import type { Provider } from "../providers/types"
+import { saveContextWindow } from "./context-window"
 import { projectConfigPath } from "./paths"
 import { loadSettings, saveSettings, settings } from "./settings"
 
@@ -58,6 +61,9 @@ test("trusted project settings override user settings with recursive object merg
       thinking: {
         provider: { shared: "low", userModel: "medium" },
       },
+      contextWindows: {
+        provider: { shared: 400_000, userModel: 600_000 },
+      },
     })
     await writeJson(join(home, "trust.json"), [project])
     await writeJson(projectConfigPath(project), {
@@ -79,6 +85,9 @@ test("trusted project settings override user settings with recursive object merg
       },
       thinking: {
         provider: { shared: "high", projectModel: "xhigh" },
+      },
+      contextWindows: {
+        provider: { shared: 800_000, projectModel: 1_000_000 },
       },
     })
 
@@ -111,6 +120,9 @@ test("trusted project settings override user settings with recursive object merg
       thinking: {
         provider: { shared: "high", userModel: "medium", projectModel: "xhigh" },
       },
+      contextWindows: {
+        provider: { shared: 800_000, userModel: 600_000, projectModel: 1_000_000 },
+      },
     })
   })
 })
@@ -135,6 +147,7 @@ test("does not read malformed project settings until the project is trusted", as
       redaction: { values: [], environment: [] },
       pluginConfig: {},
       thinking: {},
+      contextWindows: {},
     })
 
     await writeJson(join(home, "trust.json"), [project])
@@ -195,6 +208,7 @@ test("saves only user settings securely while retaining project overrides in mem
       redaction: { values: [], environment: [] },
       pluginConfig: { userPlugin: { enabled: true } },
       thinking: {},
+      contextWindows: {},
     })
     expect((await stat(userConfig)).mode & 0o777).toBe(0o600)
   })
@@ -207,5 +221,43 @@ test("rejects permission and redaction settings that are not string arrays", asy
 
     await writeJson(join(home, "config.json"), { permissions: { deny: [42] } })
     await expect(loadSettings()).rejects.toThrow("permissions.deny must be an array of strings")
+  })
+})
+
+test("saves a context window for one provider and model", async () => {
+  await withSettingsEnvironment(async () => {
+    await loadSettings()
+    const provider: Provider = {
+      id: "provider-a",
+      name: "Provider A",
+      aliases: [],
+      capabilities: { imageInput: false },
+      async listModels() {
+        return {
+          models: [
+            {
+              id: "model-a",
+              name: "Model A",
+              aliases: [{ id: "model-a-large", contextWindow: 600_000 }],
+              contextWindow: 260_000,
+              contextWindows: [260_000, 400_000, 600_000],
+              inputModalities: ["text"],
+            },
+          ],
+          source: "bundled",
+        }
+      },
+      async defaultModel() {
+        return "model-a"
+      },
+      async *stream() {},
+    }
+
+    await saveContextWindow(provider, "model-a", 400_000)
+
+    expect(settings().contextWindows).toEqual({ "provider-a": { "model-a": 400_000 } })
+    expect((await findModel(provider, "profile-a", "model-a"))?.contextWindow).toBe(400_000)
+    expect((await findModel(provider, "profile-a", "model-a-large"))?.contextWindow).toBe(400_000)
+    clearModelCatalog("profile-a")
   })
 })

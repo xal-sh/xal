@@ -1,5 +1,5 @@
+import { findModel } from "../providers/catalog"
 import type { Provider, ThinkingEffort, ThinkingOptions } from "../providers/types"
-import { modelCatalog } from "../providers/catalog"
 import { saveSettings, settings } from "./settings"
 
 export async function thinkingOptions(
@@ -7,8 +7,7 @@ export async function thinkingOptions(
   profileId: string,
   model: string,
 ): Promise<ThinkingOptions | undefined> {
-  const catalog = await modelCatalog(provider, profileId)
-  return catalog.models.find((info) => info.id === model)?.thinking
+  return (await findModel(provider, profileId, model))?.thinking
 }
 
 export async function resolveThinking(

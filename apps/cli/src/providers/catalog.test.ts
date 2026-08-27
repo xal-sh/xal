@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { clearModelCatalog, modelCatalog } from "./catalog"
+import { clearModelCatalog, findModel, modelCatalog } from "./catalog"
 import type { ModelCatalog, Provider } from "./types"
 
 function catalog(model: string, source: ModelCatalog["source"]): ModelCatalog {
@@ -55,6 +55,27 @@ test("keeps the previous catalog with a warning after a failed refresh", async (
   expect(result.models[0]?.id).toBe("model-a")
   expect(result.warning).toContain("model refresh failed: offline")
   clearModelCatalog("profile-1")
+})
+
+test("accepts ordered context-window options beginning at the model default", async () => {
+  const provider = fakeProvider("context-options", async () => ({
+    models: [
+      {
+        id: "model-a",
+        name: "model-a",
+        aliases: [{ id: "model-a-large", contextWindow: 600_000 }],
+        contextWindow: 260_000,
+        contextWindows: [260_000, 400_000, 600_000],
+        inputModalities: ["text"],
+      },
+    ],
+    source: "runtime",
+  }))
+
+  const result = await modelCatalog(provider, "profile-context-options")
+  expect(result.models[0]?.contextWindows).toEqual([260_000, 400_000, 600_000])
+  expect((await findModel(provider, "profile-context-options", "model-a-large"))?.contextWindow).toBe(600_000)
+  clearModelCatalog("profile-context-options")
 })
 
 test("rejects invalid internal auto-compaction limits", async () => {

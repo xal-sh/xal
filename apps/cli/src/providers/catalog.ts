@@ -1,10 +1,12 @@
 import { listProfiles, type ProviderProfile } from "../config/credentials"
+import { settings } from "../config/settings"
 import { describeError } from "../lib/error"
 import { asNumber, asString, isRecord } from "../lib/json"
 import { getProvider, listProviders } from "./registry"
 import {
   isThinkingEffort,
   type ModelCatalog,
+  type ModelAlias,
   type ModelCatalogSource,
   type ModelInfo,
   type ModelInputModality,
@@ -107,6 +109,68 @@ function validateThinking(provider: Provider, model: string, raw: unknown): Thin
   return { options, default: preferred }
 }
 
+function validateContextWindows(
+  provider: Provider,
+  model: string,
+  contextWindow: number | undefined,
+  raw: unknown,
+): number[] | undefined {
+  if (raw === undefined) return undefined
+  if (!Array.isArray(raw) || raw.length < 2 || contextWindow === undefined) {
+    throw new Error(`${provider.name} returned invalid context-window options for ${model}`)
+  }
+  const options: number[] = []
+  for (const entry of raw) {
+    const option = asNumber(entry)
+    if (option === undefined || !Number.isInteger(option) || option <= 0) {
+      throw new Error(`${provider.name} returned invalid context-window options for ${model}`)
+    }
+    options.push(option)
+  }
+  if (
+    new Set(options).size !== options.length ||
+    options[0] !== contextWindow ||
+    options.some((entry, index) => index > 0 && entry <= options[index - 1]!)
+  ) {
+    throw new Error(`${provider.name} returned invalid context-window options for ${model}`)
+  }
+  return options
+}
+
+function validateModelAliases(
+  provider: Provider,
+  model: string,
+  contextWindows: number[] | undefined,
+  raw: unknown,
+): ModelAlias[] | undefined {
+  if (raw === undefined) return undefined
+  if (!Array.isArray(raw) || raw.length === 0) {
+    throw new Error(`${provider.name} returned invalid aliases for ${model}`)
+  }
+  const aliases: ModelAlias[] = []
+  for (const entry of raw) {
+    if (!isRecord(entry)) throw new Error(`${provider.name} returned invalid aliases for ${model}`)
+    const id = asString(entry.id)?.trim()
+    const contextWindow = entry.contextWindow === undefined ? undefined : asNumber(entry.contextWindow)
+    if (
+      !id ||
+      id === model ||
+      (entry.contextWindow !== undefined &&
+        (contextWindow === undefined ||
+          !Number.isInteger(contextWindow) ||
+          contextWindow <= 0 ||
+          (contextWindows !== undefined && !contextWindows.includes(contextWindow))))
+    ) {
+      throw new Error(`${provider.name} returned invalid aliases for ${model}`)
+    }
+    aliases.push({ id, ...(contextWindow === undefined ? {} : { contextWindow }) })
+  }
+  if (new Set(aliases.map((alias) => alias.id)).size !== aliases.length) {
+    throw new Error(`${provider.name} returned invalid aliases for ${model}`)
+  }
+  return aliases
+}
+
 function validateModel(provider: Provider, raw: unknown): ModelInfo {
   if (!isRecord(raw)) throw new Error(`${provider.name} returned an invalid model`)
   const id = asString(raw.id)?.trim()
@@ -117,6 +181,7 @@ function validateModel(provider: Provider, raw: unknown): ModelInfo {
   if (raw.contextWindow !== undefined && (!contextWindow || !Number.isInteger(contextWindow) || contextWindow <= 0)) {
     throw new Error(`${provider.name} returned an invalid context window for ${id}`)
   }
+  const contextWindows = validateContextWindows(provider, id, contextWindow, raw.contextWindows)
   const autoCompactTokenLimit =
     raw.autoCompactTokenLimit === undefined ? undefined : asNumber(raw.autoCompactTokenLimit)
   if (
@@ -132,7 +197,9 @@ function validateModel(provider: Provider, raw: unknown): ModelInfo {
   return {
     id,
     name,
+    aliases: validateModelAliases(provider, id, contextWindows, raw.aliases),
     contextWindow,
+    contextWindows,
     autoCompactTokenLimit,
     inputModalities: validateModalities(provider, id, raw.inputModalities),
     thinking: validateThinking(provider, id, raw.thinking),
@@ -150,8 +217,10 @@ function validateCatalog(provider: Provider, raw: unknown): ModelCatalog {
   const models = raw.models.map((model) => validateModel(provider, model))
   const ids = new Set<string>()
   for (const model of models) {
-    if (ids.has(model.id)) throw new Error(`${provider.name} returned duplicate model ${model.id}`)
-    ids.add(model.id)
+    for (const id of [model.id, ...(model.aliases?.map((alias) => alias.id) ?? [])]) {
+      if (ids.has(id)) throw new Error(`${provider.name} returned duplicate model or alias ${id}`)
+      ids.add(id)
+    }
   }
   if (models.length === 0 && !warning) return { models, source, warning: `${provider.name} returned no models` }
   return { models, source, ...(warning ? { warning } : {}) }
@@ -210,6 +279,12 @@ export async function refreshModelCatalogs(): Promise<void> {
   )
 }
 
+function configuredContextWindow(provider: Provider, model: ModelInfo, fallback = model.contextWindow): ModelInfo {
+  const configured = settings().contextWindows[provider.id]?.[model.id]
+  const contextWindow = model.contextWindows?.includes(configured ?? 0) ? configured : fallback
+  return contextWindow === model.contextWindow ? model : { ...model, contextWindow }
+}
+
 export async function contextWindow(provider: Provider, profileId: string, model: string): Promise<number | undefined> {
   return (await findModel(provider, profileId, model))?.contextWindow
 }
@@ -221,7 +296,13 @@ export async function findModel(
   refresh = false,
 ): Promise<ModelInfo | undefined> {
   const catalog = await modelCatalog(provider, profileId, refresh)
-  return catalog.models.find((info) => info.id === model)
+  const found = catalog.models.find((info) => info.id === model)
+  if (found) return configuredContextWindow(provider, found)
+  for (const candidate of catalog.models) {
+    const alias = candidate.aliases?.find((entry) => entry.id === model)
+    if (alias) return configuredContextWindow(provider, candidate, alias.contextWindow)
+  }
+  return undefined
 }
 
 export function modelSummary(model: ModelInfo, listReasoning = false): string {
@@ -240,7 +321,12 @@ export async function listModelChoices(refresh = false): Promise<ModelChoices> {
       try {
         const catalog = await modelCatalog(provider, profile.id, refresh)
         return {
-          choices: catalog.models.map((model) => ({ provider, profile, model, source: catalog.source })),
+          choices: catalog.models.map((model) => ({
+            provider,
+            profile,
+            model: configuredContextWindow(provider, model),
+            source: catalog.source,
+          })),
           notices: catalog.warning ? [{ provider, profile, message: catalog.warning }] : [],
         }
       } catch (error) {

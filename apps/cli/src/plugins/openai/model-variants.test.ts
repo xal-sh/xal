@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test"
-import { type LargeContextModel, resolveLargeContextModel, withLargeContextVariant } from "./model-variants"
+import { type ConfigurableContextModel, resolveLargeContextModel, withContextWindowOptions } from "./model-variants"
 
-const terra: LargeContextModel = {
+const terra: ConfigurableContextModel & { maxContextWindow: number } = {
   id: "gpt-5.6-terra",
   name: "GPT-5.6-Terra",
   contextWindow: 260_000,
@@ -12,32 +12,37 @@ const terra: LargeContextModel = {
 
 const { maxContextWindow, ...base } = terra
 
-test("adds a 1M picker model when the maximum context window exceeds the default", () => {
-  expect(withLargeContextVariant([terra])).toEqual([
-    base,
+test("adds context-window options from the model default through its maximum", () => {
+  expect(withContextWindowOptions([terra])).toEqual([
     {
       ...base,
-      id: "gpt-5.6-terra-1m",
-      name: "GPT-5.6-Terra - 1M context",
-      contextWindow: maxContextWindow,
-      autoCompactTokenLimit: 784_800,
+      aliases: [{ id: "gpt-5.6-terra-1m", contextWindow: maxContextWindow }],
+      contextWindows: [260_000, 400_000, 600_000, 800_000, maxContextWindow],
     },
   ])
 })
 
 test("keeps models without a larger maximum context window as-is", () => {
-  expect(withLargeContextVariant([base])).toEqual([base])
-  expect(withLargeContextVariant([{ ...terra, maxContextWindow: 260_000 }])).toEqual([base])
+  expect(withContextWindowOptions([base])).toEqual([base])
+  expect(withContextWindowOptions([{ ...terra, maxContextWindow: 260_000 }])).toEqual([base])
 })
 
-test("preserves a valid explicit limit on the large variant", () => {
-  expect(withLargeContextVariant([{ ...terra, autoCompactTokenLimit: 200_000 }])[1]).toMatchObject({
-    contextWindow: 872_000,
-    autoCompactTokenLimit: 200_000,
-  })
+test("preserves a legacy large-context alias without exposing context options", () => {
+  expect(withContextWindowOptions([{ ...base, legacyLargeContextWindow: 1_000_000 }])).toEqual([
+    {
+      ...base,
+      aliases: [{ id: "gpt-5.6-terra-1m", contextWindow: 1_000_000 }],
+    },
+  ])
 })
 
-test("maps only synthetic 1M models back to their wire model", () => {
+test("does not add presets below a model's default context window", () => {
+  expect(withContextWindowOptions([{ ...terra, contextWindow: 700_000 }])[0]?.contextWindows).toEqual([
+    700_000, 800_000, 872_000,
+  ])
+})
+
+test("maps legacy 1M model IDs back to their wire model", () => {
   expect(resolveLargeContextModel("gpt-5.6-terra-1m")).toBe("gpt-5.6-terra")
   expect(resolveLargeContextModel("gpt-5.6-sol")).toBe("gpt-5.6-sol")
 })

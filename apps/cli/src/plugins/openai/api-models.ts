@@ -7,7 +7,7 @@ import type { ModelCatalog, ModelInfo, ThinkingOptions } from "../../providers/t
 import { apiKey } from "./api-auth"
 import { openAiFetch, raiseForStatus } from "./api-client"
 import { contextWindowCap } from "./context-window"
-import { type LargeContextModel, withLargeContextVariant } from "./model-variants"
+import { type ConfigurableContextModel, withContextWindowOptions } from "./model-variants"
 
 const CACHE_VERSION = 1
 const DISCOVERY_TIMEOUT_MS = 15_000
@@ -71,20 +71,25 @@ function contextWindow(id: string): number {
   return contextWindowCap()
 }
 
-function modelInfo(id: string): LargeContextModel {
+function configurableContextWindow(id: string): boolean {
+  return /^gpt-5\.6-(?:sol|terra|luna)(?:-|$)/.test(id.toLowerCase())
+}
+
+function modelInfo(id: string): ConfigurableContextModel {
   const thinking = reasoning(id)
   return {
     id,
     name: id,
     contextWindow: contextWindow(id),
-    ...(id.toLowerCase().startsWith("gpt-5.6") ? { maxContextWindow: 1_000_000 } : {}),
+    ...(id.toLowerCase().startsWith("gpt-5.6") ? { legacyLargeContextWindow: 1_000_000 } : {}),
+    ...(configurableContextWindow(id) ? { maxContextWindow: 1_000_000 } : {}),
     inputModalities: ["text", "image"],
     ...(thinking ? { thinking } : {}),
   }
 }
 
 function modelInfos(ids: string[]): ModelInfo[] {
-  return withLargeContextVariant(ids.map(modelInfo))
+  return withContextWindowOptions(ids.map(modelInfo))
 }
 
 function parseModels(raw: unknown): string[] {

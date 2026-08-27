@@ -9,10 +9,12 @@ import {
   renameProfile,
   type ProviderProfile,
 } from "../config/credentials"
+import { saveContextWindow } from "../config/context-window"
 import { saveSettings, settings } from "../config/settings"
 import { resolveThinking, saveThinking } from "../config/thinking"
 import {
   clearModelCatalog,
+  findModel,
   listConnectTargets,
   listModelChoices,
   modelCatalog,
@@ -235,6 +237,47 @@ const logoutCommand: Command = {
   },
 }
 
+function contextWindowLabel(tokens: number): string {
+  if (tokens === 1_000_000) return "1M"
+  return `${Math.round(tokens / 1_000)}K`
+}
+
+const contextWindowCommand: Command = {
+  name: "context-window",
+  describe: "choose the context window for the current model",
+  async run(args, ctx) {
+    if (args.length > 0) throw new Error("usage: /context-window")
+    if (ctx.session.currentState !== "idle") {
+      ctx.print("cannot change context window while a turn is running")
+      return
+    }
+
+    const profileId = ctx.session.currentProfileId
+    if (!profileId) throw new Error("no active profile; run /connect first")
+    const provider = ctx.session.currentProvider
+    const model = ctx.session.currentModel
+    const modelInfo = await findModel(provider, profileId, model)
+    if (!modelInfo?.contextWindows) {
+      ctx.print(`${model} does not support configurable context windows`)
+      return
+    }
+
+    const selected = await ctx.select({
+      options: modelInfo.contextWindows.map((contextWindow, index, options) => ({
+        label: contextWindowLabel(contextWindow),
+        detail:
+          index === 0 ? "model default" : index === options.length - 1 ? "model maximum" : "custom context window",
+        note: contextWindow === modelInfo.contextWindow ? "current" : undefined,
+        active: contextWindow === modelInfo.contextWindow,
+        value: contextWindow,
+      })),
+    })
+    if (selected === undefined || selected === modelInfo.contextWindow) return
+    await saveContextWindow(provider, modelInfo.id, selected)
+    ctx.session.contextWindowChanged()
+  },
+}
+
 const thinkingLabels: Record<ThinkingEffort, string> = {
   none: "Off",
   low: "Low",
@@ -257,8 +300,7 @@ const thinkingCommand: Command = {
     if (!profileId) throw new Error("no active profile; run /connect first")
     const provider = ctx.session.currentProvider
     const model = ctx.session.currentModel
-    const catalog = await modelCatalog(provider, profileId)
-    const available = catalog.models.find((info) => info.id === model)?.thinking
+    const available = (await findModel(provider, profileId, model))?.thinking
     if (!available) {
       ctx.print(`${model} does not support configurable thinking`)
       return
@@ -287,5 +329,6 @@ export function registerProviderCommands(): void {
   registerCommand(modelCommand)
   registerCommand(profilesCommand)
   registerCommand(logoutCommand)
+  registerCommand(contextWindowCommand)
   registerCommand(thinkingCommand)
 }

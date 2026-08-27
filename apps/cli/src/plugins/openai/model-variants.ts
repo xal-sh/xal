@@ -1,28 +1,42 @@
-import { effectiveAutoCompactTokenLimit } from "../../agent/session/context-budget"
 import type { ModelInfo } from "../../providers/types"
 
-const LARGE_CONTEXT_SUFFIX = "-1m"
+const LEGACY_LARGE_CONTEXT_SUFFIX = "-1m"
 
-export interface LargeContextModel extends ModelInfo {
+export interface ConfigurableContextModel extends ModelInfo {
   maxContextWindow?: number
+  legacyLargeContextWindow?: number
 }
 
-export function withLargeContextVariant(models: LargeContextModel[]): ModelInfo[] {
-  return models.flatMap(({ maxContextWindow, ...model }) => {
-    if (maxContextWindow === undefined || maxContextWindow <= (model.contextWindow ?? 0)) return [model]
-    return [
-      model,
-      {
-        ...model,
-        id: `${model.id}${LARGE_CONTEXT_SUFFIX}`,
-        name: `${model.name} - 1M context`,
-        contextWindow: maxContextWindow,
-        autoCompactTokenLimit: effectiveAutoCompactTokenLimit(maxContextWindow, model.autoCompactTokenLimit),
-      },
-    ]
+function contextWindows(contextWindow: number | undefined, maxContextWindow: number | undefined): number[] | undefined {
+  if (contextWindow === undefined || maxContextWindow === undefined || maxContextWindow <= contextWindow)
+    return undefined
+  const options = [contextWindow, 400_000, 600_000, 800_000, maxContextWindow]
+    .filter((value) => value >= contextWindow && value <= maxContextWindow)
+    .filter((value, index, values) => values.indexOf(value) === index)
+    .sort((left, right) => left - right)
+  return options.length > 1 ? options : undefined
+}
+
+export function withContextWindowOptions(models: ConfigurableContextModel[]): ModelInfo[] {
+  return models.map(({ maxContextWindow, legacyLargeContextWindow, ...model }) => {
+    const options = contextWindows(model.contextWindow, maxContextWindow)
+    const legacyContextWindow = legacyLargeContextWindow ?? (options ? maxContextWindow : undefined)
+    if (options === undefined && legacyContextWindow === undefined) return model
+    return {
+      ...model,
+      ...(legacyContextWindow === undefined
+        ? {}
+        : {
+            aliases: [
+              ...(model.aliases ?? []),
+              { id: `${model.id}${LEGACY_LARGE_CONTEXT_SUFFIX}`, contextWindow: legacyContextWindow },
+            ],
+          }),
+      ...(options === undefined ? {} : { contextWindows: options }),
+    }
   })
 }
 
 export function resolveLargeContextModel(model: string): string {
-  return model.endsWith(LARGE_CONTEXT_SUFFIX) ? model.slice(0, -LARGE_CONTEXT_SUFFIX.length) : model
+  return model.endsWith(LEGACY_LARGE_CONTEXT_SUFFIX) ? model.slice(0, -LEGACY_LARGE_CONTEXT_SUFFIX.length) : model
 }

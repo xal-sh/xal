@@ -40,17 +40,14 @@ beforeEach(() => {
   written = undefined
 })
 
-test("adds regular and fast 1M models to the ChatGPT catalog", async () => {
+test("adds context-window options to regular and fast ChatGPT models", async () => {
   const models = (await listModels("profile-1", false)).models
 
-  expect(models.map((model) => model.id)).toEqual([
-    "gpt-5.6-sol",
-    "gpt-5.6-sol-fast",
-    "gpt-5.6-sol-1m",
-    "gpt-5.6-sol-1m-fast",
-  ])
-  expect(models[2]).toMatchObject({ contextWindow: 872_000, autoCompactTokenLimit: 784_800 })
-  expect(models[3]).toMatchObject({ contextWindow: 872_000, autoCompactTokenLimit: 784_800 })
+  expect(models.map((model) => model.id)).toEqual(["gpt-5.6-sol", "gpt-5.6-sol-fast"])
+  expect(models[0]?.aliases).toEqual([{ id: "gpt-5.6-sol-1m", contextWindow: 872_000 }])
+  expect(models[1]?.aliases).toEqual([{ id: "gpt-5.6-sol-1m-fast", contextWindow: 872_000 }])
+  expect(models[0]?.contextWindows).toEqual([260_000, 400_000, 600_000, 800_000, 872_000])
+  expect(models[1]?.contextWindows).toEqual([260_000, 400_000, 600_000, 800_000, 872_000])
 })
 
 test("round-trips and caps an optional runtime auto-compaction limit", async () => {
@@ -71,9 +68,12 @@ test("round-trips and caps an optional runtime auto-compaction limit", async () 
   ]
 
   const runtime = await listModels("profile-runtime", true)
-  expect(runtime.models[0]).toMatchObject({ contextWindow: 260_000, autoCompactTokenLimit: 234_000 })
+  expect(runtime.models[0]).toMatchObject({
+    contextWindow: 260_000,
+    contextWindows: [260_000, 400_000, 600_000, 800_000, 872_000],
+    autoCompactTokenLimit: 234_000,
+  })
   expect(runtime.models[1]).toMatchObject({ id: "gpt-5.6-sol-fast", autoCompactTokenLimit: 234_000 })
-  expect(runtime.models[2]).toMatchObject({ contextWindow: 872_000, autoCompactTokenLimit: 234_000 })
   if (!isRecord(written) || !Array.isArray(written.models)) throw new Error("runtime catalog was not cached")
 
   cachedModels = written.models

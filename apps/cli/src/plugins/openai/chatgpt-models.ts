@@ -17,12 +17,12 @@ import {
 import { chatGptFetch } from "./chatgpt-client"
 import { PROVIDER_NAME } from "./chatgpt-oauth"
 import { contextWindowCap } from "./context-window"
-import { type LargeContextModel, resolveLargeContextModel, withLargeContextVariant } from "./model-variants"
+import { type ConfigurableContextModel, resolveLargeContextModel, withContextWindowOptions } from "./model-variants"
 
 const MODEL_CATALOG_COMPATIBILITY_VERSION = "1.0.0"
 const FAST_MODEL_SUFFIX = "-fast"
 
-interface ChatGptModel extends LargeContextModel {
+interface ChatGptModel extends ConfigurableContextModel {
   supportsFast: boolean
 }
 
@@ -224,13 +224,23 @@ function capped(models: ChatGptModel[]): ChatGptModel[] {
 }
 
 function withVariants(models: ChatGptModel[]): ModelInfo[] {
-  return models.flatMap(({ supportsFast, ...model }) =>
-    withLargeContextVariant([model]).flatMap((variant) =>
-      supportsFast
-        ? [variant, { ...variant, id: `${variant.id}${FAST_MODEL_SUFFIX}`, name: `${variant.name} - fast` }]
-        : [variant],
-    ),
-  )
+  return models.flatMap(({ supportsFast, ...model }) => {
+    const configured = withContextWindowOptions([model])[0]!
+    return supportsFast
+      ? [
+          configured,
+          {
+            ...configured,
+            id: `${configured.id}${FAST_MODEL_SUFFIX}`,
+            name: `${configured.name} - fast`,
+            aliases: configured.aliases?.map((alias) => ({
+              ...alias,
+              id: `${alias.id}${FAST_MODEL_SUFFIX}`,
+            })),
+          },
+        ]
+      : [configured]
+  })
 }
 
 async function refreshModels(profileId: string): Promise<ModelCatalog> {

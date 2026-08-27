@@ -129,6 +129,7 @@ function renderEvent(event: AgentEvent): string | undefined {
       return event.output ? `## Structured output\n\n${indented(JSON.stringify(event.output, null, 2))}` : undefined
     case "session_started":
     case "session_replay_finished":
+    case "context_window_changed":
     case "state_changed":
     case "tool_call_updated":
     case "hook_started":

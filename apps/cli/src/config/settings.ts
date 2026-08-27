@@ -49,6 +49,7 @@ export interface Settings {
   agents: AgentSettings
   pluginConfig: Record<string, Record<string, unknown>>
   thinking: Record<string, Record<string, ThinkingEffort>>
+  contextWindows: Record<string, Record<string, number>>
 }
 
 const AGENT_DEFAULTS: AgentSettings = { maxConcurrent: 4, timeoutMinutes: 10, maxTurns: 24 }
@@ -63,6 +64,7 @@ let current: Settings = {
   agents: { ...AGENT_DEFAULTS },
   pluginConfig: {},
   thinking: {},
+  contextWindows: {},
 }
 
 export function settings(): Settings {
@@ -192,6 +194,17 @@ function parseSettings(raw: Record<string, unknown>): Settings {
       thinking[provider] = efforts
     }
   }
+  const contextWindows: Record<string, Record<string, number>> = {}
+  if (isRecord(raw.contextWindows)) {
+    for (const [provider, models] of Object.entries(raw.contextWindows)) {
+      if (!isRecord(models)) continue
+      const windows: Record<string, number> = {}
+      for (const [model, value] of Object.entries(models)) {
+        if (typeof value === "number" && Number.isInteger(value) && value > 0) windows[model] = value
+      }
+      contextWindows[provider] = windows
+    }
+  }
   return {
     plugins,
     provider: asString(raw.provider),
@@ -229,5 +242,6 @@ function parseSettings(raw: Record<string, unknown>): Settings {
     },
     pluginConfig,
     thinking,
+    contextWindows,
   }
 }
