@@ -62,8 +62,10 @@ test("automatic workload writes one final authoritative recovery notice", () => 
   const scenario = parseLiveScenarios(live).scenarios.find((entry) => entry.name === "production_subagent")
   if (!scenario) throw new Error("live fixture lost the production subagent scenario")
   const notice = automaticStateNotice(scenario, 1, "notice-production_subagent-1-4")
-  expect(notice.split("\n")).toHaveLength(4)
-  expect(notice).toEndWith("late_tool_fact=notice-production_subagent-1-4")
+  expect(notice.split("\n")).toHaveLength(7)
+  expect(notice).toContain("This state supersedes every earlier synthetic notice.")
+  expect(notice).toContain("late_tool_fact=notice-production_subagent-1-4")
+  expect(notice).toEndWith("AUTHORITATIVE_RECOVERY_STATE_END")
 })
 
 test("numeric fixture strictly round trips", () => {
@@ -317,6 +319,58 @@ test("candidate replay stops trusting legacy usage after a skipped tool-heavy co
   )
 })
 
+test("candidate replay reserves the workload hard-window boundary", () => {
+  const raw = JSON.parse(JSON.stringify(fixture))
+  raw.workloads[0] = {
+    name: "primary_tool_heavy",
+    kind: "primary",
+    contextWindow: 100,
+    events: [
+      {
+        index: 0,
+        round: 1,
+        roundBoundary: "start",
+        type: "item",
+        item: {
+          kind: "user_message",
+          estimatedModelVisibleTokens: 40,
+          replayEstimatedTokens: 0,
+          authoredUser: true,
+          hasModelText: false,
+          imageCount: 0,
+          imageEstimatedTokens: 0,
+        },
+      },
+      {
+        index: 1,
+        round: 1,
+        roundBoundary: "middle",
+        type: "compaction",
+        trigger: "automatic",
+        outcome: "completed",
+        summaryEstimatedTokens: 49,
+        replacementBoundary: 0,
+      },
+      {
+        index: 2,
+        round: 1,
+        roundBoundary: "end",
+        type: "request",
+        staticPrefixTokens: 50,
+        providerUsageBoundary: true,
+        usage: { totalInputTokens: 90, cacheReadInputTokens: 0, outputTokens: 0, latencyMs: 1 },
+        followedCompaction: true,
+      },
+    ],
+  }
+  const parsed = parseContextEfficiencyFixture(raw)
+  expect(replayFixture(parsed, "candidate", 0.85).workloads[0]?.firstPostCompactionInputTokens).toEqual([99])
+  raw.workloads[0].events[1].summaryEstimatedTokens = 60
+  expect(() => replayFixture(parseContextEfficiencyFixture(raw), "candidate", 0.85)).toThrow(
+    "summary exceeds its post-compaction context limit",
+  )
+})
+
 test("release sensitivity applies the dynamic replacement budget through the conservative summary bound", () => {
   const parsed = parseContextEfficiencyFixture(fixture)
   const sensitivity = releaseSensitivityResults(parsed, 0.9)
@@ -345,14 +399,18 @@ test("live scenarios validate benchmark windows and session kinds", () => {
   expect(() => parseLiveScenarios(raw)).toThrow("contextWindow must exceed")
 })
 
-test("live workload fingerprint locks the paired request content", () => {
-  const scenarios = parseLiveScenarios(live).scenarios.filter((scenario) => scenario.suites.includes("paired"))
+test("live workload fingerprint locks the request content", () => {
+  const scenarios = parseLiveScenarios(live).scenarios
   const changed = scenarios.map((scenario, index) =>
     index === 0 ? { ...scenario, toolOutputBytes: scenario.toolOutputBytes + 1 } : scenario,
   )
   expect(scenarios.map(workloadFingerprint)).toEqual([
     "810168fd160065a81e62bf1ad0727aee1b44431af0fed46aac791c99909f31b5",
     "c1a2eae84e358f79aac72c315f98ef4aae9854ea275e44abb7b9769d8354811d",
+    "0c52b064936f8d8af3ae6eb7bf80caa510a19c83c9ac3bde3256c02fe0a01420",
+    "199fd1586ef3154611242d1c90882657823c7c34a2de1d283b84834b696f682a",
+    "41f5ea2f6f0cfa1fe492fb04d6a492ae71c113386c55538e92e1ee061972d0a1",
+    "ea82ae208a11e56d6717861962aa54b59edaf8a259fd79634818e58127c6244b",
   ])
   expect(workloadFingerprint(scenarios[0]!)).not.toBe(workloadFingerprint(changed[0]!))
 })
@@ -659,6 +717,7 @@ test("live scenarios exercise public manual and automatic compaction paths", asy
       directory,
     )
     expect(automaticResult.effectiveContextWindow).toBe(64_000)
+    expect(automaticResult.automaticSetup).toEqual({ estimatedRequestTokens: 57_600, threshold: 57_600 })
     expect(automaticResult.result.compactionRequests).toBe(1)
     expect(automaticResult.result.continuationPassed).toBe(true)
     expect(automaticResult.result.firstPostCompactionEstimatedTokens).toBeLessThan(40_000)

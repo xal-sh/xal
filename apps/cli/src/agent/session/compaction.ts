@@ -84,7 +84,7 @@ function truncateUserMessage(item: UserMessageItem, maximumTokens: number): User
   const truncate = (text: string): string => {
     let low = 0
     let high = maximumTokens * 4
-    let result = truncateUtf8Middle(text, high, TRUNCATION_MARKER)
+    let result = TRUNCATION_MARKER
     while (low < high) {
       const middle = Math.ceil((low + high) / 2)
       const candidate = truncateUtf8Middle(text, middle, TRUNCATION_MARKER)

@@ -41,34 +41,34 @@
     {
       "scenario": "automatic_primary_64k",
       "kind": "primary",
-      "workloadFingerprint": "3a0801b37b8d1a70e45720e3859abd42eb9f95fef039fc991b13e12edb7b6372",
+      "workloadFingerprint": "0c52b064936f8d8af3ae6eb7bf80caa510a19c83c9ac3bde3256c02fe0a01420",
       "effectiveContextWindow": 64000,
       "runs": 3,
-      "totalInputTokens": 260252,
-      "totalUncachedInputTokens": 260252,
-      "medianTotalProviderLatencyMs": 9074.21987500001,
-      "p95NormalLatencyMs": 2678.946708333329,
+      "totalInputTokens": 233560,
+      "totalUncachedInputTokens": 231000,
+      "medianTotalProviderLatencyMs": 8620.518081999999,
+      "p95NormalLatencyMs": 5710.976875,
       "continuationPassRate": 1,
       "normalRequests": 3,
       "compactionRequests": 3,
-      "firstPostCompactionInputTokens": [4326, 4345, 4381],
-      "firstPostCompactionEstimatedTokens": [6007, 6055, 6064]
+      "firstPostCompactionInputTokens": [4224, 4337, 4316],
+      "firstPostCompactionEstimatedTokens": [5926, 6024, 6010]
     },
     {
       "scenario": "automatic_subagent_64k",
       "kind": "subagent",
-      "workloadFingerprint": "1509d8cab1028eb903e25f79cc4a8f004e9cac4370b63c9de483094fd99bf4df",
+      "workloadFingerprint": "199fd1586ef3154611242d1c90882657823c7c34a2de1d283b84834b696f682a",
       "effectiveContextWindow": 64000,
       "runs": 3,
-      "totalInputTokens": 266555,
-      "totalUncachedInputTokens": 266555,
-      "medianTotalProviderLatencyMs": 9027.39095833333,
-      "p95NormalLatencyMs": 3043.5971250000007,
+      "totalInputTokens": 242064,
+      "totalUncachedInputTokens": 242064,
+      "medianTotalProviderLatencyMs": 12525.961166000001,
+      "p95NormalLatencyMs": 4529.727166000004,
       "continuationPassRate": 1,
       "normalRequests": 3,
       "compactionRequests": 3,
-      "firstPostCompactionInputTokens": [3852, 3881, 3879],
-      "firstPostCompactionEstimatedTokens": [5311, 5334, 5340]
+      "firstPostCompactionInputTokens": [3878, 3880, 3855],
+      "firstPostCompactionEstimatedTokens": [5337, 5327, 5299]
     }
   ]
 }

@@ -48,7 +48,7 @@ test("rejects unknown strategies and invalid user-only retained items", () => {
     { strategy: "user_messages_v1", retained: [{ ...retained, messageId: undefined }] },
     {
       strategy: "user_messages_v1",
-      retained: [{ ...retained, images: [{ mediaType: "image/png", data: "not-portable" }] }],
+      retained: [{ ...retained, images: [{ mediaType: "image/png", data: "AAAA" }] }],
     },
   ]
 

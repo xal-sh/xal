@@ -175,8 +175,8 @@ function parseEvent(value: unknown, path: string): WorkloadEvent {
     if (replayEstimatedTokens > 0 && !["assistant_message", "reasoning", "tool_call"].includes(kind)) {
       throw new Error(`${path}.item.replayEstimatedTokens is not valid for ${kind}`)
     }
-    if ((imageCount === 0) !== (imageEstimatedTokens === 0) || imageEstimatedTokens !== imageCount * 1_500) {
-      throw new Error(`${path}.item image estimates must use 1500 tokens per image`)
+    if (imageEstimatedTokens !== imageCount * APPROXIMATE_IMAGE_TOKENS) {
+      throw new Error(`${path}.item image estimates must use ${APPROXIMATE_IMAGE_TOKENS} tokens per image`)
     }
     if (imageCount > 0 && kind !== "user_message") throw new Error(`${path}.item images require a user message`)
     if (kind === "tool_result" && base.roundBoundary === "start") {
@@ -435,13 +435,15 @@ function replayWorkload(
           policy === "candidate" && candidateSummaryEstimatedTokens !== undefined
             ? candidateSummaryEstimatedTokens
             : pending.summaryEstimatedTokens
+        const availableRetentionTokens =
+          Math.min(32_000, workload.contextWindow - 1) - event.staticPrefixTokens - summaryEstimatedTokens
+        if (policy === "candidate" && availableRetentionTokens < 0) {
+          throw new Error(`${workload.name} summary exceeds its post-compaction context limit`)
+        }
         const retained =
           policy === "legacy"
             ? retainedLegacy(items, Math.floor(workload.contextWindow * 0.25))
-            : retainedCandidate(
-                items,
-                Math.min(20_000, Math.max(0, 32_000 - event.staticPrefixTokens - summaryEstimatedTokens)),
-              )
+            : retainedCandidate(items, Math.min(20_000, availableRetentionTokens))
         if (policy === "legacy") {
           const boundary = retained[0]?.index ?? event.index
           if (boundary !== pending.replacementBoundary) {
@@ -1048,6 +1050,14 @@ export async function generateFixture(args: string[]): Promise<void> {
   await writeFile(output, encoded, { encoding: "utf8", mode: 0o600 })
 }
 
+function hasInvalidReplacement(fixture: ContextEfficiencyFixture, result: ReplayResult): boolean {
+  return result.workloads.some((workload) => {
+    const source = fixture.workloads.find((entry) => entry.name === workload.name)
+    if (!source) return true
+    return workload.firstPostCompactionInputTokens.some((tokens) => tokens > 32_000 || tokens >= source.contextWindow)
+  })
+}
+
 async function runFixture(args: string[]): Promise<void> {
   const path = option(args, "--fixture")
   if (!path) throw new Error("--fixture is required")
@@ -1068,11 +1078,7 @@ async function runFixture(args: string[]): Promise<void> {
     }
   }
   const gate = option(args, "--gate")
-  if (
-    gate === "retention" &&
-    (result.operationalTailViolations !== 0 ||
-      result.workloads.some((workload) => workload.firstPostCompactionInputTokens.some((tokens) => tokens > 32_000)))
-  ) {
+  if (gate === "retention" && (result.operationalTailViolations !== 0 || hasInvalidReplacement(fixture, result))) {
     throw new Error("candidate retention replay failed replacement retention or size gates")
   }
   if (gate === "release") {
@@ -1089,11 +1095,7 @@ async function runFixture(args: string[]): Promise<void> {
       return baseline === undefined || workload.automaticCompactions > baseline.automaticCompactions
     })
     const invalidReplacement = sensitivity.some(
-      (entry) =>
-        entry.replay.operationalTailViolations !== 0 ||
-        entry.replay.workloads.some((workload) =>
-          workload.firstPostCompactionInputTokens.some((tokens) => tokens > 32_000),
-        ),
+      (entry) => entry.replay.operationalTailViolations !== 0 || hasInvalidReplacement(fixture, entry.replay),
     )
     if (reduction < 0.2 || increased || invalidReplacement) {
       throw new Error("candidate release replay failed cadence or retention gates")

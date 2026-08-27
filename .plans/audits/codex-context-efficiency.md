@@ -92,8 +92,8 @@ Superseded by the documented ordinary non-warmed final capture. The final eviden
 | Operational-tail violations | Candidate 90% replay: 0 | PASS |
 | Replacement request estimate | All sensitivity/runtime cases `<=32,000` | PASS |
 | Automatic compaction cadence | Candidate 2 vs legacy 5; no workload increase | PASS |
-| Production provider input | Primary 4,261; subagent 3,657 | PASS (`<=35,000`) |
-| Production runtime estimate | Primary 5,970; subagent 5,103 | PASS (`<=32,000`) |
+| Production provider input | Primary 4,273; subagent 3,828 | PASS (`<=35,000`) |
+| Production runtime estimate | Primary 6,001; subagent 5,307 | PASS (`<=32,000`) |
 | Production continuation | Primary 1/1; subagent 1/1 | PASS |
 | Release continuation | 12/12 across paired and automatic scenarios | PASS |
 | Paired total provider input | Primary -1.57%; subagent -1.21%; aggregate -1.39% | PASS |
@@ -124,4 +124,91 @@ Superseded by the documented ordinary non-warmed final capture. The final eviden
 | --- | ---: | ---: | --- |
 | Standards | 0 | 0 | PASS |
 | Updated plan/spec | 0 | 0 | PASS |
+| Overall | 0 | 0 | **PASS** |
+
+## Post-CodeRabbit follow-up audit — 2026-08-27
+
+### Verdict
+
+**PASS.** No Medium-or-higher Standards or updated-plan/Spec finding remains in the complete working-tree delta from committed head `98fb2aecc9011ea01de4856f564863bf3ab19170`.
+
+Excluding this audit file, the reviewed follow-up snapshot has patch ID `ea9255464826a8038c6b47bf2e652924e6de0b93`, 8 changed files, 42 hunks, 152 additions, and 71 deletions. Every changed line and surrounding consumer was inspected on independent Standards and Spec axes.
+
+### Accepted and resolved findings
+
+#### CR1 — Medium — deterministic replacement sizing used a global 32k cap for every workload
+
+Accepted and resolved in `scripts/context-efficiency.ts`. Candidate retention now accounts for each workload's static prefix and reserves against the smaller applicable boundary. The audit found and reported one follow-up equality mismatch: the first version allowed a simulated request exactly at a small workload's hard window, while runtime rejects `activeTokens >= contextWindow`. The final implementation budgets against `min(32_000, contextWindow - 1)` and rejects `tokens > 32_000 || tokens >= contextWindow`. The focused 100-token workload produces a sendable 99-token replacement and still rejects summary/static-prefix overflow.
+
+#### CR2 — High — automatic live setup targeted the threshold without its static prompt prefix
+
+Accepted and resolved in `scripts/context-efficiency-live.ts`. Calibration separates the static prefix from input history, and automatic setup now includes static prefix, filler, authoritative state, and continuation prompt before requiring exact equality with the resolved automatic threshold. It also retains the independent hard-window check. The public-path synthetic test observes `{ estimatedRequestTokens: 57_600, threshold: 57_600 }`, and all six v5 automatic profiler compactions record `tokensBefore: 57,600`.
+
+#### CR3 — Medium — automatic continuation state was not unambiguous enough for production recovery
+
+Accepted and resolved. Probe v5 wraps the one final state in explicit `AUTHORITATIVE_RECOVERY_STATE_BEGIN/END` boundaries, states that it supersedes earlier synthetic notices, and instructs exact key/value preservation. `AUTOMATIC_CONTINUATION_PROBE_VERSION` is 5, so automatic and production workload fingerprints changed while the paired probe-v2 fingerprints remained stable. The fixture and fingerprint test lock all six scenarios.
+
+#### CR4 — Low — benchmark listener cleanup depended on the idle callback
+
+Accepted and resolved. `completedTurn` always unsubscribes in `finally`, including turn failure and already-idle completion.
+
+#### CR5 — Low — mechanical consistency nitpicks
+
+Accepted and resolved. Image estimates reuse `APPROXIMATE_IMAGE_TOKENS`; user truncation initializes from the already-validated marker; and the invalid-retained-image test uses valid base64 so it reaches the intended retained-image rejection.
+
+### Rejected findings and evidence limits
+
+- Rejected: the two v4 production attempts were provider or harness failures. Both exact profiles contain 6/6 completed provider requests, two completed automatic compactions, and zero provider, turn, tool-batch, job, app, or profiler failure marker. They are continuation-quality failures.
+- Rejected: the passing v5 production capture hides the v4 failures. The plan records both failed attempts, their ordering, and the missed-check counts before describing the v5 recovery. The tracked production fixture contains only the later passing v5 evidence.
+- Evidence limit: profiler privacy intentionally omits assistant/summary text. The v4 profiles independently prove healthy request/compaction execution and numeric shapes, but the exact missing fact names cannot be reconstructed from those JSONL files. The plan's missed-check counts come from the benchmark's enumerated console diagnostics: the first v4 attempt missed four continuation fields and three summary fields; the second missed two continuation fields and one summary field.
+
+### Exact v5 evidence
+
+#### Automatic v5 release rows
+
+Exact profile: `~/.xal/profiler/profile-9f03a1c8-43f7-42b2-b9f1-ec548e577a72.jsonl`, written 2026-08-27 20:38:17 local time.
+
+- Structure: six calibration sessions plus six measured sessions, 18/18 completed provider requests, six completed `user_messages_v1` automatic compactions, and zero recorded failure marker.
+- Threshold: every primary and subagent compaction records `tokensBefore: 57,600`, exactly 90% of the 64k test window.
+- Primary: continuation 3/3; first post-compaction provider input 4,224/4,337/4,316; estimates 5,926/6,024/6,010; total measured provider input 233,560; observed cache-adjusted input 231,000.
+- Subagent: continuation 3/3; first post-compaction provider input 3,878/3,880/3,855; estimates 5,337/5,327/5,299; total measured provider input and cache-adjusted input 242,064.
+- The v5 automatic rows in `scripts/fixtures/context-efficiency-live-release-v1.json` reproduce those aggregates and carry the locked fingerprints `0c52b064...` primary and `199fd158...` subagent. The ordinary paired probe-v2 rows remain unchanged.
+
+#### Production v5
+
+Exact profile: `~/.xal/profiler/profile-756d3606-2d1e-4fd5-9110-38372082ffac.jsonl`, written 2026-08-27 20:38:56 local time.
+
+- Structure: two calibration sessions plus two measured sessions, 6/6 completed provider requests, two completed `user_messages_v1` automatic compactions, and zero recorded failure marker.
+- Threshold: both kinds record `tokensBefore: 234,000`, exactly 90% of the 260k catalog window.
+- Primary: continuation 1/1; first post-compaction provider input 4,273; runtime estimate 6,001; total measured provider input 273,876.
+- Subagent: continuation 1/1; first post-compaction provider input 3,828; runtime estimate 5,307; total measured provider input 284,906.
+- Both estimates are below 32,000 and both provider inputs are below 35,000. `scripts/fixtures/context-efficiency-live-production-v1.json` reproduces these metrics and uses the v5 fingerprints `41f5ea2f...` primary and `ea82ae20...` subagent.
+
+#### Failed v4 production provenance
+
+- First attempt: `~/.xal/profiler/profile-a9a0b598-a1c4-4260-945d-5b70b2db4854.jsonl`, written 20:34:21. All 6 provider requests and both automatic compactions completed; subagent recovery missed four continuation fields and three summary fields.
+- Second attempt: `~/.xal/profiler/profile-f1afbf26-6999-4c85-927b-1189959a52c1.jsonl`, written 20:36:04. All 6 provider requests and both automatic compactions completed; subagent recovery missed two continuation fields and one summary field.
+- The v5 automatic capture followed at 20:38:17 and the passing v5 production capture at 20:38:56. This ordering supports the documented probe hardening and does not substitute a transport retry for a quality failure.
+
+### Privacy and fixture provenance
+
+All strings in the changed release and production fixtures are restricted to suite/scenario/kind labels, anonymous `provider-1`/`model-1`, versioned capture labels, configuration fingerprints, and workload fingerprints. The remaining fields are numeric aggregates. No prompt, continuation fact, summary, tool output, path, profile ID, connection name, credential, account identity, or raw timestamp is tracked.
+
+### Follow-up verification coverage
+
+- Inventory: **8/8 files and 42/42 hunks inspected**; 152 additions and 71 deletions accounted for, excluding this audit output.
+- Independent focused run: `bun test scripts/context-efficiency.test.ts` — **18 passed, 0 failed, 83 assertions**.
+- Implementation-owner focused run including related runtime suites: **29 passed, 0 failed, 141 assertions**.
+- Deterministic release replay: **2 automatic compactions**, **12,000-token median**, **0 operational-tail violations**.
+- CLI help smoke and `git diff --check`: **passed**.
+- Exact-profile health inspection: v5 automatic 18/18 provider requests completed; v5 production and both v4 attempts each 6/6 completed; no recorded failure marker in any of the four profiles.
+- No live or billable request was issued during this follow-up audit.
+
+### Follow-up disposition
+
+| Axis | High | Medium | Verdict |
+| --- | ---: | ---: | --- |
+| Repository standards | 0 | 0 | PASS |
+| Updated plan/spec | 0 | 0 | PASS |
+| Evidence/privacy | 0 | 0 | PASS |
 | Overall | 0 | 0 | **PASS** |

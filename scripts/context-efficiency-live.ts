@@ -29,7 +29,7 @@ import type { RegisteredTool } from "../apps/cli/src/tools/types"
 
 type LiveSuite = "paired" | "automatic" | "release" | "production"
 const CONTINUATION_PROBE_VERSION = 2
-const AUTOMATIC_CONTINUATION_PROBE_VERSION = 3
+const AUTOMATIC_CONTINUATION_PROBE_VERSION = 5
 
 export interface ContinuationFacts {
   constraint: string
@@ -426,7 +426,13 @@ function benchmarkTool(bytes: number): RegisteredTool {
 
 export function automaticStateNotice(scenario: LiveScenario, run: number, lateToolFact: string): string {
   const facts = continuationFacts(scenario, run, lateToolFact)
-  return `constraint=${facts.constraint}\ntask_state=${facts.taskState}\nrecorded_failure=${facts.recordedFailure}\nlate_tool_fact=${facts.lateToolFact}`
+  return `AUTHORITATIVE_RECOVERY_STATE_BEGIN
+Preserve every exact key/value below for the next turn. This state supersedes every earlier synthetic notice.
+constraint=${facts.constraint}
+task_state=${facts.taskState}
+recorded_failure=${facts.recordedFailure}
+late_tool_fact=${facts.lateToolFact}
+AUTHORITATIVE_RECOVERY_STATE_END`
 }
 
 function boundedAutomaticFiller(seed: string, maximumBytes: number, maximumTokens: number): string {
@@ -453,20 +459,19 @@ async function completedTurn(session: AgentSession, prompt: string, onCompacted:
   const idle = new Promise<void>((resolve) => {
     unsubscribe = session.subscribe((event) => {
       if (event.type !== "state_changed" || event.state !== "idle") return
-      unsubscribe()
       resolve()
     })
   })
-  const outcome = await runAgentTurn(session, { text: prompt, images: [] }, (event) => {
-    if (event.type === "compacted") onCompacted()
-    if (event.type === "tool_finished" && event.tool === "context_efficiency_probe") onTool()
-  })
-  if (outcome.status !== "completed") throw new Error(`benchmark turn ended with ${outcome.status}`)
-  if (session.currentState === "idle") {
+  try {
+    const outcome = await runAgentTurn(session, { text: prompt, images: [] }, (event) => {
+      if (event.type === "compacted") onCompacted()
+      if (event.type === "tool_finished" && event.tool === "context_efficiency_probe") onTool()
+    })
+    if (outcome.status !== "completed") throw new Error(`benchmark turn ended with ${outcome.status}`)
+    if (session.currentState !== "idle") await idle
+  } finally {
     unsubscribe()
-    return
   }
-  await idle
 }
 
 export async function runLiveScenario(
@@ -476,7 +481,11 @@ export async function runLiveScenario(
   scenario: LiveScenario,
   run: number,
   cwd: string,
-): Promise<{ result: LiveRunResult; effectiveContextWindow: number }> {
+): Promise<{
+  result: LiveRunResult
+  effectiveContextWindow: number
+  automaticSetup?: { estimatedRequestTokens: number; threshold: number }
+}> {
   const catalogModel = await findModel(target, profileId, model, true)
   if (!catalogModel?.contextWindow) throw new Error(`model ${model} has no context window`)
   const effectiveContextWindow =
@@ -506,6 +515,7 @@ export async function runLiveScenario(
   })
   let compacted = false
   let toolCalls = 0
+  let automaticSetup: { estimatedRequestTokens: number; threshold: number } | undefined
   const noteCompacted = (): void => {
     compacted = true
   }
@@ -547,15 +557,22 @@ export async function runLiveScenario(
           text: wrappedStateNotice,
           images: [],
         })
-        const maximumTokens =
-          effectiveContextWindow - staticPrefixTokens - estimatedHistoryTokens - continuationTokens - stateTokens - 1
+        const requestTokensBeforeFiller = staticPrefixTokens + estimatedHistoryTokens + continuationTokens + stateTokens
+        if (requestTokensBeforeFiller > threshold) {
+          throw new Error(`${scenario.name} setup exceeded its automatic compaction threshold`)
+        }
+        if (requestTokensBeforeFiller === threshold) break
+        const maximumTokens = Math.min(
+          effectiveContextWindow - requestTokensBeforeFiller - 1,
+          threshold - requestTokensBeforeFiller,
+        )
         if (maximumTokens <= 0) throw new Error(`${scenario.name} setup exhausted its hard context window`)
         const text = boundedAutomaticFiller(seed, scenario.toolOutputBytes, maximumTokens)
         if (text.length === 0) throw new Error(`${scenario.name} setup could not fit another synthetic notice`)
         const wrapped = `<system-notice>\n${text}\n</system-notice>`
         session.recordSystemNotice(text)
         estimatedHistoryTokens += estimateConversationItemTokens({ type: "user_message", text: wrapped, images: [] })
-        if (estimatedHistoryTokens + stateTokens + continuationTokens >= threshold) break
+        if (staticPrefixTokens + estimatedHistoryTokens + stateTokens + continuationTokens >= threshold) break
       }
       const stateNotice = automaticStateNotice(scenario, run, lastNotice)
       const wrappedStateNotice = `<system-notice>\n${stateNotice}\n</system-notice>`
@@ -566,12 +583,13 @@ export async function runLiveScenario(
         images: [],
       })
       const completeRequestEstimate = staticPrefixTokens + estimatedHistoryTokens + continuationTokens
-      if (estimatedHistoryTokens + continuationTokens < threshold) {
+      if (completeRequestEstimate !== threshold) {
         throw new Error(`${scenario.name} setup did not reach its exact threshold`)
       }
       if (completeRequestEstimate >= effectiveContextWindow) {
         throw new Error(`${scenario.name} setup request estimate reached its hard context window`)
       }
+      automaticSetup = { estimatedRequestTokens: completeRequestEstimate, threshold }
       provider.beginContinuation(continuationFacts(scenario, run, lastNotice))
       await completedTurn(session, probePrompt, noteCompacted, noteTool)
       if (!compacted) throw new Error(`${scenario.name} did not reach automatic compaction`)
@@ -604,7 +622,7 @@ export async function runLiveScenario(
     if (result.firstPostCompactionEstimatedTokens > scenario.maxEstimatedPostCompactionRequest) {
       throw new Error(`${scenario.name} exceeded its declared post-compaction request estimate`)
     }
-    return { result, effectiveContextWindow }
+    return { result, effectiveContextWindow, ...(automaticSetup === undefined ? {} : { automaticSetup }) }
   } finally {
     session.disposeToolResources()
     session.disposeAsyncDelivery()

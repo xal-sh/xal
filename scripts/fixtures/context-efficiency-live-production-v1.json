@@ -1,7 +1,7 @@
 {
   "version": 1,
   "suite": "production",
-  "label": "release-production",
+  "label": "release-production-v5",
   "provider": "provider-1",
   "model": "model-1",
   "configurationFingerprint": "28af407431191b0d47e2978ac1690fde97d537b5a390f993eee9c8ccf236b613",
@@ -9,32 +9,34 @@
     {
       "scenario": "production_primary",
       "kind": "primary",
-      "workloadFingerprint": "07e1320a7a09e277492aed6973b8a1c1d1d0a5440f9d05cf4d9090f9493027ac",
+      "workloadFingerprint": "41f5ea2f6f0cfa1fe492fb04d6a492ae71c113386c55538e92e1ee061972d0a1",
       "effectiveContextWindow": 260000,
       "runs": 1,
-      "totalUncachedInputTokens": 281728,
-      "medianTotalProviderLatencyMs": 10953.458542,
-      "p95NormalLatencyMs": 2710.161249999999,
+      "totalInputTokens": 273876,
+      "totalUncachedInputTokens": 273876,
+      "medianTotalProviderLatencyMs": 11621.938458,
+      "p95NormalLatencyMs": 3313.7893330000006,
       "continuationPassRate": 1,
       "normalRequests": 1,
       "compactionRequests": 1,
-      "firstPostCompactionInputTokens": [4261],
-      "firstPostCompactionEstimatedTokens": [5970]
+      "firstPostCompactionInputTokens": [4273],
+      "firstPostCompactionEstimatedTokens": [6001]
     },
     {
       "scenario": "production_subagent",
       "kind": "subagent",
-      "workloadFingerprint": "37c67d52fc0d14aa0762736ba1553deb9593885f9ac09c827ef6c78ab68e2bf6",
+      "workloadFingerprint": "ea82ae208a11e56d6717861962aa54b59edaf8a259fd79634818e58127c6244b",
       "effectiveContextWindow": 260000,
       "runs": 1,
-      "totalUncachedInputTokens": 292103,
-      "medianTotalProviderLatencyMs": 10686.722082999999,
-      "p95NormalLatencyMs": 3185.7959999999985,
+      "totalInputTokens": 284906,
+      "totalUncachedInputTokens": 284906,
+      "medianTotalProviderLatencyMs": 10736.621291,
+      "p95NormalLatencyMs": 2654.107583000001,
       "continuationPassRate": 1,
       "normalRequests": 1,
       "compactionRequests": 1,
-      "firstPostCompactionInputTokens": [3657],
-      "firstPostCompactionEstimatedTokens": [5103]
+      "firstPostCompactionInputTokens": [3828],
+      "firstPostCompactionEstimatedTokens": [5307]
     }
   ]
 }
