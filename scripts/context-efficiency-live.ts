@@ -29,6 +29,7 @@ import type { RegisteredTool } from "../apps/cli/src/tools/types"
 
 type LiveSuite = "paired" | "automatic" | "release" | "production"
 const CONTINUATION_PROBE_VERSION = 2
+const AUTOMATIC_CONTINUATION_PROBE_VERSION = 3
 
 export interface ContinuationFacts {
   constraint: string
@@ -36,6 +37,8 @@ export interface ContinuationFacts {
   recordedFailure: string
   lateToolFact: string
 }
+
+export type ContinuationCheck = "marker" | "constraint" | "task_state" | "recorded_failure" | "late_tool_fact"
 
 function continuationFacts(scenario: LiveScenario, run: number, lateToolFact: string): ContinuationFacts {
   return {
@@ -46,14 +49,18 @@ function continuationFacts(scenario: LiveScenario, run: number, lateToolFact: st
   }
 }
 
+export function continuationProbeFailures(text: string, facts: ContinuationFacts): ContinuationCheck[] {
+  const failures: ContinuationCheck[] = []
+  if (!text.includes("XAL_CONTEXT_CONTINUATION_OK")) failures.push("marker")
+  if (!text.includes(`constraint=${facts.constraint}`)) failures.push("constraint")
+  if (!text.includes(`task_state=${facts.taskState}`)) failures.push("task_state")
+  if (!text.includes(`recorded_failure=${facts.recordedFailure}`)) failures.push("recorded_failure")
+  if (!text.includes(`late_tool_fact=${facts.lateToolFact}`)) failures.push("late_tool_fact")
+  return failures
+}
+
 export function continuationProbePassed(text: string, facts: ContinuationFacts): boolean {
-  return [
-    "XAL_CONTEXT_CONTINUATION_OK",
-    `constraint=${facts.constraint}`,
-    `task_state=${facts.taskState}`,
-    `recorded_failure=${facts.recordedFailure}`,
-    `late_tool_fact=${facts.lateToolFact}`,
-  ].every((value) => text.includes(value))
+  return continuationProbeFailures(text, facts).length === 0
 }
 
 function continuationPrompt(): string {
@@ -231,6 +238,8 @@ class MeasuringProvider implements Provider {
   readonly capabilities: Provider["capabilities"]
   readonly measurements: RequestMeasurement[] = []
   continuationPassed = false
+  continuationFailures: ContinuationCheck[] = []
+  summaryFailures: ContinuationCheck[] = []
   private calibrating = false
   private calibrationEstimate: number | undefined
   private calibrationInputEstimate: number | undefined
@@ -283,6 +292,8 @@ class MeasuringProvider implements Provider {
 
   beginContinuation(facts: ContinuationFacts): void {
     this.continuationPassed = false
+    this.continuationFailures = []
+    this.summaryFailures = []
     this.continuationFacts = facts
   }
 
@@ -311,8 +322,14 @@ class MeasuringProvider implements Provider {
         yield event
       }
     } finally {
+      if (request.toolChoice === "none" && this.continuationFacts) {
+        this.summaryFailures = continuationProbeFailures(assistantText, this.continuationFacts).filter(
+          (failure) => failure !== "marker",
+        )
+      }
       if (request.toolChoice !== "none" && this.continuationFacts) {
-        this.continuationPassed = continuationProbePassed(assistantText, this.continuationFacts)
+        this.continuationFailures = continuationProbeFailures(assistantText, this.continuationFacts)
+        this.continuationPassed = this.continuationFailures.length === 0
         this.continuationFacts = undefined
       }
       this.measurements.push({
@@ -395,6 +412,30 @@ function benchmarkTool(bytes: number): RegisteredTool {
       return { output: fact + unit.repeat(Math.ceil(fillerBytes / Buffer.byteLength(unit))).slice(0, fillerBytes) }
     },
   }
+}
+
+export function automaticStateNotice(scenario: LiveScenario, run: number, lateToolFact: string): string {
+  const facts = continuationFacts(scenario, run, lateToolFact)
+  return `constraint=${facts.constraint}\ntask_state=${facts.taskState}\nrecorded_failure=${facts.recordedFailure}\nlate_tool_fact=${facts.lateToolFact}`
+}
+
+function boundedAutomaticFiller(seed: string, maximumBytes: number, maximumTokens: number): string {
+  const source = seed.repeat(Math.ceil(maximumBytes / Buffer.byteLength(seed))).slice(0, maximumBytes)
+  let low = 0
+  let high = source.length
+  let result = ""
+  while (low <= high) {
+    const middle = Math.floor((low + high) / 2)
+    const candidate = source.slice(0, middle)
+    const wrapped = `<system-notice>\n${candidate}\n</system-notice>`
+    if (estimateConversationItemTokens({ type: "user_message", text: wrapped, images: [] }) <= maximumTokens) {
+      result = candidate
+      low = middle + 1
+      continue
+    }
+    high = middle - 1
+  }
+  return result
 }
 
 async function completedTurn(session: AgentSession, prompt: string, onCompacted: () => void, onTool: () => void) {
@@ -486,22 +527,34 @@ export async function runLiveScenario(
       })
       let estimatedHistoryTokens = 0
       let lastNotice = "none"
-      for (
-        let notice = 0;
-        notice < scenario.setupTurns && estimatedHistoryTokens + continuationTokens < threshold;
-        notice++
-      ) {
+      for (let notice = 0; notice < scenario.setupTurns; notice++) {
         const seed = `synthetic-notice-${scenario.name}-${run}-${notice}-0123456789abcdef\n`
         lastNotice = `notice-${scenario.name}-${run}-${notice}`
-        const facts = continuationFacts(scenario, run, lastNotice)
-        const text = seed
-          .repeat(Math.ceil(scenario.toolOutputBytes / Buffer.byteLength(seed)))
-          .slice(0, scenario.toolOutputBytes)
-        const noticeText = `constraint=${facts.constraint}\ntask_state=${facts.taskState}\nrecorded_failure=${facts.recordedFailure}\nlate_tool_fact=${facts.lateToolFact}\n${text}`
-        const wrapped = `<system-notice>\n${noticeText}\n</system-notice>`
-        session.recordSystemNotice(noticeText)
+        const stateNotice = automaticStateNotice(scenario, run, lastNotice)
+        const wrappedStateNotice = `<system-notice>\n${stateNotice}\n</system-notice>`
+        const stateTokens = estimateConversationItemTokens({
+          type: "user_message",
+          text: wrappedStateNotice,
+          images: [],
+        })
+        const maximumTokens =
+          effectiveContextWindow - staticPrefixTokens - estimatedHistoryTokens - continuationTokens - stateTokens - 1
+        if (maximumTokens <= 0) throw new Error(`${scenario.name} setup exhausted its hard context window`)
+        const text = boundedAutomaticFiller(seed, scenario.toolOutputBytes, maximumTokens)
+        if (text.length === 0) throw new Error(`${scenario.name} setup could not fit another synthetic notice`)
+        const wrapped = `<system-notice>\n${text}\n</system-notice>`
+        session.recordSystemNotice(text)
         estimatedHistoryTokens += estimateConversationItemTokens({ type: "user_message", text: wrapped, images: [] })
+        if (estimatedHistoryTokens + stateTokens + continuationTokens >= threshold) break
       }
+      const stateNotice = automaticStateNotice(scenario, run, lastNotice)
+      const wrappedStateNotice = `<system-notice>\n${stateNotice}\n</system-notice>`
+      session.recordSystemNotice(stateNotice)
+      estimatedHistoryTokens += estimateConversationItemTokens({
+        type: "user_message",
+        text: wrappedStateNotice,
+        images: [],
+      })
       const completeRequestEstimate = staticPrefixTokens + estimatedHistoryTokens + continuationTokens
       if (estimatedHistoryTokens + continuationTokens < threshold) {
         throw new Error(`${scenario.name} setup did not reach its exact threshold`)
@@ -519,6 +572,14 @@ export async function runLiveScenario(
       }
       provider.beginContinuation(continuationFacts(scenario, run, `paired-${run}-${scenario.setupTurns - 1}`))
       await completedTurn(session, continuationPrompt(), noteCompacted, noteTool)
+    }
+    if (provider.continuationFailures.length > 0) {
+      console.error(
+        `${scenario.name} run ${run} missed continuation checks: ${provider.continuationFailures.join(", ")}`,
+      )
+      console.error(
+        `${scenario.name} run ${run} summary missed checks: ${provider.summaryFailures.length === 0 ? "none" : provider.summaryFailures.join(", ")}`,
+      )
     }
     const result = numericRun(provider.measurements, provider.continuationPassed)
     if (result.firstPostCompactionInputTokens === undefined) {
@@ -679,7 +740,13 @@ export function configurationFingerprint(
 export function workloadFingerprint(scenario: LiveScenario): string {
   return createHash("sha256")
     .update(
-      JSON.stringify({ probeVersion: CONTINUATION_PROBE_VERSION, ...scenario, suites: scenario.suites.toSorted() }),
+      JSON.stringify({
+        probeVersion: scenario.suites.includes("paired")
+          ? CONTINUATION_PROBE_VERSION
+          : AUTOMATIC_CONTINUATION_PROBE_VERSION,
+        ...scenario,
+        suites: scenario.suites.toSorted(),
+      }),
     )
     .digest("hex")
 }

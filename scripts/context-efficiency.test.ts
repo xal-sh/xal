@@ -19,6 +19,8 @@ import {
 } from "./context-efficiency"
 import {
   aggregateLiveRuns,
+  automaticStateNotice,
+  continuationProbeFailures,
   continuationProbePassed,
   enforceProductionReleaseGates,
   parseLiveCaptureResult,
@@ -44,8 +46,20 @@ test("continuation probe requires every pre-compaction fact", () => {
   ]
   expect(continuationProbePassed(lines.join("\n"), facts)).toBe(true)
   for (let index = 0; index < lines.length; index++) {
-    expect(continuationProbePassed(lines.filter((_, lineIndex) => lineIndex !== index).join("\n"), facts)).toBe(false)
+    const text = lines.filter((_, lineIndex) => lineIndex !== index).join("\n")
+    expect(continuationProbePassed(text, facts)).toBe(false)
+    expect(continuationProbeFailures(text, facts)).toEqual([
+      ["marker", "constraint", "task_state", "recorded_failure", "late_tool_fact"][index],
+    ])
   }
+})
+
+test("automatic workload writes one final authoritative recovery notice", () => {
+  const scenario = parseLiveScenarios(live).scenarios.find((entry) => entry.name === "production_subagent")
+  if (!scenario) throw new Error("live fixture lost the production subagent scenario")
+  const notice = automaticStateNotice(scenario, 1, "notice-production_subagent-1-4")
+  expect(notice.split("\n")).toHaveLength(4)
+  expect(notice).toEndWith("late_tool_fact=notice-production_subagent-1-4")
 })
 
 test("numeric fixture strictly round trips", () => {
@@ -430,7 +444,9 @@ test("production release gates reject incomplete or unsafe evidence", () => {
   productionScenario(unsafeProviderInput, "production_primary").firstPostCompactionInputTokens = [35_001]
   expect(() => enforceProductionReleaseGates(unsafeProviderInput, 1)).toThrow("provider input exceeded 35000")
 
-  expect(() => enforceProductionReleaseGates(parseLiveCaptureResult(productionLive), 1)).toThrow(
+  const failedContinuation = passingProductionResult()
+  productionScenario(failedContinuation, "production_subagent").continuationPassRate = 0
+  expect(() => enforceProductionReleaseGates(failedContinuation, 1)).toThrow(
     "production_subagent continuation quality failed",
   )
 })
