@@ -18,16 +18,8 @@
       "continuationPassRate": 1,
       "normalRequests": 15,
       "compactionRequests": 3,
-      "firstPostCompactionInputTokens": [
-        4597,
-        4557,
-        4579
-      ],
-      "firstPostCompactionEstimatedTokens": [
-        6338,
-        6305,
-        6329
-      ]
+      "firstPostCompactionInputTokens": [4597, 4557, 4579],
+      "firstPostCompactionEstimatedTokens": [6338, 6305, 6329]
     },
     {
       "scenario": "paired_subagent_tool_heavy",
@@ -41,16 +33,8 @@
       "continuationPassRate": 1,
       "normalRequests": 15,
       "compactionRequests": 3,
-      "firstPostCompactionInputTokens": [
-        4074,
-        4135,
-        4144
-      ],
-      "firstPostCompactionEstimatedTokens": [
-        5567,
-        5629,
-        5640
-      ]
+      "firstPostCompactionInputTokens": [4074, 4135, 4144],
+      "firstPostCompactionEstimatedTokens": [5567, 5629, 5640]
     },
     {
       "scenario": "automatic_primary_64k",
@@ -64,16 +48,8 @@
       "continuationPassRate": 1,
       "normalRequests": 3,
       "compactionRequests": 3,
-      "firstPostCompactionInputTokens": [
-        4376,
-        4129,
-        4316
-      ],
-      "firstPostCompactionEstimatedTokens": [
-        6057,
-        5799,
-        6017
-      ]
+      "firstPostCompactionInputTokens": [4376, 4129, 4316],
+      "firstPostCompactionEstimatedTokens": [6057, 5799, 6017]
     },
     {
       "scenario": "automatic_subagent_64k",
@@ -87,16 +63,8 @@
       "continuationPassRate": 1,
       "normalRequests": 3,
       "compactionRequests": 3,
-      "firstPostCompactionInputTokens": [
-        3954,
-        3888,
-        3674
-      ],
-      "firstPostCompactionEstimatedTokens": [
-        5406,
-        5355,
-        5106
-      ]
+      "firstPostCompactionInputTokens": [3954, 3888, 3674],
+      "firstPostCompactionEstimatedTokens": [5406, 5355, 5106]
     }
   ]
 }

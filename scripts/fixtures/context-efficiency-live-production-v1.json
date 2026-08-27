@@ -18,12 +18,8 @@
       "continuationPassRate": 1,
       "normalRequests": 1,
       "compactionRequests": 1,
-      "firstPostCompactionInputTokens": [
-        4261
-      ],
-      "firstPostCompactionEstimatedTokens": [
-        5970
-      ]
+      "firstPostCompactionInputTokens": [4261],
+      "firstPostCompactionEstimatedTokens": [5970]
     },
     {
       "scenario": "production_subagent",
@@ -37,12 +33,8 @@
       "continuationPassRate": 1,
       "normalRequests": 1,
       "compactionRequests": 1,
-      "firstPostCompactionInputTokens": [
-        3657
-      ],
-      "firstPostCompactionEstimatedTokens": [
-        5103
-      ]
+      "firstPostCompactionInputTokens": [3657],
+      "firstPostCompactionEstimatedTokens": [5103]
     }
   ]
 }
