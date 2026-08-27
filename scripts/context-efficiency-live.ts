@@ -695,6 +695,41 @@ export interface LiveCaptureOptions {
   baseline?: string
 }
 
+export function enforceProductionReleaseGates(result: LiveCaptureResult, expectedRuns: number): void {
+  if (result.suite !== "production") throw new Error("production release gates require the production suite")
+  if (result.scenarios.length !== 2) throw new Error("production suite must contain exactly two scenarios")
+  for (const required of [
+    { scenario: "production_primary", kind: "primary" },
+    { scenario: "production_subagent", kind: "subagent" },
+  ]) {
+    const scenario = result.scenarios.find(
+      (entry) => entry.scenario === required.scenario && entry.kind === required.kind,
+    )
+    if (!scenario) throw new Error(`production suite is missing ${required.kind}`)
+    if (scenario.runs !== expectedRuns) {
+      throw new Error(`${scenario.scenario} expected ${expectedRuns} runs, received ${scenario.runs}`)
+    }
+    if (scenario.normalRequests !== expectedRuns || scenario.compactionRequests !== expectedRuns) {
+      throw new Error(`${scenario.scenario} did not complete exactly one normal and compaction request per run`)
+    }
+    if (
+      scenario.firstPostCompactionInputTokens.length !== expectedRuns ||
+      scenario.firstPostCompactionEstimatedTokens.length !== expectedRuns
+    ) {
+      throw new Error(`${scenario.scenario} did not record one post-compaction measurement per run`)
+    }
+    if (scenario.firstPostCompactionEstimatedTokens.some((tokens) => tokens > 32_000)) {
+      throw new Error(`${scenario.scenario} replacement estimate exceeded 32000 tokens`)
+    }
+    if (median(scenario.firstPostCompactionInputTokens) > 35_000) {
+      throw new Error(`${scenario.scenario} median provider input exceeded 35000 tokens`)
+    }
+    if (scenario.continuationPassRate !== 1) {
+      throw new Error(`${scenario.scenario} continuation quality failed`)
+    }
+  }
+}
+
 export async function captureLive(options: LiveCaptureOptions): Promise<void> {
   const scenarios = parseLiveScenarios(JSON.parse(await readFile(options.scenariosPath, "utf8"))).scenarios.filter(
     (scenario) => scenario.suites.includes(options.suite),
@@ -754,11 +789,13 @@ export async function captureLive(options: LiveCaptureOptions): Promise<void> {
       configurationFingerprint: fingerprint,
       scenarios: results,
     }
-    const encoded = `${JSON.stringify(parseLiveCaptureResult(output), null, 2)}\n`
+    const sanitized = parseLiveCaptureResult(output)
+    const encoded = `${JSON.stringify(sanitized, null, 2)}\n`
     await mkdir(dirname(options.output), { recursive: true, mode: 0o700 })
     await writeFile(options.output, encoded, { encoding: "utf8", mode: 0o600 })
-    if (options.baseline) await compareBaseline(options.baseline, output)
-    console.log(JSON.stringify(output, null, 2))
+    if (sanitized.suite === "production") enforceProductionReleaseGates(sanitized, options.runs)
+    if (options.baseline) await compareBaseline(options.baseline, sanitized)
+    console.log(JSON.stringify(sanitized, null, 2))
   } finally {
     await stopProfiler()
     if (tool && toolRegistered) unregisterTool(tool)

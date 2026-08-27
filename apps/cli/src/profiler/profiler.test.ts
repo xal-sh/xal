@@ -46,6 +46,16 @@ function strings(value: unknown): string[] {
 }
 
 test("numeric shape calculators never retain source content", () => {
+  const checkpointShape = compactionShape({
+    trigger: "manual",
+    strategy: "user_messages_v1",
+    outcome: "completed",
+    before: request().input,
+    after: [{ type: "user_message", text: secret, images: [] }],
+    retained: [{ type: "user_message", text: secret, images: [], messageId: secret }],
+    summary: secret,
+    removedTypes: ["assistant_message", "tool_result", "direct_shell", "compaction"],
+  })
   const shapes = [
     providerRequestShape(request()),
     toolOutputShape(secret, secret.slice(0, 3), true),
@@ -59,20 +69,13 @@ test("numeric shape calculators never retain source content", () => {
       summary: secret,
       removedTypes: ["assistant_message", "tool_result"],
     }),
-    compactionShape({
-      trigger: "manual",
-      strategy: "user_messages_v1",
-      outcome: "completed",
-      before: request().input,
-      after: [{ type: "user_message", text: secret, images: [] }],
-      retained: [{ type: "user_message", text: secret, images: [], messageId: secret }],
-      summary: secret,
-      removedTypes: ["assistant_message", "tool_result"],
-    }),
+    checkpointShape,
   ]
 
   expect(JSON.stringify(shapes)).not.toContain(secret)
   expect(strings(shapes)).toEqual(["auto", "legacy", "completed", "manual", "user_messages_v1", "completed"])
+  expect(checkpointShape.removed.direct_shell).toBe(1)
+  expect(checkpointShape.removed.compaction).toBe(1)
 })
 
 test("runtime profiling records retries and bounded tools without affecting requests on writer failure", async () => {

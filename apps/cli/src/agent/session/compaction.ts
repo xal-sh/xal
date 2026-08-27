@@ -191,6 +191,11 @@ function isCompactionInterruption(error: unknown, signal: AbortSignal): boolean 
   return error instanceof StreamedTextAttemptError && isAbortError(error.cause)
 }
 
+function activeSourceHistory(items: HistoryItem[]): HistoryItem[] {
+  const checkpoint = items.findLastIndex((item) => item.type === "compaction")
+  return checkpoint < 0 ? items : items.slice(checkpoint)
+}
+
 export interface CompactionHost {
   readonly kind: SessionKind
   sessionId(): string
@@ -230,7 +235,8 @@ export async function runCompaction(
 ): Promise<boolean> {
   const profileId = host.profileId()
   const history = host.history()
-  const before = activeHistory(history)
+  const source = activeSourceHistory(history)
+  const before = activeHistory(source)
   const tokensBefore = admittedTokensBefore ?? host.contextTokens()
   const latest = history.at(-1)
   if (before.length === 0 || (latest?.type === "compaction" && latest.strategy === "user_messages_v1")) {
@@ -304,14 +310,17 @@ export async function runCompaction(
       Math.min(MAX_RETAINED_USER_TOKENS, MAX_REPLACEMENT_REQUEST_TOKENS - baseEstimate),
     )
     const retainedIds = new Set(retained.map((item) => item.messageId))
-    const removedTypes = before.flatMap((item) =>
+    const replaced = before.filter(
+      (item) => item.type !== "user_message" || item.messageId === undefined || !retainedIds.has(item.messageId),
+    ).length
+    const removedTypes = source.flatMap((item) =>
       item.type === "user_message" && item.messageId !== undefined && retainedIds.has(item.messageId)
         ? []
         : [item.type],
     )
     const checkpoint: CompactionItem = {
       ...baseCheckpoint,
-      replaced: removedTypes.length,
+      replaced,
       retained,
     }
     const replacementRequest = host.buildRequestWithHistory([checkpoint], provider, model, undefined, signal)
@@ -345,7 +354,7 @@ export async function runCompaction(
       before,
       after: before,
       retained: [],
-      removedTypes: before.map((item) => item.type),
+      removedTypes: source.map((item) => item.type),
     })
     throw error
   }

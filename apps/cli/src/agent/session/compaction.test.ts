@@ -4,7 +4,13 @@ import { estimateRequestTokens } from "../../providers/request-size"
 import type { ConversationItem, ProviderPrompt, StreamRequest } from "../../providers/types"
 import { round, ScriptedProvider } from "./test-support"
 import type { HistoryItem } from "../history"
-import { activeHistory, continuationSummaryMessage, rewindConversation, summaryMessage } from "../history"
+import {
+  activeHistory,
+  continuationSummaryMessage,
+  directShellMessage,
+  rewindConversation,
+  summaryMessage,
+} from "../history"
 import type { CompactionHost } from "./compaction"
 import {
   autoCompact,
@@ -330,6 +336,15 @@ test("summarizes complete active history and atomically writes a bounded user-on
     text: "Current task",
     images: [{ mediaType: "image/png" as const, data: "attachment" }],
   }
+  const directShell = {
+    type: "direct_shell" as const,
+    messageId: "33333333-3333-4333-8333-333333333333",
+    callId: "direct-shell-call",
+    input: "pwd",
+    command: "pwd",
+    output: "/repo",
+    readOnly: true,
+  }
   let history: HistoryItem[] = [
     {
       type: "compaction",
@@ -337,6 +352,7 @@ test("summarizes complete active history and atomically writes a bounded user-on
       replaced: 3,
       retained: [oldUser, { type: "assistant_message", text: "Legacy retained assistant" }],
     },
+    directShell,
     currentUser,
     { type: "assistant_message", text: "Working" },
     { type: "tool_call", callId: "late-call", name: "read", args: { path: "late.txt" } },
@@ -387,6 +403,7 @@ test("summarizes complete active history and atomically writes a bounded user-on
     summaryMessage("Legacy state"),
     { type: "user_message", text: "Original constraint", images: [] },
     { type: "assistant_message", text: "Legacy retained assistant" },
+    directShellMessage(directShell),
     { type: "user_message", text: "Current task\n\n[1 image attachment omitted]", images: [] },
     { type: "assistant_message", text: "Working" },
     { type: "tool_call", callId: "late-call", name: "read", args: { path: "late.txt" } },
@@ -396,6 +413,7 @@ test("summarizes complete active history and atomically writes a bounded user-on
   if (!checkpoint || checkpoint.type !== "compaction" || checkpoint.strategy !== "user_messages_v1") {
     throw new Error("missing new checkpoint")
   }
+  expect(checkpoint.replaced).toBe(6)
   expect(checkpoint.retained.map((item) => item.messageId)).toEqual([oldUser.messageId, currentUser.messageId])
   expect(checkpoint.retained.every((item) => item.images.length === 0)).toBe(true)
   expect(activeHistory(history).at(-1)).toEqual(continuationSummaryMessage("Fresh state"))
@@ -404,6 +422,7 @@ test("summarizes complete active history and atomically writes a bounded user-on
     strategy: "user_messages_v1",
     outcome: "completed",
     retained: checkpoint.retained,
+    removedTypes: ["compaction", "direct_shell", "assistant_message", "tool_call", "tool_result"],
   })
 })
 

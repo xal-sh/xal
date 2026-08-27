@@ -10,6 +10,7 @@ import { registerTool, unregisterTool } from "../apps/cli/src/tools/registry"
 import type { RegisteredTool } from "../apps/cli/src/tools/types"
 import fixture from "./fixtures/context-efficiency-v1.json"
 import live from "./fixtures/context-efficiency-live-v1.json"
+import productionLive from "./fixtures/context-efficiency-live-production-v1.json"
 import {
   generateFixture,
   parseContextEfficiencyFixture,
@@ -19,11 +20,13 @@ import {
 import {
   aggregateLiveRuns,
   continuationProbePassed,
+  enforceProductionReleaseGates,
   parseLiveCaptureResult,
   parseLiveScenarios,
   runLiveScenario,
   workloadFingerprint,
 } from "./context-efficiency-live"
+import type { LiveCaptureResult } from "./context-efficiency-live"
 
 test("continuation probe requires every pre-compaction fact", () => {
   const facts = {
@@ -381,6 +384,55 @@ test("live results round trip only anonymous labels and numeric metrics", () => 
   })
   expect(parseLiveCaptureResult(JSON.parse(JSON.stringify(result)))).toEqual(result)
   expect(JSON.stringify(result)).not.toContain("connection")
+})
+
+function passingProductionResult(): LiveCaptureResult {
+  const result = parseLiveCaptureResult(productionLive)
+  return {
+    ...result,
+    scenarios: result.scenarios.map((scenario) => ({ ...scenario, continuationPassRate: 1 })),
+  }
+}
+
+function productionScenario(
+  result: LiveCaptureResult,
+  name: "production_primary" | "production_subagent",
+): LiveCaptureResult["scenarios"][number] {
+  const scenario = result.scenarios.find((entry) => entry.scenario === name)
+  if (!scenario) throw new Error(`missing ${name}`)
+  return scenario
+}
+
+test("production release gates reject incomplete or unsafe evidence", () => {
+  expect(() => enforceProductionReleaseGates(passingProductionResult(), 1)).not.toThrow()
+
+  const missingKind = passingProductionResult()
+  missingKind.scenarios.pop()
+  expect(() => enforceProductionReleaseGates(missingKind, 1)).toThrow("exactly two scenarios")
+
+  const wrongRuns = passingProductionResult()
+  productionScenario(wrongRuns, "production_primary").runs = 2
+  expect(() => enforceProductionReleaseGates(wrongRuns, 1)).toThrow("expected 1 runs")
+
+  const wrongRequests = passingProductionResult()
+  productionScenario(wrongRequests, "production_primary").normalRequests = 0
+  expect(() => enforceProductionReleaseGates(wrongRequests, 1)).toThrow("exactly one normal and compaction request")
+
+  const missingMeasurement = passingProductionResult()
+  productionScenario(missingMeasurement, "production_primary").firstPostCompactionInputTokens = []
+  expect(() => enforceProductionReleaseGates(missingMeasurement, 1)).toThrow("one post-compaction measurement")
+
+  const unsafeEstimate = passingProductionResult()
+  productionScenario(unsafeEstimate, "production_primary").firstPostCompactionEstimatedTokens = [32_001]
+  expect(() => enforceProductionReleaseGates(unsafeEstimate, 1)).toThrow("estimate exceeded 32000")
+
+  const unsafeProviderInput = passingProductionResult()
+  productionScenario(unsafeProviderInput, "production_primary").firstPostCompactionInputTokens = [35_001]
+  expect(() => enforceProductionReleaseGates(unsafeProviderInput, 1)).toThrow("provider input exceeded 35000")
+
+  expect(() => enforceProductionReleaseGates(parseLiveCaptureResult(productionLive), 1)).toThrow(
+    "production_subagent continuation quality failed",
+  )
 })
 
 function requestText(request: StreamRequest): string {
