@@ -112,6 +112,16 @@ test("numeric fixture rejects every missing replay field category", () => {
   }
 })
 
+test("numeric fixture enforces each workload kind", () => {
+  for (const name of ["primary_tool_heavy", "primary_repeated_compaction", "subagent_tool_heavy"]) {
+    const raw = JSON.parse(JSON.stringify(fixture))
+    const workload = raw.workloads.find((entry: { name: string }) => entry.name === name)
+    if (!workload) throw new Error(`fixture lost ${name}`)
+    workload.kind = name === "subagent_tool_heavy" ? "primary" : "subagent"
+    expect(() => parseContextEfficiencyFixture(raw)).toThrow(`${name} must use kind`)
+  }
+})
+
 test("legacy replay matches the frozen representative baseline", () => {
   const parsed = parseContextEfficiencyFixture(fixture)
   const replay = replayFixture(parsed, "legacy", 0.85)
@@ -226,6 +236,64 @@ test("legacy replay moves a partial tool segment to its next safe boundary", () 
   ]
   const replay = replayFixture(parseContextEfficiencyFixture(raw), "legacy", 0.85)
   expect(replay.workloads[0]?.firstPostCompactionInputTokens).toEqual([11])
+})
+
+test("legacy replay retains the complete tail when it fits the budget", () => {
+  const raw = JSON.parse(JSON.stringify(fixture))
+  raw.workloads[0] = {
+    name: "primary_tool_heavy",
+    kind: "primary",
+    contextWindow: 100,
+    events: [
+      {
+        index: 0,
+        round: 1,
+        roundBoundary: "start",
+        type: "item",
+        item: {
+          kind: "user_message",
+          estimatedModelVisibleTokens: 10,
+          replayEstimatedTokens: 0,
+          authoredUser: true,
+          hasModelText: false,
+          imageCount: 0,
+          imageEstimatedTokens: 0,
+        },
+      },
+      {
+        index: 1,
+        round: 1,
+        roundBoundary: "end",
+        type: "request",
+        staticPrefixTokens: 0,
+        providerUsageBoundary: true,
+        usage: { totalInputTokens: 90, cacheReadInputTokens: 0, outputTokens: 0, latencyMs: 1 },
+        followedCompaction: false,
+      },
+      {
+        index: 2,
+        round: 2,
+        roundBoundary: "start",
+        type: "compaction",
+        trigger: "automatic",
+        outcome: "completed",
+        summaryEstimatedTokens: 10,
+        replacementBoundary: 0,
+      },
+      {
+        index: 3,
+        round: 2,
+        roundBoundary: "end",
+        type: "request",
+        staticPrefixTokens: 0,
+        providerUsageBoundary: true,
+        usage: { totalInputTokens: 90, cacheReadInputTokens: 0, outputTokens: 0, latencyMs: 1 },
+        followedCompaction: true,
+      },
+    ],
+  }
+  const replay = replayFixture(parseContextEfficiencyFixture(raw), "legacy", 0.85)
+  expect(replay.workloads[0]?.firstPostCompactionInputTokens).toEqual([20])
 })
 
 test("candidate replay preserves authored users across repeated checkpoints", () => {
@@ -389,6 +457,17 @@ test("release sensitivity applies the dynamic replacement budget through the con
     ).toBeTrue()
   }
   expect(sensitivity.at(-1)?.replay.automaticCompactions).toBeLessThanOrEqual(4)
+})
+
+test("release sensitivity ignores non-completed and non-automatic compactions", () => {
+  const raw = JSON.parse(JSON.stringify(fixture))
+  const compaction = raw.workloads[0].events.find((event: { type: string }) => event.type === "compaction")
+  if (!compaction) throw new Error("fixture lost its first compaction")
+  compaction.trigger = "manual"
+  compaction.summaryEstimatedTokens = 99_999
+  expect(
+    releaseSensitivityResults(parseContextEfficiencyFixture(raw), 0.9).map((entry) => entry.summaryEstimatedTokens),
+  ).toEqual([4_500, 4_500, 4_500, 10_000])
 })
 
 test("live scenarios validate benchmark windows and session kinds", () => {

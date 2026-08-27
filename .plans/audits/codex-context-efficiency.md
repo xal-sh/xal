@@ -158,7 +158,7 @@ Accepted and resolved. Image estimates reuse `APPROXIMATE_IMAGE_TOKENS`; user tr
 
 ### Rejected findings and evidence limits
 
-- Rejected: the two v4 production attempts were provider or harness failures. Both exact profiles contain 6/6 completed provider requests, two completed automatic compactions, and zero provider, turn, tool-batch, job, app, or profiler failure marker. They are continuation-quality failures.
+- Rejected: the interpretation that the two v4 production attempts were provider or harness failures. Both exact profiles contain 6/6 completed provider requests, two completed automatic compactions, and zero provider, turn, tool-batch, job, app, or profiler failure marker. They are continuation-quality failures.
 - Rejected: the passing v5 production capture hides the v4 failures. The plan records both failed attempts, their ordering, and the missed-check counts before describing the v5 recovery. The tracked production fixture contains only the later passing v5 evidence.
 - Evidence limit: profiler privacy intentionally omits assistant/summary text. The v4 profiles independently prove healthy request/compaction execution and numeric shapes, but the exact missing fact names cannot be reconstructed from those JSONL files. The plan's missed-check counts come from the benchmark's enumerated console diagnostics: the first v4 attempt missed four continuation fields and three summary fields; the second missed two continuation fields and one summary field.
 
@@ -198,7 +198,7 @@ All strings in the changed release and production fixtures are restricted to sui
 
 - Inventory: **8/8 files and 42/42 hunks inspected**; 152 additions and 71 deletions accounted for, excluding this audit output.
 - Independent focused run: `bun test scripts/context-efficiency.test.ts` — **18 passed, 0 failed, 83 assertions**.
-- Implementation-owner focused run including related runtime suites: **29 passed, 0 failed, 141 assertions**.
+- Implementation-owner-focused run including related runtime suites: **29 passed, 0 failed, 141 assertions**.
 - Deterministic release replay: **2 automatic compactions**, **12,000-token median**, **0 operational-tail violations**.
 - CLI help smoke and `git diff --check`: **passed**.
 - Exact-profile health inspection: v5 automatic 18/18 provider requests completed; v5 production and both v4 attempts each 6/6 completed; no recorded failure marker in any of the four profiles.
@@ -211,4 +211,40 @@ All strings in the changed release and production fixtures are restricted to sui
 | Repository standards | 0 | 0 | PASS |
 | Updated plan/spec | 0 | 0 | PASS |
 | Evidence/privacy | 0 | 0 | PASS |
+| Overall | 0 | 0 | **PASS** |
+
+## Final CodeRabbit follow-up — 2026-08-27
+
+### Verdict
+
+**PASS.** The complete delta from committed head `aba2fc469852cb94e7b190be2351c56c1323d753` has no remaining Medium-or-higher Standards or updated-plan/Spec finding.
+
+Before this section was appended, the reviewed snapshot comprised 4 files, 9 hunks, 91 additions, and 7 deletions with patch ID `182ccfd5e08165e64e070dd4e20a004dae5185c4`. Every changed line and its relevant consumers were reviewed independently on both axes.
+
+### Accepted and resolved findings
+
+- **Medium — fixture names did not fully determine session kind.** `parseContextEfficiencyFixture` now maps `primary_tool_heavy` and `primary_repeated_compaction` to `primary`, and `subagent_tool_heavy` to `subagent`, after distinct-name validation. Focused tests invert each mapping and verify fail-loud rejection.
+- **Medium — legacy replay dropped the entire retained tail when every item fit.** `retainedLegacy` now returns all items when its boundary reaches zero. The focused replay proves a fully fitting authored tail contributes both its retained tokens and summary to the first post-compaction estimate.
+- **Medium — release sensitivity included irrelevant compaction summaries.** `releaseSensitivityResults` now derives median, p90, and maximum only from compactions whose trigger is automatic and outcome is completed. The committed focused test covers a manual outlier; an independent audit probe added both a manual outlier and a failed-automatic outlier and preserved `4,500/4,500/4,500/10,000`.
+- **Low — audit wording.** The v4 disposition now rejects the incorrect interpretation rather than appearing to reject a fact, and `implementation-owner-focused` is correctly hyphenated as a compound modifier.
+
+### Rejected finding
+
+- **Rejected — add a tolerance gate for cache-adjusted input.** The locked plan explicitly defines total provider input before cache credit as the non-regression gate and cache-adjusted input as diagnostic evidence only (`Outcome` gate 4, Phase 3, Phase 5, and Definition of done). Identical requests produced nondeterministic provider cache attribution, including the preserved primary diagnostic increase. Adding either a zero-tolerance or percentage-tolerance failure on derived uncached input would contradict the approved contract rather than harden it. The diagnostic remains required and visible in sanitized fixtures.
+
+### Coverage
+
+- Independent focused suite: `bun test scripts/context-efficiency.test.ts` — **21 passed, 0 failed, 88 assertions**.
+- Implementation-owner focused set: **32 passed, 0 failed, 146 assertions**.
+- Independent sensitivity probe covered both excluded categories: manual and failed automatic.
+- Deterministic 90% release replay: **2 automatic compactions**, **12,000-token median**, **0 operational-tail violations**.
+- CLI help smoke and `git diff --check`: **passed**.
+- No code, fixture, or live external state was changed by this audit.
+
+### Final disposition
+
+| Axis | High | Medium | Verdict |
+| --- | ---: | ---: | --- |
+| Repository standards | 0 | 0 | PASS |
+| Updated plan/spec | 0 | 0 | PASS |
 | Overall | 0 | 0 | **PASS** |

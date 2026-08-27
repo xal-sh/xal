@@ -293,8 +293,9 @@ export function parseContextEfficiencyFixture(value: unknown): ContextEfficiency
   })
   const names = new Set(workloads.map((workload) => workload.name))
   if (names.size !== 3) throw new Error("fixture workloads must have distinct names")
-  if (workloads.find((workload) => workload.name === "subagent_tool_heavy")?.kind !== "subagent") {
-    throw new Error("subagent_tool_heavy must use kind subagent")
+  for (const workload of workloads) {
+    const expectedKind = workload.name === "subagent_tool_heavy" ? "subagent" : "primary"
+    if (workload.kind !== expectedKind) throw new Error(`${workload.name} must use kind ${expectedKind}`)
   }
   return {
     version: 1,
@@ -363,7 +364,7 @@ function retainedLegacy(items: ItemEvent[], budget: number): ItemEvent[] {
     tokens = next
     boundary -= 1
   }
-  if (boundary <= 0) return []
+  if (boundary <= 0) return items
   const start = items.findIndex((item, index) => {
     if (index < boundary || item.item.kind === "tool_result") return false
     if (item.item.kind === "user_message") return true
@@ -513,7 +514,11 @@ export function releaseSensitivityResults(
   threshold: number,
 ): ReleaseSensitivityResult[] {
   const observed = fixture.workloads.flatMap((workload) =>
-    workload.events.flatMap((event) => (event.type === "compaction" ? [event.summaryEstimatedTokens] : [])),
+    workload.events.flatMap((event) =>
+      event.type === "compaction" && event.trigger === "automatic" && event.outcome === "completed"
+        ? [event.summaryEstimatedTokens]
+        : [],
+    ),
   )
   if (observed.length === 0) throw new Error("release sensitivity requires observed compaction summaries")
   return [
