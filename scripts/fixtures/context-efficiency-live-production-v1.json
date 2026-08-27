@@ -1,0 +1,40 @@
+{
+  "version": 1,
+  "suite": "production",
+  "label": "release-production",
+  "provider": "provider-1",
+  "model": "model-1",
+  "configurationFingerprint": "28af407431191b0d47e2978ac1690fde97d537b5a390f993eee9c8ccf236b613",
+  "scenarios": [
+    {
+      "scenario": "production_primary",
+      "kind": "primary",
+      "workloadFingerprint": "a4a5637e3eb84b0f923dba7cf650f1930c45a7609943b7eab066226a21d99e7b",
+      "effectiveContextWindow": 260000,
+      "runs": 1,
+      "totalUncachedInputTokens": 279476,
+      "medianTotalProviderLatencyMs": 10667.860375,
+      "p95NormalLatencyMs": 3299.1975,
+      "continuationPassRate": 1,
+      "normalRequests": 1,
+      "compactionRequests": 1,
+      "firstPostCompactionInputTokens": [4112],
+      "firstPostCompactionEstimatedTokens": [5796]
+    },
+    {
+      "scenario": "production_subagent",
+      "kind": "subagent",
+      "workloadFingerprint": "95f053178cd868e32e5e38fc0de1085790b79121e60eb5a7c9be4882f44e3a53",
+      "effectiveContextWindow": 260000,
+      "runs": 1,
+      "totalUncachedInputTokens": 290409,
+      "medianTotalProviderLatencyMs": 15962.374457999998,
+      "p95NormalLatencyMs": 4685.9545,
+      "continuationPassRate": 0,
+      "normalRequests": 1,
+      "compactionRequests": 1,
+      "firstPostCompactionInputTokens": [3908],
+      "firstPostCompactionEstimatedTokens": [5410]
+    }
+  ]
+}
