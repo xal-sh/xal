@@ -1,4 +1,5 @@
 import { join } from "node:path"
+import { effectiveAutoCompactTokenLimit } from "../../agent/session/context-budget"
 import { appEnvVar } from "../../app-info"
 import { cacheDir } from "../../config/paths"
 import { readJsonFile, writeSecureJson } from "../../lib/fs"
@@ -131,12 +132,14 @@ function parseRuntimeModel(raw: unknown): { model: ChatGptModel; priority: numbe
   const id = asString(raw.slug)?.trim()
   const name = asString(raw.display_name)?.trim()
   if (!id || !name) throw new Error(`${PROVIDER_NAME} models response contained an incomplete visible model`)
+  const autoCompactTokenLimit = positiveInteger(raw.auto_compact_token_limit)
   return {
     model: {
       id,
       name,
       contextWindow: positiveInteger(raw.context_window) ?? positiveInteger(raw.max_context_window),
       maxContextWindow: positiveInteger(raw.max_context_window),
+      ...(autoCompactTokenLimit === undefined ? {} : { autoCompactTokenLimit }),
       inputModalities: inputModalities(raw.input_modalities),
       thinking: runtimeThinking(raw.supported_reasoning_levels, raw.default_reasoning_level),
       supportsFast: runtimeSupportsFast(raw),
@@ -178,11 +181,13 @@ function parseCachedModel(raw: unknown): ChatGptModel | undefined {
   const name = asString(raw.name)?.trim()
   const supportsFast = asBoolean(raw.supportsFast)
   if (!id || !name || supportsFast === undefined) return undefined
+  const autoCompactTokenLimit = positiveInteger(raw.autoCompactTokenLimit)
   return {
     id,
     name,
     contextWindow: positiveInteger(raw.contextWindow),
     maxContextWindow: positiveInteger(raw.maxContextWindow),
+    ...(autoCompactTokenLimit === undefined ? {} : { autoCompactTokenLimit }),
     inputModalities: inputModalities(raw.inputModalities),
     thinking: parseCachedThinking(raw.thinking),
     supportsFast,
@@ -205,11 +210,17 @@ async function readCache(profileId: string): Promise<ChatGptModel[] | undefined>
 }
 
 function capped(models: ChatGptModel[]): ChatGptModel[] {
-  return models.map((model) => ({
-    ...model,
-    contextWindow:
-      model.contextWindow === undefined ? contextWindowCap() : Math.min(model.contextWindow, contextWindowCap()),
-  }))
+  return models.map((model) => {
+    const contextWindow =
+      model.contextWindow === undefined ? contextWindowCap() : Math.min(model.contextWindow, contextWindowCap())
+    return {
+      ...model,
+      contextWindow,
+      ...(model.autoCompactTokenLimit === undefined
+        ? {}
+        : { autoCompactTokenLimit: effectiveAutoCompactTokenLimit(contextWindow, model.autoCompactTokenLimit) }),
+    }
+  })
 }
 
 function withVariants(models: ChatGptModel[]): ModelInfo[] {

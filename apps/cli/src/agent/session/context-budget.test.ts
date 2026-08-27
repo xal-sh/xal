@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test"
 import type { StreamRequest, Usage } from "../../providers/types"
-import { ContextBudget } from "./context-budget"
+import { ContextBudget, effectiveAutoCompactTokenLimit } from "./context-budget"
 
 function request(overrides: Partial<StreamRequest> = {}): StreamRequest {
   return {
@@ -17,6 +17,13 @@ function request(overrides: Partial<StreamRequest> = {}): StreamRequest {
 }
 
 const usage: Usage = { totalInputTokens: 100, outputTokens: 20, cacheReadInputTokens: 0 }
+
+test("uses a 90% automatic ceiling and honors only lower explicit limits", () => {
+  expect(effectiveAutoCompactTokenLimit(undefined)).toBeUndefined()
+  expect(effectiveAutoCompactTokenLimit(101)).toBe(90)
+  expect(effectiveAutoCompactTokenLimit(100_000, 80_000)).toBe(80_000)
+  expect(effectiveAutoCompactTokenLimit(100_000, 95_000)).toBe(90_000)
+})
 
 test("counts measured provider output once and local deltas after it", () => {
   const budget = new ContextBudget()

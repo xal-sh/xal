@@ -96,6 +96,12 @@ interface ReplayResult {
   workloads: ReplayWorkloadResult[]
 }
 
+export interface ReleaseSensitivityResult {
+  label: "median" | "p90" | "maximum" | "conservative"
+  summaryEstimatedTokens: number
+  replay: ReplayResult
+}
+
 function integer(value: unknown, path: string): number {
   if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
     throw new Error(`${path} must be a non-negative integer`)
@@ -331,6 +337,14 @@ function median(values: number[]): number {
   return (previous + value) / 2
 }
 
+function percentile(values: number[], ratio: number): number {
+  if (values.length === 0) return 0
+  const sorted = values.toSorted((left, right) => left - right)
+  const value = sorted[Math.ceil(sorted.length * ratio) - 1]
+  if (value === undefined) throw new Error("percentile lost its selected value")
+  return value
+}
+
 function replayItemTokens(item: ItemEvent): number {
   return Math.max(
     item.item.estimatedModelVisibleTokens + item.item.imageEstimatedTokens,
@@ -387,6 +401,7 @@ function replayWorkload(
   workload: ContextEfficiencyFixture["workloads"][number],
   policy: "legacy" | "candidate",
   threshold: number,
+  candidateSummaryEstimatedTokens?: number,
 ): ReplayWorkloadResult {
   let measured: number | undefined
   let baseTokens = 0
@@ -416,12 +431,16 @@ function replayWorkload(
     if (shouldCompact) {
       if (!pending) throw new Error(`${workload.name} has no compaction observation at request ${event.index}`)
       if (pending.trigger === "automatic" && pending.outcome === "completed") {
+        const summaryEstimatedTokens =
+          policy === "candidate" && candidateSummaryEstimatedTokens !== undefined
+            ? candidateSummaryEstimatedTokens
+            : pending.summaryEstimatedTokens
         const retained =
           policy === "legacy"
             ? retainedLegacy(items, Math.floor(workload.contextWindow * 0.25))
             : retainedCandidate(
                 items,
-                Math.min(20_000, Math.max(0, 32_000 - event.staticPrefixTokens - pending.summaryEstimatedTokens)),
+                Math.min(20_000, Math.max(0, 32_000 - event.staticPrefixTokens - summaryEstimatedTokens)),
               )
         if (policy === "legacy") {
           const boundary = retained[0]?.index ?? event.index
@@ -432,10 +451,10 @@ function replayWorkload(
         }
         const retainedTokens = retained.reduce((total, item) => total + replayItemTokens(item), 0)
         if (policy === "legacy") {
-          baseTokens = pending.summaryEstimatedTokens + retainedTokens
+          baseTokens = summaryEstimatedTokens + retainedTokens
           items = []
         } else {
-          baseTokens = pending.summaryEstimatedTokens
+          baseTokens = summaryEstimatedTokens
           items = retained
         }
         measured = undefined
@@ -471,8 +490,11 @@ export function replayFixture(
   fixture: ContextEfficiencyFixture,
   policy: "legacy" | "candidate",
   threshold: number,
+  candidateSummaryEstimatedTokens?: number,
 ): ReplayResult {
-  const workloads = fixture.workloads.map((workload) => replayWorkload(workload, policy, threshold))
+  const workloads = fixture.workloads.map((workload) =>
+    replayWorkload(workload, policy, threshold, candidateSummaryEstimatedTokens),
+  )
   const firstPost = workloads.flatMap((workload) => workload.firstPostCompactionInputTokens)
   return {
     policy,
@@ -482,6 +504,25 @@ export function replayFixture(
     operationalTailViolations: workloads.reduce((total, workload) => total + workload.operationalTailViolations, 0),
     workloads,
   }
+}
+
+export function releaseSensitivityResults(
+  fixture: ContextEfficiencyFixture,
+  threshold: number,
+): ReleaseSensitivityResult[] {
+  const observed = fixture.workloads.flatMap((workload) =>
+    workload.events.flatMap((event) => (event.type === "compaction" ? [event.summaryEstimatedTokens] : [])),
+  )
+  if (observed.length === 0) throw new Error("release sensitivity requires observed compaction summaries")
+  return [
+    { label: "median", summaryEstimatedTokens: median(observed) },
+    { label: "p90", summaryEstimatedTokens: percentile(observed, 0.9) },
+    { label: "maximum", summaryEstimatedTokens: Math.max(...observed) },
+    { label: "conservative", summaryEstimatedTokens: 10_000 },
+  ].map((entry) => ({
+    ...entry,
+    replay: replayFixture(fixture, "candidate", threshold, entry.summaryEstimatedTokens),
+  }))
 }
 
 function option(args: string[], name: string): string | undefined {
@@ -1036,15 +1077,25 @@ async function runFixture(args: string[]): Promise<void> {
   }
   if (gate === "release") {
     const legacy = replayFixture(fixture, "legacy", 0.85)
+    const sensitivity = releaseSensitivityResults(fixture, threshold)
+    const conservative = sensitivity.find((entry) => entry.label === "conservative")
+    if (!conservative) throw new Error("candidate release replay lost its conservative sensitivity case")
     const reduction =
       legacy.automaticCompactions === 0
         ? 0
-        : (legacy.automaticCompactions - result.automaticCompactions) / legacy.automaticCompactions
-    const increased = result.workloads.some((workload) => {
+        : (legacy.automaticCompactions - conservative.replay.automaticCompactions) / legacy.automaticCompactions
+    const increased = conservative.replay.workloads.some((workload) => {
       const baseline = legacy.workloads.find((candidate) => candidate.name === workload.name)
       return baseline === undefined || workload.automaticCompactions > baseline.automaticCompactions
     })
-    if (reduction < 0.2 || increased || result.operationalTailViolations !== 0) {
+    const invalidReplacement = sensitivity.some(
+      (entry) =>
+        entry.replay.operationalTailViolations !== 0 ||
+        entry.replay.workloads.some((workload) =>
+          workload.firstPostCompactionInputTokens.some((tokens) => tokens > 32_000),
+        ),
+    )
+    if (reduction < 0.2 || increased || invalidReplacement) {
       throw new Error("candidate release replay failed cadence or retention gates")
     }
   }

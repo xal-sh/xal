@@ -56,3 +56,23 @@ test("keeps the previous catalog with a warning after a failed refresh", async (
   expect(result.warning).toContain("model refresh failed: offline")
   clearModelCatalog("profile-1")
 })
+
+test("rejects invalid internal auto-compaction limits", async () => {
+  const provider = fakeProvider("invalid-auto-compaction", async () => ({
+    models: [
+      {
+        id: "model-a",
+        name: "model-a",
+        contextWindow: 100_000,
+        autoCompactTokenLimit: 100_000,
+        inputModalities: ["text"],
+      },
+    ],
+    source: "runtime",
+  }))
+
+  const result = await modelCatalog(provider, "profile-invalid")
+  expect(result.models).toEqual([])
+  expect(result.warning).toContain("invalid auto-compaction token limit")
+  clearModelCatalog("profile-invalid")
+})

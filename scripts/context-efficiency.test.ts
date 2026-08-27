@@ -10,7 +10,12 @@ import { registerTool, unregisterTool } from "../apps/cli/src/tools/registry"
 import type { RegisteredTool } from "../apps/cli/src/tools/types"
 import fixture from "./fixtures/context-efficiency-v1.json"
 import live from "./fixtures/context-efficiency-live-v1.json"
-import { generateFixture, parseContextEfficiencyFixture, replayFixture } from "./context-efficiency"
+import {
+  generateFixture,
+  parseContextEfficiencyFixture,
+  releaseSensitivityResults,
+  replayFixture,
+} from "./context-efficiency"
 import {
   aggregateLiveRuns,
   continuationProbePassed,
@@ -289,6 +294,26 @@ test("candidate replay stops trusting legacy usage after a skipped tool-heavy co
   expect(replay.workloads.find((workload) => workload.name === "primary_tool_heavy")?.compactionRequestIndices).toEqual(
     [11],
   )
+})
+
+test("release sensitivity applies the dynamic replacement budget through the conservative summary bound", () => {
+  const parsed = parseContextEfficiencyFixture(fixture)
+  const sensitivity = releaseSensitivityResults(parsed, 0.9)
+  expect(sensitivity.map((entry) => [entry.label, entry.summaryEstimatedTokens])).toEqual([
+    ["median", 4_500],
+    ["p90", 4_500],
+    ["maximum", 4_500],
+    ["conservative", 10_000],
+  ])
+  for (const entry of sensitivity) {
+    expect(entry.replay.operationalTailViolations).toBe(0)
+    expect(
+      entry.replay.workloads.every((workload) =>
+        workload.firstPostCompactionInputTokens.every((tokens) => tokens <= 32_000),
+      ),
+    ).toBeTrue()
+  }
+  expect(sensitivity.at(-1)?.replay.automaticCompactions).toBeLessThanOrEqual(4)
 })
 
 test("live scenarios validate benchmark windows and session kinds", () => {

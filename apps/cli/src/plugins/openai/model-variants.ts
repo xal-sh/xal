@@ -1,3 +1,4 @@
+import { effectiveAutoCompactTokenLimit } from "../../agent/session/context-budget"
 import type { ModelInfo } from "../../providers/types"
 
 const LARGE_CONTEXT_SUFFIX = "-1m"
@@ -16,7 +17,7 @@ export function withLargeContextVariant(models: LargeContextModel[]): ModelInfo[
         id: `${model.id}${LARGE_CONTEXT_SUFFIX}`,
         name: `${model.name} - 1M context`,
         contextWindow: maxContextWindow,
-        autoCompactTokenLimit: Math.floor(maxContextWindow * 0.9),
+        autoCompactTokenLimit: effectiveAutoCompactTokenLimit(maxContextWindow, model.autoCompactTokenLimit),
       },
     ]
   })

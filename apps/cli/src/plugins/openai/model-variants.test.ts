@@ -30,6 +30,13 @@ test("keeps models without a larger maximum context window as-is", () => {
   expect(withLargeContextVariant([{ ...terra, maxContextWindow: 260_000 }])).toEqual([base])
 })
 
+test("preserves a valid explicit limit on the large variant", () => {
+  expect(withLargeContextVariant([{ ...terra, autoCompactTokenLimit: 200_000 }])[1]).toMatchObject({
+    contextWindow: 872_000,
+    autoCompactTokenLimit: 200_000,
+  })
+})
+
 test("maps only synthetic 1M models back to their wire model", () => {
   expect(resolveLargeContextModel("gpt-5.6-terra-1m")).toBe("gpt-5.6-terra")
   expect(resolveLargeContextModel("gpt-5.6-sol")).toBe("gpt-5.6-sol")

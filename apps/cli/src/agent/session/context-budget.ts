@@ -3,6 +3,17 @@ import { occupiedContext } from "../../providers/types"
 import type { ProviderOutputItem, StreamRequest, Usage } from "../../providers/types"
 import { activeHistory, directShellMessage, type HistoryItem } from "../history"
 
+export const DEFAULT_AUTO_COMPACT_RATIO = 0.9
+
+export function effectiveAutoCompactTokenLimit(
+  contextWindow: number | undefined,
+  explicitLimit?: number,
+): number | undefined {
+  if (contextWindow === undefined) return undefined
+  const ceiling = Math.floor(contextWindow * DEFAULT_AUTO_COMPACT_RATIO)
+  return explicitLimit === undefined ? ceiling : Math.min(explicitLimit, ceiling)
+}
+
 export interface RequestIdentity {
   provider: string
   profileId: string

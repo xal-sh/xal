@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { AgentSession } from "../apps/cli/src/agent/session/session"
+import { effectiveAutoCompactTokenLimit } from "../apps/cli/src/agent/session/context-budget"
 import { runAgentTurn } from "../apps/cli/src/agent/run"
 import type { SessionKind } from "../apps/cli/src/agent/types"
 import { registerCore } from "../apps/cli/src/app"
@@ -475,7 +476,8 @@ export async function runLiveScenario(
       const calibration = provider.finishCalibration()
       if (!session.reset()) throw new Error(`${scenario.name} could not reset after request calibration`)
       const staticPrefixTokens = calibration.requestTokens - calibration.inputTokens
-      const threshold = modelInfo.autoCompactTokenLimit ?? modelInfo.contextWindow * 0.85
+      const threshold = effectiveAutoCompactTokenLimit(modelInfo.contextWindow, modelInfo.autoCompactTokenLimit)
+      if (threshold === undefined) throw new Error(`${scenario.name} has no automatic compaction threshold`)
       const probePrompt = continuationPrompt()
       const continuationTokens = estimateConversationItemTokens({
         type: "user_message",

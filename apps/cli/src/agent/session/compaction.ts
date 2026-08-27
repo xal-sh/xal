@@ -18,10 +18,8 @@ import type {
 import type { AgentEvent, AgentState } from "../events"
 import { activeHistory, type CompactionItem, type HistoryItem } from "../history"
 import type { SessionKind } from "../types"
-import type { ContextAdmission } from "./context-budget"
+import { effectiveAutoCompactTokenLimit, type ContextAdmission } from "./context-budget"
 import { isAbortError } from "./types"
-
-export const COMPACTION_TRIGGER_RATIO = 0.85
 
 export const MAX_RETAINED_USER_TOKENS = 20_000
 export const MAX_REPLACEMENT_REQUEST_TOKENS = 32_000
@@ -363,9 +361,7 @@ export async function autoCompact(
   let request = host.buildRequest(provider, model, thinking, signal)
   let admission = host.admitRequest(provider, request)
   const info = await findModel(provider, host.profileId(), model)
-  const tokenLimit =
-    info?.autoCompactTokenLimit ??
-    (info?.contextWindow === undefined ? undefined : Math.floor(info.contextWindow * COMPACTION_TRIGGER_RATIO))
+  const tokenLimit = effectiveAutoCompactTokenLimit(info?.contextWindow, info?.autoCompactTokenLimit)
   if (tokenLimit !== undefined && admission.activeTokens >= tokenLimit) {
     try {
       await runCompaction(host, signal, provider, model, "auto", undefined, admission.activeTokens)
