@@ -12,14 +12,15 @@
       "workloadFingerprint": "810168fd160065a81e62bf1ad0727aee1b44431af0fed46aac791c99909f31b5",
       "effectiveContextWindow": 260000,
       "runs": 3,
-      "totalUncachedInputTokens": 239216,
-      "medianTotalProviderLatencyMs": 20238.153208000003,
-      "p95NormalLatencyMs": 5428.335874999997,
+      "totalInputTokens": 383703,
+      "totalUncachedInputTokens": 251607,
+      "medianTotalProviderLatencyMs": 16646.734333333326,
+      "p95NormalLatencyMs": 3992.995791666675,
       "continuationPassRate": 1,
       "normalRequests": 15,
       "compactionRequests": 3,
-      "firstPostCompactionInputTokens": [4618, 4611, 4594],
-      "firstPostCompactionEstimatedTokens": [6340, 6353, 6336]
+      "firstPostCompactionInputTokens": [4716, 4621, 4589],
+      "firstPostCompactionEstimatedTokens": [6430, 6348, 6326]
     },
     {
       "scenario": "paired_subagent_tool_heavy",
@@ -27,14 +28,15 @@
       "workloadFingerprint": "c1a2eae84e358f79aac72c315f98ef4aae9854ea275e44abb7b9769d8354811d",
       "effectiveContextWindow": 260000,
       "runs": 3,
-      "totalUncachedInputTokens": 241398,
-      "medianTotalProviderLatencyMs": 18356.892250000004,
-      "p95NormalLatencyMs": 8091.719541999992,
+      "totalInputTokens": 376976,
+      "totalUncachedInputTokens": 238736,
+      "medianTotalProviderLatencyMs": 19865.599625000003,
+      "p95NormalLatencyMs": 4627.672666666665,
       "continuationPassRate": 1,
       "normalRequests": 15,
       "compactionRequests": 3,
-      "firstPostCompactionInputTokens": [4192, 4146, 4155],
-      "firstPostCompactionEstimatedTokens": [5689, 5641, 5652]
+      "firstPostCompactionInputTokens": [4156, 4086, 4092],
+      "firstPostCompactionEstimatedTokens": [5671, 5583, 5594]
     },
     {
       "scenario": "automatic_primary_64k",
@@ -42,14 +44,15 @@
       "workloadFingerprint": "3a0801b37b8d1a70e45720e3859abd42eb9f95fef039fc991b13e12edb7b6372",
       "effectiveContextWindow": 64000,
       "runs": 3,
-      "totalUncachedInputTokens": 260083,
-      "medianTotalProviderLatencyMs": 8561.374375000014,
-      "p95NormalLatencyMs": 6956.259583000006,
+      "totalInputTokens": 260252,
+      "totalUncachedInputTokens": 260252,
+      "medianTotalProviderLatencyMs": 9074.21987500001,
+      "p95NormalLatencyMs": 2678.946708333329,
       "continuationPassRate": 1,
       "normalRequests": 3,
       "compactionRequests": 3,
-      "firstPostCompactionInputTokens": [4298, 4396, 4189],
-      "firstPostCompactionEstimatedTokens": [5994, 6115, 5880]
+      "firstPostCompactionInputTokens": [4326, 4345, 4381],
+      "firstPostCompactionEstimatedTokens": [6007, 6055, 6064]
     },
     {
       "scenario": "automatic_subagent_64k",
@@ -57,14 +60,15 @@
       "workloadFingerprint": "1509d8cab1028eb903e25f79cc4a8f004e9cac4370b63c9de483094fd99bf4df",
       "effectiveContextWindow": 64000,
       "runs": 3,
-      "totalUncachedInputTokens": 264776,
-      "medianTotalProviderLatencyMs": 9117.334875999979,
-      "p95NormalLatencyMs": 3893.9461250000168,
+      "totalInputTokens": 266555,
+      "totalUncachedInputTokens": 266555,
+      "medianTotalProviderLatencyMs": 9027.39095833333,
+      "p95NormalLatencyMs": 3043.5971250000007,
       "continuationPassRate": 1,
       "normalRequests": 3,
       "compactionRequests": 3,
-      "firstPostCompactionInputTokens": [3674, 3813, 3882],
-      "firstPostCompactionEstimatedTokens": [5106, 5286, 5364]
+      "firstPostCompactionInputTokens": [3852, 3881, 3879],
+      "firstPostCompactionEstimatedTokens": [5311, 5334, 5340]
     }
   ]
 }

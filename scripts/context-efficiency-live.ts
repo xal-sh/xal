@@ -110,6 +110,7 @@ interface RequestMeasurement {
 }
 
 interface LiveRunResult {
+  totalInputTokens: number
   totalUncachedInputTokens: number
   totalProviderLatencyMs: number
   p95NormalLatencyMs: number
@@ -126,6 +127,7 @@ interface LiveScenarioResult {
   workloadFingerprint: string
   effectiveContextWindow: number
   runs: number
+  totalInputTokens?: number
   totalUncachedInputTokens: number
   medianTotalProviderLatencyMs: number
   p95NormalLatencyMs: number
@@ -361,6 +363,13 @@ function median(values: number[]): number {
 }
 
 function numericRun(measurements: RequestMeasurement[], continuationPassed: boolean): LiveRunResult {
+  const providerInputs = measurements.map((measurement) => {
+    const total = measurement.usage?.totalInputTokens
+    if (total === undefined) {
+      throw new Error(`live ${measurement.phase} request is missing provider input usage`)
+    }
+    return { total, cacheRead: measurement.usage?.cacheReadInputTokens ?? 0 }
+  })
   const normalLatencies = measurements
     .filter((measurement) => measurement.phase === "turn")
     .map((measurement) => measurement.elapsedMs)
@@ -378,10 +387,11 @@ function numericRun(measurements: RequestMeasurement[], continuationPassed: bool
       : measurements.slice(firstCompaction + 1).find((measurement) => measurement.phase === "turn")
           ?.estimatedRequestTokens
   return {
-    totalUncachedInputTokens: measurements.reduce((total, measurement) => {
-      const input = measurement.usage?.totalInputTokens ?? 0
-      return total + Math.max(0, input - (measurement.usage?.cacheReadInputTokens ?? 0))
-    }, 0),
+    totalInputTokens: providerInputs.reduce((total, input) => total + input.total, 0),
+    totalUncachedInputTokens: providerInputs.reduce(
+      (total, input) => total + Math.max(0, input.total - input.cacheRead),
+      0,
+    ),
     totalProviderLatencyMs: measurements.reduce((total, measurement) => total + measurement.elapsedMs, 0),
     p95NormalLatencyMs: percentile95(normalLatencies),
     continuationPassed,
@@ -613,6 +623,7 @@ export function aggregateLiveRuns(
     workloadFingerprint: workloadFingerprint(scenario),
     effectiveContextWindow,
     runs: runs.length,
+    totalInputTokens: runs.reduce((total, run) => total + run.totalInputTokens, 0),
     totalUncachedInputTokens: runs.reduce((total, run) => total + run.totalUncachedInputTokens, 0),
     medianTotalProviderLatencyMs: median(runs.map((run) => run.totalProviderLatencyMs)),
     p95NormalLatencyMs: percentile95(runs.map((run) => run.p95NormalLatencyMs)),
@@ -665,6 +676,7 @@ export function parseLiveCaptureResult(value: unknown): LiveCaptureResult {
       "workloadFingerprint",
       "effectiveContextWindow",
       "runs",
+      ...(scenario.totalInputTokens === undefined ? [] : ["totalInputTokens"]),
       "totalUncachedInputTokens",
       "medianTotalProviderLatencyMs",
       "p95NormalLatencyMs",
@@ -698,6 +710,9 @@ export function parseLiveCaptureResult(value: unknown): LiveCaptureResult {
       workloadFingerprint: scenario.workloadFingerprint,
       effectiveContextWindow: integer(scenario.effectiveContextWindow, `${path}.effectiveContextWindow`),
       runs: integer(scenario.runs, `${path}.runs`),
+      ...(scenario.totalInputTokens === undefined
+        ? {}
+        : { totalInputTokens: nonNegative(scenario.totalInputTokens, `${path}.totalInputTokens`) }),
       totalUncachedInputTokens: nonNegative(scenario.totalUncachedInputTokens, `${path}.totalUncachedInputTokens`),
       medianTotalProviderLatencyMs: nonNegative(
         scenario.medianTotalProviderLatencyMs,
@@ -873,6 +888,10 @@ export async function captureLive(options: LiveCaptureOptions): Promise<void> {
 
 async function compareBaseline(path: string, candidate: LiveCaptureResult): Promise<void> {
   const baselineResult = parseLiveCaptureResult(JSON.parse(await readFile(path, "utf8")))
+  enforcePairedReleaseGates(baselineResult, candidate)
+}
+
+export function enforcePairedReleaseGates(baselineResult: LiveCaptureResult, candidate: LiveCaptureResult): void {
   if (baselineResult.suite !== "paired") throw new Error("live baseline must use the paired suite")
   if (candidate.suite !== "paired" && candidate.suite !== "release") {
     throw new Error("only paired and release suites can be compared with the live baseline")
@@ -880,11 +899,21 @@ async function compareBaseline(path: string, candidate: LiveCaptureResult): Prom
   if (baselineResult.configurationFingerprint !== candidate.configurationFingerprint) {
     throw new Error("live baseline configuration does not match the candidate")
   }
-  for (const scenario of candidate.scenarios.filter((entry) => entry.scenario.startsWith("paired_"))) {
+  if (baselineResult.scenarios.length !== 2) throw new Error("live baseline must contain exactly two paired scenarios")
+  const candidatePaired = candidate.scenarios.filter((entry) => entry.scenario.startsWith("paired_"))
+  if (candidatePaired.length !== 2) throw new Error("live candidate must contain exactly two paired scenarios")
+  for (const required of [
+    { scenario: "paired_primary_tool_heavy", kind: "primary" },
+    { scenario: "paired_subagent_tool_heavy", kind: "subagent" },
+  ] as const) {
     const baseline = baselineResult.scenarios.find(
-      (entry) => entry.scenario === scenario.scenario && entry.kind === scenario.kind,
+      (entry) => entry.scenario === required.scenario && entry.kind === required.kind,
     )
-    if (!baseline) throw new Error(`live baseline is missing ${scenario.scenario}`)
+    if (!baseline) throw new Error(`live baseline is missing ${required.scenario}`)
+    const scenario = candidatePaired.find(
+      (entry) => entry.scenario === required.scenario && entry.kind === required.kind,
+    )
+    if (!scenario) throw new Error(`live candidate is missing ${required.scenario}`)
     if (scenario.workloadFingerprint !== baseline.workloadFingerprint) {
       throw new Error(`${scenario.scenario} live workload configuration does not match its baseline`)
     }
@@ -896,11 +925,15 @@ async function compareBaseline(path: string, candidate: LiveCaptureResult): Prom
     ) {
       throw new Error(`${scenario.scenario} live workload configuration does not match its baseline`)
     }
-    const uncached = baseline.totalUncachedInputTokens
+    if (scenario.totalInputTokens === undefined || baseline.totalInputTokens === undefined) {
+      throw new Error(`${scenario.scenario} live comparison is missing total provider input`)
+    }
     const latency = baseline.medianTotalProviderLatencyMs
     const p95 = baseline.p95NormalLatencyMs
     const passRate = baseline.continuationPassRate
-    if (scenario.totalUncachedInputTokens > uncached) throw new Error(`${scenario.scenario} uncached input regressed`)
+    if (scenario.totalInputTokens > baseline.totalInputTokens) {
+      throw new Error(`${scenario.scenario} total provider input regressed`)
+    }
     if (scenario.medianTotalProviderLatencyMs > latency * 1.05)
       throw new Error(`${scenario.scenario} provider latency regressed`)
     if (scenario.p95NormalLatencyMs > p95 * 1.05) throw new Error(`${scenario.scenario} p95 latency regressed`)

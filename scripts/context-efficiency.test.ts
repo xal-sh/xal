@@ -10,7 +10,10 @@ import { registerTool, unregisterTool } from "../apps/cli/src/tools/registry"
 import type { RegisteredTool } from "../apps/cli/src/tools/types"
 import fixture from "./fixtures/context-efficiency-v1.json"
 import live from "./fixtures/context-efficiency-live-v1.json"
+import baselineLive from "./fixtures/context-efficiency-live-baseline-v1.json"
 import productionLive from "./fixtures/context-efficiency-live-production-v1.json"
+import releaseLive from "./fixtures/context-efficiency-live-release-v1.json"
+import selectiveLive from "./fixtures/context-efficiency-live-selective-v1.json"
 import {
   generateFixture,
   parseContextEfficiencyFixture,
@@ -22,6 +25,7 @@ import {
   automaticStateNotice,
   continuationProbeFailures,
   continuationProbePassed,
+  enforcePairedReleaseGates,
   enforceProductionReleaseGates,
   parseLiveCaptureResult,
   parseLiveScenarios,
@@ -341,11 +345,15 @@ test("live scenarios validate benchmark windows and session kinds", () => {
   expect(() => parseLiveScenarios(raw)).toThrow("contextWindow must exceed")
 })
 
-test("live configuration fingerprint locks the selected workload", () => {
+test("live workload fingerprint locks the paired request content", () => {
   const scenarios = parseLiveScenarios(live).scenarios.filter((scenario) => scenario.suites.includes("paired"))
   const changed = scenarios.map((scenario, index) =>
     index === 0 ? { ...scenario, toolOutputBytes: scenario.toolOutputBytes + 1 } : scenario,
   )
+  expect(scenarios.map(workloadFingerprint)).toEqual([
+    "810168fd160065a81e62bf1ad0727aee1b44431af0fed46aac791c99909f31b5",
+    "c1a2eae84e358f79aac72c315f98ef4aae9854ea275e44abb7b9769d8354811d",
+  ])
   expect(workloadFingerprint(scenarios[0]!)).not.toBe(workloadFingerprint(changed[0]!))
 })
 
@@ -356,6 +364,7 @@ test("live aggregation keeps the median total provider latency per workload", ()
     scenario,
     260_000,
     [10, 20, 1_000].map((totalProviderLatencyMs) => ({
+      totalInputTokens: 1,
       totalUncachedInputTokens: 1,
       totalProviderLatencyMs,
       p95NormalLatencyMs: 1,
@@ -367,6 +376,7 @@ test("live aggregation keeps the median total provider latency per workload", ()
     })),
   )
   expect(result.medianTotalProviderLatencyMs).toBe(20)
+  expect(result.totalInputTokens).toBe(3)
   expect(result.totalUncachedInputTokens).toBe(3)
 })
 
@@ -385,6 +395,7 @@ test("live results round trip only anonymous labels and numeric metrics", () => 
         workloadFingerprint: "1".repeat(64),
         effectiveContextWindow: 260000,
         runs: 3,
+        totalInputTokens: 18000,
         totalUncachedInputTokens: 12000,
         medianTotalProviderLatencyMs: 1000.5,
         p95NormalLatencyMs: 400.5,
@@ -398,6 +409,45 @@ test("live results round trip only anonymous labels and numeric metrics", () => 
   })
   expect(parseLiveCaptureResult(JSON.parse(JSON.stringify(result)))).toEqual(result)
   expect(JSON.stringify(result)).not.toContain("connection")
+})
+
+test("paired release gates use cache-independent provider input and retain observed cache data", () => {
+  const baseline = parseLiveCaptureResult(baselineLive)
+  const candidate = parseLiveCaptureResult(releaseLive)
+  expect(() => enforcePairedReleaseGates(baseline, parseLiveCaptureResult(selectiveLive))).not.toThrow()
+  const baselinePrimary = baseline.scenarios.find((scenario) => scenario.scenario === "paired_primary_tool_heavy")
+  const candidatePrimary = candidate.scenarios.find((scenario) => scenario.scenario === "paired_primary_tool_heavy")
+  if (candidatePrimary?.totalInputTokens === undefined || baselinePrimary?.totalInputTokens === undefined) {
+    throw new Error("missing paired input totals")
+  }
+  expect(candidatePrimary.totalUncachedInputTokens).toBeGreaterThan(baselinePrimary.totalUncachedInputTokens)
+  expect(() => enforcePairedReleaseGates(baseline, candidate)).not.toThrow()
+
+  const missing = parseLiveCaptureResult(JSON.parse(JSON.stringify(candidate)))
+  delete missing.scenarios[0]?.totalInputTokens
+  expect(() => enforcePairedReleaseGates(baseline, missing)).toThrow("missing total provider input")
+
+  const skipped = parseLiveCaptureResult(JSON.parse(JSON.stringify(candidate)))
+  skipped.scenarios = skipped.scenarios.filter((scenario) => !scenario.scenario.startsWith("paired_"))
+  expect(() => enforcePairedReleaseGates(baseline, skipped)).toThrow("exactly two paired scenarios")
+
+  const duplicate = parseLiveCaptureResult(JSON.parse(JSON.stringify(candidate)))
+  duplicate.scenarios[1] = { ...duplicate.scenarios[0]! }
+  expect(() => enforcePairedReleaseGates(baseline, duplicate)).toThrow("missing paired_subagent_tool_heavy")
+
+  const wrongKind = parseLiveCaptureResult(JSON.parse(JSON.stringify(candidate)))
+  wrongKind.scenarios[0]!.kind = "subagent"
+  expect(() => enforcePairedReleaseGates(baseline, wrongKind)).toThrow("missing paired_primary_tool_heavy")
+
+  const unexpected = parseLiveCaptureResult(JSON.parse(JSON.stringify(candidate)))
+  unexpected.scenarios[0]!.scenario = "paired_unexpected"
+  expect(() => enforcePairedReleaseGates(baseline, unexpected)).toThrow("missing paired_primary_tool_heavy")
+
+  const regressed = parseLiveCaptureResult(JSON.parse(JSON.stringify(candidate)))
+  const primary = regressed.scenarios.find((scenario) => scenario.scenario === "paired_primary_tool_heavy")
+  if (primary?.totalInputTokens === undefined) throw new Error("missing paired input total")
+  primary.totalInputTokens = baselinePrimary.totalInputTokens + 1
+  expect(() => enforcePairedReleaseGates(baseline, regressed)).toThrow("total provider input regressed")
 })
 
 function passingProductionResult(): LiveCaptureResult {
@@ -483,7 +533,10 @@ class SyntheticLiveProvider implements Provider {
   readonly requests: StreamRequest[] = []
   private call = 0
 
-  constructor(private readonly toolCallsPerRound = 1) {}
+  constructor(
+    private readonly toolCallsPerRound = 1,
+    private readonly omitUsageAt?: number,
+  ) {}
 
   async listModels(): Promise<ModelCatalog> {
     return {
@@ -499,6 +552,7 @@ class SyntheticLiveProvider implements Provider {
   async *stream(_profileId: string, request: StreamRequest): AsyncGenerator<StreamEvent> {
     this.requests.push(request)
     const usage = { totalInputTokens: estimateRequestTokens(request), outputTokens: 4 }
+    const done: StreamEvent = this.requests.length === this.omitUsageAt ? { type: "done" } : { type: "done", usage }
     if (request.toolChoice === "none") {
       const source = requestText(request)
       const summary = [
@@ -508,7 +562,7 @@ class SyntheticLiveProvider implements Provider {
         `late_tool_fact=${factValue(source, "late_tool_fact")}`,
       ].join("\n")
       yield { type: "item_done", item: { type: "assistant_message", text: summary } }
-      yield { type: "done", usage }
+      yield done
       return
     }
     const last = request.input.at(-1)
@@ -521,7 +575,7 @@ class SyntheticLiveProvider implements Provider {
           replay: { provider: this.id, model: "model", data: { response: this.call } },
         },
       }
-      yield { type: "done", usage }
+      yield done
       return
     }
     if (
@@ -536,7 +590,7 @@ class SyntheticLiveProvider implements Provider {
         `late_tool_fact=${factValue(source, "late_tool_fact")}`,
       ].join("\n")
       yield { type: "item_done", item: { type: "assistant_message", text: response } }
-      yield { type: "done", usage }
+      yield done
       return
     }
     for (let call = 0; call < this.toolCallsPerRound; call++) {
@@ -552,7 +606,7 @@ class SyntheticLiveProvider implements Provider {
         },
       }
     }
-    yield { type: "done", usage }
+    yield done
   }
 }
 
@@ -592,6 +646,9 @@ test("live scenarios exercise public manual and automatic compaction paths", asy
     await expect(
       runLiveScenario(new SyntheticLiveProvider(2), "profile", "model", paired, 1, directory),
     ).rejects.toThrow("exactly one benchmark tool call per setup turn")
+    await expect(
+      runLiveScenario(new SyntheticLiveProvider(1, 1), "profile", "model", paired, 1, directory),
+    ).rejects.toThrow("live turn request is missing provider input usage")
 
     const automaticResult = await runLiveScenario(
       new SyntheticLiveProvider(),
