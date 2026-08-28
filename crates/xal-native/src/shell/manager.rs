@@ -73,9 +73,6 @@ impl NativeShellManager {
                     cwd: request.cwd.clone(),
                     environment: request.environment,
                     stdin: true,
-                    tty: None,
-                    cols: None,
-                    rows: None,
                 })?;
                 let entry = Arc::new(PersistentEntry {
                     process,
@@ -120,9 +117,6 @@ impl NativeShellManager {
             cwd: request.cwd,
             environment: request.environment,
             stdin: false,
-            tty: None,
-            cols: None,
-            rows: None,
         })?;
         let state = RunState::new(process.clone());
         let dispatcher = state.clone();

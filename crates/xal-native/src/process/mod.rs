@@ -21,7 +21,7 @@ mod state;
 
 pub(crate) use state::{
     ProcessState, process_drain, process_interrupt, process_output_closed, process_reader_error,
-    process_resize, process_signal, process_termination, process_write, spawn_process,
+    process_signal, process_termination, process_write, spawn_process,
 };
 use state::{
     lock, process_clear_timeout, process_set_timeout, process_timed_out, signal_process_tree,
@@ -40,9 +40,6 @@ pub struct NativeProcessRequest {
     pub cwd: String,
     pub environment: Vec<NativeEnvironmentVariable>,
     pub stdin: bool,
-    pub tty: Option<bool>,
-    pub cols: Option<u16>,
-    pub rows: Option<u16>,
 }
 
 #[napi(object)]
@@ -100,11 +97,6 @@ impl NativeProcess {
     #[napi(catch_unwind)]
     pub fn close_stdin(&self) {
         *lock(&self.state.stdin) = None;
-    }
-
-    #[napi(catch_unwind)]
-    pub fn resize(&self, cols: u16, rows: u16) -> napi::Result<()> {
-        process_resize(&self.state, cols, rows)
     }
 
     #[napi(catch_unwind)]

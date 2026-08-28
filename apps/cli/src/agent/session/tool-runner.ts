@@ -279,7 +279,7 @@ export class ToolCallRunner {
     }
 
     const sandboxed = tool.sandboxed?.(call.args, { cwd: this.host.cwd() }) ?? false
-    const permission = tool.permission?.(call.args, { cwd: this.host.cwd(), sessionId: this.host.sessionId() })
+    const permission = tool.permission?.(call.args, { cwd: this.host.cwd() })
     const decision = await evaluatePolicy({
       sessionKey: this.host.permissionSessionKey(),
       cwd: this.host.cwd(),

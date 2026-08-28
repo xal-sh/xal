@@ -26,9 +26,9 @@ test("registers shell tools and their supporting contributions through the plugi
     },
   })
 
-  expect(tools).toEqual(["bash", "exec_command", "write_stdin"])
+  expect(tools).toEqual(["bash"])
   expect(prompts).toEqual(["environment"])
-  expect(disposers).toBe(2)
-  expect(permissionRules).toBe(2)
-  expect(policyRules).toBe(2)
+  expect(disposers).toBe(1)
+  expect(permissionRules).toBe(1)
+  expect(policyRules).toBe(1)
 })

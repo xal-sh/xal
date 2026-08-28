@@ -12,39 +12,33 @@ const homeEnv = appEnvVar("HOME")
 
 describe("bash permission suggestion", () => {
   test("keeps single-command suggestions", () => {
-    expect(bashTool.permission?.({ command: "pnpm test" }, { cwd: "/workspace", sessionId: "s" })).toEqual({
+    expect(bashTool.permission?.({ command: "pnpm test" }, { cwd: "/workspace" })).toEqual({
       subject: "pnpm test",
       suggestion: "bash(pnpm test*)",
     })
-    expect(bashTool.permission?.({ command: "git status" }, { cwd: "/workspace", sessionId: "s" })).toEqual({
+    expect(bashTool.permission?.({ command: "git status" }, { cwd: "/workspace" })).toEqual({
       subject: "git status",
       suggestion: "bash(git status*)",
     })
   })
 
   test("suggests a reusable prefix for compound commands", () => {
-    expect(bashTool.permission?.({ command: "pnpm test && pnpm lint" }, { cwd: "/workspace", sessionId: "s" })).toEqual(
-      {
-        subject: "pnpm test && pnpm lint",
-        suggestion: "bash(pnpm test*)",
-      },
-    )
-    expect(bashTool.permission?.({ command: "git status && git diff" }, { cwd: "/workspace", sessionId: "s" })).toEqual(
-      {
-        subject: "git status && git diff",
-        suggestion: "bash(git status*)",
-      },
-    )
-    expect(
-      bashTool.permission?.({ command: "npm run build && npm test" }, { cwd: "/workspace", sessionId: "s" }),
-    ).toEqual({
+    expect(bashTool.permission?.({ command: "pnpm test && pnpm lint" }, { cwd: "/workspace" })).toEqual({
+      subject: "pnpm test && pnpm lint",
+      suggestion: "bash(pnpm test*)",
+    })
+    expect(bashTool.permission?.({ command: "git status && git diff" }, { cwd: "/workspace" })).toEqual({
+      subject: "git status && git diff",
+      suggestion: "bash(git status*)",
+    })
+    expect(bashTool.permission?.({ command: "npm run build && npm test" }, { cwd: "/workspace" })).toEqual({
       subject: "npm run build && npm test",
       suggestion: "bash(npm run build*)",
     })
   })
 
   test("keeps the exact command as suggestion for single words", () => {
-    expect(bashTool.permission?.({ command: "ls" }, { cwd: "/workspace", sessionId: "s" })).toEqual({
+    expect(bashTool.permission?.({ command: "ls" }, { cwd: "/workspace" })).toEqual({
       subject: "ls",
       suggestion: "bash(ls)",
     })
@@ -57,7 +51,7 @@ describe("bash permission suggestion", () => {
       "FOO=1 pnpm test && pnpm lint",
       "FOO+=1 pnpm test && pnpm lint",
     ]) {
-      expect(bashTool.permission?.({ command }, { cwd: "/workspace", sessionId: "s" })).toEqual({
+      expect(bashTool.permission?.({ command }, { cwd: "/workspace" })).toEqual({
         subject: command,
       })
     }
@@ -65,7 +59,7 @@ describe("bash permission suggestion", () => {
 
   test("drops the suggestion for single-segment environment-assignment commands", () => {
     for (const command of ["FOO=1 pnpm test", "FOO+=1 pnpm test"]) {
-      expect(bashTool.permission?.({ command }, { cwd: "/workspace", sessionId: "s" })).toEqual({
+      expect(bashTool.permission?.({ command }, { cwd: "/workspace" })).toEqual({
         subject: command,
       })
     }
@@ -77,7 +71,7 @@ describe("bash permission suggestion", () => {
       "while true; do echo hi; done",
       "coproc echo safe && echo done",
     ]) {
-      expect(bashTool.permission?.({ command }, { cwd: "/workspace", sessionId: "s" })).toEqual({
+      expect(bashTool.permission?.({ command }, { cwd: "/workspace" })).toEqual({
         subject: command,
       })
     }
@@ -99,10 +93,7 @@ describe("bash compound permission policy", () => {
       setUserRules({ ask: ["bash(pnpm test)"] })
       const compound = "pnpm test && pnpm lint"
       const sessionKey = {}
-      const suggestion = bashTool.permission?.(
-        { command: compound },
-        { cwd: process.cwd(), sessionId: "s" },
-      )?.suggestion
+      const suggestion = bashTool.permission?.({ command: compound }, { cwd: process.cwd() })?.suggestion
       expect(suggestion).toBe("bash(pnpm test*)")
 
       const request = (command: string) => ({

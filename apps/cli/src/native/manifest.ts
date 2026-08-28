@@ -4,7 +4,7 @@ import { asNumber, asString, isRecord } from "../lib/json"
 import { isNativeRustTarget, type NativeRustTarget } from "./targets"
 
 export const NATIVE_MANIFEST_SCHEMA_VERSION = 1
-export const NATIVE_API_VERSION = 10
+export const NATIVE_API_VERSION = 11
 
 const MANIFEST_KEYS = [
   "apiVersion",
