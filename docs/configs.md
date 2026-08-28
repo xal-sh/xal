@@ -93,7 +93,7 @@ Context-window preferences use the same provider and model keys:
 }
 ```
 
-Use `/context-window` to save this preference for the current model. The command is available when a provider advertises multiple windows. A saved value that is no longer offered is ignored in favor of the model default.
+Use `/context-window` to save this preference for the current model. The command is available when a provider advertises multiple windows. Provider entries must be objects, and each model value must be a positive integer. A saved value that is no longer offered is ignored in favor of the model default.
 
 ## Combined example
 

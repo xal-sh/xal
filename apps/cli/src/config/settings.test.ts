@@ -224,6 +224,21 @@ test("rejects permission and redaction settings that are not string arrays", asy
   })
 })
 
+test("rejects malformed context-window settings", async () => {
+  await withSettingsEnvironment(async ({ home }) => {
+    const config = join(home, "config.json")
+
+    await writeJson(config, { contextWindows: "large" })
+    await expect(loadSettings()).rejects.toThrow("contextWindows must be an object")
+
+    await writeJson(config, { contextWindows: { openai: "large" } })
+    await expect(loadSettings()).rejects.toThrow("contextWindows.openai must be an object")
+
+    await writeJson(config, { contextWindows: { openai: { "gpt-5.6-sol": 600_000.5 } } })
+    await expect(loadSettings()).rejects.toThrow("contextWindows.openai.gpt-5.6-sol must be a positive integer")
+  })
+})
+
 test("saves a context window for one provider and model", async () => {
   await withSettingsEnvironment(async () => {
     await loadSettings()

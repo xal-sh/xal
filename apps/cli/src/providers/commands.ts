@@ -273,6 +273,18 @@ const contextWindowCommand: Command = {
       })),
     })
     if (selected === undefined || selected === modelInfo.contextWindow) return
+    if (ctx.session.currentState !== "idle") {
+      ctx.print("cannot change context window while a turn is running")
+      return
+    }
+    if (
+      ctx.session.currentProvider.id !== provider.id ||
+      ctx.session.currentProfileId !== profileId ||
+      ctx.session.currentModel !== model
+    ) {
+      ctx.print("active model changed; run /context-window again")
+      return
+    }
     await saveContextWindow(provider, modelInfo.id, selected)
     ctx.session.contextWindowChanged()
   },
