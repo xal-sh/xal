@@ -45,9 +45,9 @@ Each task declares its `access`:
 - `read`: the agent runs in a read-only mode and cannot modify files.
 - `write`: the agent inherits the parent's permission mode. With `isolation: "worktree"` it works in its own Git worktree and branch; otherwise it edits the shared checkout.
 
-Dispatching any `write` task asks for approval. Sub-agents cannot ask for approval themselves; any action that would need it is denied automatically. Each agent runs until it produces a final report, reaches the `agents.timeoutMinutes` deadline, or exceeds its turn budget: after `agents.maxTurns` completed turns the agent is told to wrap up, and at 1.5× the budget its last report is returned as-is instead of running forever. The primary agent can inspect both budgets while the task runs and extend its deadline, soft turn budget, or both before either limit is reached.
+Dispatching any `write` task asks for approval. Sub-agents cannot ask for approval themselves; any action that would need it is denied automatically. Each agent runs until it produces a final report, is explicitly stopped, or exceeds its turn budget: after `agents.maxTurns` completed turns the agent is told to wrap up, and at 1.5× the budget its last report is returned as-is instead of running forever. The primary agent can inspect and extend the soft turn budget while the task runs. `agents.timeoutMinutes` can add an operator-configured wall-clock safety limit, but its default value of `0` leaves agent lifetime unlimited and the primary agent cannot change it.
 
-A task agent should work independently, but it can call `ask_parent` when a parent-only decision or missing context truly blocks useful progress. The tool suspends that child tool call and shows `Waiting for parent…` without starting another provider turn or polling. Each child can have one pending question. The existing task deadline bounds the wait, and cancellation or parent failure releases it with an unavailable result. Questions are process-local live state and are not resumed after teardown.
+A task agent should work independently, but it can call `ask_parent` when a parent-only decision or missing context truly blocks useful progress. The tool suspends that child tool call and shows `Waiting for parent…` without starting another provider turn or polling. Each child can have one pending question. A configured task deadline bounds the wait; cancellation or parent failure also releases it with an unavailable result. Questions are process-local live state and are not resumed after teardown.
 
 The parent receives a persisted, expandable question notice in the transcript and TUI plus a transient model instruction. It answers with `job_send`; while a question is pending, the next accepted `job_send` or TUI agent message is the answer rather than ordinary guidance. If the parent finishes without answering, it gets one transient correction. Finishing again releases the child as parent-unavailable. A question wakes `wait_agent` and an explicit `job_output(wait)` so the parent cannot deadlock while waiting for the blocked child. Historical question events remain visible after restart, but no actionable instruction is restored into provider history. Assignments should still be self-contained, and agents should not use this path for status questions.
 
@@ -66,16 +66,16 @@ A running foreground `bash` command can be promoted to a background job at any m
 
 The model coordinates jobs with six tools:
 
-| Tool         | Purpose                                                                                                              |
-| ------------ | -------------------------------------------------------------------------------------------------------------------- |
-| `wait_agent` | Wait for task-agent activity without collecting or consuming the automatically delivered report.                     |
-| `job_output` | Read process output, collect an agent report, or inspect a schedule; agent waits return at a supervision checkpoint. |
-| `job_status` | Inspect processes, task agents, and schedules without consuming output.                                              |
-| `job_send`   | Answer a pending task-agent question, or queue guidance when no question is pending.                                 |
-| `job_extend` | Add up to 60 runtime minutes, 100 soft-budget turns, or both to a queued or running task agent per call.             |
-| `job_kill`   | Stop a process, task agent, or schedule. A process that ignores the graceful stop is hard-killed after 2 seconds.    |
+| Tool         | Purpose                                                                                                                |
+| ------------ | ---------------------------------------------------------------------------------------------------------------------- |
+| `wait_agent` | Wait for task-agent activity without collecting or consuming the automatically delivered report.                       |
+| `job_output` | Read process output, collect an agent report, or inspect a schedule; configured deadlines add supervision checkpoints. |
+| `job_status` | Inspect processes, task agents, and schedules without consuming output.                                                |
+| `job_send`   | Answer a pending task-agent question, or queue guidance when no question is pending.                                   |
+| `job_extend` | Add up to 100 soft-budget turns to a queued or running task agent per call.                                            |
+| `job_kill`   | Stop a process, task agent, or schedule. A process that ignores the graceful stop is hard-killed after 2 seconds.      |
 
-`wait_agent` defaults to 30 seconds, clamps shorter requests to 10 seconds, and accepts waits up to one hour. It ends early for queued task-agent results, task-agent questions, or new user input. An explicit `job_output` wait cannot consume a task agent's whole runtime budget. It reserves a supervision window of up to one minute and returns with live status so the parent can inspect, extend, steer, or stop the task; a wait started while queued may return earlier because its runtime deadline has not started. If an agent still times out, collection includes a bounded transcript tail labeled as incomplete alongside the durable task-record path.
+`wait_agent` defaults to 30 seconds, clamps shorter requests to 10 seconds, and accepts waits up to one hour. It ends early for queued task-agent results, task-agent questions, or new user input, and its timeout never stops an agent. An explicit `job_output` wait also returns without affecting agent execution. When an operator configures a nonzero runtime limit, `job_output` reserves a supervision window of up to one minute before the deadline and returns with live status so the parent can inspect, steer, or stop the task. If the configured runtime limit is reached, collection includes a bounded transcript tail labeled as incomplete alongside the durable task-record path.
 
 Stopping a job from the TUI is never silent: the result is marked `stopped by the user` and still delivered so the model knows what happened. A task agent remains unsettled until its runner has finished cleanup and saved its task record.
 
@@ -106,10 +106,10 @@ The viewer takes over the screen and follows the job's output live. While it is 
 
 Every field in the top-level `agents` object must be an integer and is validated strictly.
 
-| Option                  | Default | Range   | Description                                                 |
-| ----------------------- | ------- | ------- | ----------------------------------------------------------- |
-| `agents.maxConcurrent`  | `4`     | `1–8`   | Task agents running at once; further tasks queue.           |
-| `agents.timeoutMinutes` | `10`    | `1–60`  | Hard deadline per task agent.                               |
-| `agents.maxTurns`       | `24`    | `1–100` | Soft completed turn-cycle budget; agents wrap up beyond it. |
+| Option                  | Default | Range   | Description                                                       |
+| ----------------------- | ------- | ------- | ----------------------------------------------------------------- |
+| `agents.maxConcurrent`  | `4`     | `1–8`   | Task agents running at once; further tasks queue.                 |
+| `agents.timeoutMinutes` | `0`     | `0–60`  | Optional hard deadline per task agent; `0` disables the deadline. |
+| `agents.maxTurns`       | `24`    | `1–100` | Soft completed turn-cycle budget; agents wrap up beyond it.       |
 
 Set these values in the top-level `agents` object. See [Configuration](/docs/configs) for file locations and merge behavior.

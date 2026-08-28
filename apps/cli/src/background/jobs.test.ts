@@ -11,6 +11,7 @@ import {
   createAgentJob,
   createProcessJob,
   drainOwnerDeliveries,
+  extendAgentBudget,
   finishAgentJob,
   finishProcessJob,
   getJob,
@@ -37,11 +38,11 @@ function processJob(prefix: string, ownerId = "background-jobs-test"): Backgroun
   return job
 }
 
-function agentJob(prefix: string): BackgroundAgentJob {
+function agentJob(prefix: string, timeoutMs = 60_000): BackgroundAgentJob {
   const job = createAgentJob(prefix, {
     ownerId: "background-jobs-test",
     task: prefix,
-    timeoutMs: 60_000,
+    timeoutMs,
     maxTurns: 24,
     stop: () => {},
     send: () => ({ status: "guided" }),
@@ -155,6 +156,15 @@ test("distinguishes pending-question answers from ordinary guidance", () => {
   expect(job.transcript.text()).toContain("Parent guidance")
 })
 
+test("does not create a deadline or shorten waits when the runtime limit is disabled", () => {
+  const job = agentJob("test-agent-without-runtime-limit", 0)
+
+  startAgentJob(job)
+
+  expect(job.deadlineAt).toBeUndefined()
+  expect(agentSupervisionWaitMs(job, 60_000, 1_000_000)).toBe(60_000)
+})
+
 test("reserves a supervision window before a queued agent starts", () => {
   const job = agentJob("test-queued-agent-supervision-window")
 
@@ -180,6 +190,20 @@ test("uses at most a one-minute supervision window for longer agent budgets", ()
   job.deadlineAt = now + 9 * 60_000
 
   expect(agentSupervisionWaitMs(job, 10 * 60_000, now)).toBe(8 * 60_000)
+})
+
+test("extends only the soft turn budget", () => {
+  const job = agentJob("test-agent-turn-extension")
+  startAgentJob(job)
+  const deadlineAt = job.deadlineAt
+
+  extendAgentBudget(job, 10, "parent")
+
+  expect(job.turnBudget).toBe(34)
+  expect(job.turnLimit).toBe(51)
+  expect(job.timeoutMs).toBe(60_000)
+  expect(job.deadlineAt).toBe(deadlineAt)
+  expect(job.transcript.text()).toContain("Parent extended budget by 10 turns")
 })
 
 test("redacts secrets split across process and agent output chunks", async () => {

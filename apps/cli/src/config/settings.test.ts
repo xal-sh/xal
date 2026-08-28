@@ -104,7 +104,7 @@ test("trusted project settings override user settings with recursive object merg
       },
       modes: {},
       goal: { evaluatorModels: {} },
-      agents: { maxConcurrent: 4, timeoutMinutes: 10, maxTurns: 24 },
+      agents: { maxConcurrent: 4, timeoutMinutes: 0, maxTurns: 24 },
       redaction: {
         values: [],
         environment: ["MY_PROJECT_TOKEN"],
@@ -143,7 +143,7 @@ test("does not read malformed project settings until the project is trusted", as
       permissions: { allow: [], ask: [], deny: [] },
       modes: {},
       goal: { evaluatorModels: {} },
-      agents: { maxConcurrent: 4, timeoutMinutes: 10, maxTurns: 24 },
+      agents: { maxConcurrent: 4, timeoutMinutes: 0, maxTurns: 24 },
       redaction: { values: [], environment: [] },
       pluginConfig: {},
       thinking: {},
@@ -204,7 +204,7 @@ test("saves only user settings securely while retaining project overrides in mem
       permissions: { allow: [], ask: [], deny: [] },
       modes: {},
       goal: { evaluatorModels: {} },
-      agents: { maxConcurrent: 4, timeoutMinutes: 10, maxTurns: 24 },
+      agents: { maxConcurrent: 4, timeoutMinutes: 0, maxTurns: 24 },
       redaction: { values: [], environment: [] },
       pluginConfig: { userPlugin: { enabled: true } },
       thinking: {},
@@ -221,6 +221,18 @@ test("rejects permission and redaction settings that are not string arrays", asy
 
     await writeJson(join(home, "config.json"), { permissions: { deny: [42] } })
     await expect(loadSettings()).rejects.toThrow("permissions.deny must be an array of strings")
+  })
+})
+
+test("accepts a disabled task-agent runtime limit and rejects negative values", async () => {
+  await withSettingsEnvironment(async ({ home }) => {
+    const config = join(home, "config.json")
+    await writeJson(config, { agents: { timeoutMinutes: 0 } })
+
+    expect((await loadSettings()).agents.timeoutMinutes).toBe(0)
+
+    await writeJson(config, { agents: { timeoutMinutes: -1 } })
+    await expect(loadSettings()).rejects.toThrow("agents.timeoutMinutes must be an integer between 0 and 60")
   })
 })
 

@@ -124,7 +124,7 @@ Every option is optional. This example shows how the top-level sections fit toge
   },
   "agents": {
     "maxConcurrent": 4,
-    "timeoutMinutes": 10,
+    "timeoutMinutes": 0,
     "maxTurns": 24
   },
   "thinking": {

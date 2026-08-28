@@ -188,7 +188,7 @@ async function runTask(
     acquired = true
     if (controller.signal.aborted) throw new Error("task cancelled before it started")
     startAgentJob(job)
-    scheduleDeadline()
+    if (job.timeoutMs > 0) scheduleDeadline()
 
     worktree =
       item.isolation === "worktree"

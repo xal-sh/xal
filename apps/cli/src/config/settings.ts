@@ -52,7 +52,7 @@ export interface Settings {
   contextWindows: Record<string, Record<string, number>>
 }
 
-const AGENT_DEFAULTS: AgentSettings = { maxConcurrent: 4, timeoutMinutes: 10, maxTurns: 24 }
+const AGENT_DEFAULTS: AgentSettings = { maxConcurrent: 4, timeoutMinutes: 0, maxTurns: 24 }
 
 let current: Settings = {
   plugins: [],
@@ -240,7 +240,7 @@ function parseSettings(raw: Record<string, unknown>): Settings {
         agents.timeoutMinutes,
         "agents.timeoutMinutes",
         AGENT_DEFAULTS.timeoutMinutes,
-        1,
+        0,
         60,
       ),
       maxTurns: strictBoundedInteger(agents.maxTurns, "agents.maxTurns", AGENT_DEFAULTS.maxTurns, 1, 100),
