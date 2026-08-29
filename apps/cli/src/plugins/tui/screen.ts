@@ -1,6 +1,11 @@
-import type { BoxRenderable, CliRenderer } from "@opentui/core"
+import { RenderableEvents, type BoxRenderable, type CliRenderer, type RGBA } from "@opentui/core"
 import type { AgentSession } from "../../agent/session/session"
-import type { BackgroundTask } from "../../background/registry"
+import {
+  listBackgroundTasks,
+  subscribeBackgroundTasks,
+  type BackgroundAgentTask,
+  type BackgroundTask,
+} from "../../background/registry"
 import { runCommand } from "../../commands/run"
 import type { CommandContext, SelectRequest } from "../../commands/types"
 import { describeError } from "../../lib/error"
@@ -24,7 +29,11 @@ import { ShortcutHelp } from "./components/shortcut-help"
 import { StatusBar, STATUS_ROWS } from "./components/status-bar"
 import { TaskList } from "./components/task-list"
 import { saveTuiConfig, type TuiConfig } from "./config"
+import { ChildEventController } from "./controllers/child-events"
 import { column } from "./lib/renderables"
+import { agentSnapshotMetrics } from "./lib/agent-metrics"
+import { truncateToWidth } from "./lib/text"
+import { COLORS } from "./theme/colors"
 import type { MessageHistory } from "./message-history"
 import { Scrollback } from "./scrollback/scrollback"
 import type { ResolvedShortcuts } from "./shortcuts"
@@ -36,7 +45,14 @@ export interface ScreenActions extends PermissionPopoverActions, ElicitationPopo
 
 const SCROLLBACK_GAP_ROWS = 1
 
-type ScreenPage = { kind: "main" } | { kind: "job" }
+type ScreenPage = { kind: "main" } | { kind: "agent"; taskId: string } | { kind: "job" }
+
+interface ChildStore {
+  task: BackgroundAgentTask
+  scrollback: Scrollback
+  statusBar: StatusBar
+  detach: () => void
+}
 
 export function mainFooterHeight(
   terminalHeight: number,
@@ -46,6 +62,17 @@ export function mainFooterHeight(
 ): number {
   if (liveRows === 0) return contentRows
   return Math.max(contentRows, terminalHeight - scrollbackRows)
+}
+
+export function agentSteerDecision(
+  steerable: boolean,
+  input: UserInput,
+): { kind: "error"; message: string } | { kind: "bounce" } | { kind: "send" } {
+  if (input.images.length > 0) {
+    return { kind: "error", message: "image input is not available while steering a task agent" }
+  }
+  if (!steerable) return { kind: "bounce" }
+  return { kind: "send" }
 }
 
 export class Screen {
@@ -62,10 +89,14 @@ export class Screen {
   readonly config: ConfigPopover
   readonly palette: CompletionPalette
   readonly composer: Composer
+  readonly agentComposer: Composer
   readonly statusBar: StatusBar
   readonly tasks: BackgroundTasks
   readonly taskList: TaskList
   private readonly shortcutHelp: ShortcutHelp
+  private readonly childStores = new Map<string, ChildStore>()
+  private readonly preferences: TuiConfig
+  private readonly shortcuts: ResolvedShortcuts
   private overlaid = false
   private paletteBelow = true
   private pendingScrollbackRows = 0
@@ -83,6 +114,8 @@ export class Screen {
     shortcuts: ResolvedShortcuts,
     actions: ScreenActions,
   ) {
+    this.preferences = preferences
+    this.shortcuts = shortcuts
     this.cwd = redactText(session.currentWorkingDirectory)
     this.scrollback = new Scrollback(
       renderer,
@@ -92,7 +125,7 @@ export class Screen {
       shortcuts.help("display.toggle-details"),
     )
     this.view = column(renderer, { width: "100%", height: "100%" })
-    this.jobViewer = new JobViewer(renderer, (message) => this.statusBar.setNotice(message))
+    this.jobViewer = new JobViewer(renderer)
     this.live = new LiveTools(renderer, () => this.syncFooter(), shortcuts.help("jobs.background"))
     this.queued = new QueuedInputs(renderer, () => this.syncFooter())
     this.taskList = new TaskList(renderer, () => this.syncFooter())
@@ -132,11 +165,17 @@ export class Screen {
       renderer,
       session.currentWorkingDirectory,
       {
-        completeCommand: (line) => this.composer.setValue(line),
-        completeSkill: (query, name, trailingSpace) => this.composer.completeSkill(query, name, trailingSpace),
-        completeFile: (query, path) => this.composer.completeFile(query, path),
-        runCommand: (line) => this.runCommand(line),
-        error: (message) => this.scrollback.append({ kind: "error", text: message }),
+        completeCommand: (line) => this.activeComposer.setValue(line),
+        completeSkill: (query, name, trailingSpace) => this.activeComposer.completeSkill(query, name, trailingSpace),
+        completeFile: (query, path) => this.activeComposer.completeFile(query, path),
+        runCommand: (line) => {
+          if (this.page.kind === "agent") {
+            this.rejectAgentCommand()
+            return
+          }
+          this.runCommand(line)
+        },
+        error: (message) => this.activeScrollback.append({ kind: "error", text: message }),
       },
       () => this.syncFooter(),
     )
@@ -167,23 +206,45 @@ export class Screen {
       },
       resize: () => this.syncFooter(),
     })
+    this.agentComposer = new Composer(
+      renderer,
+      history,
+      {
+        submit: (input) => this.submitAgentSteer(input),
+        run: () => this.rejectAgentCommand(),
+        error: (message) => this.appendAgentSteerError(message),
+        change: (value, cursor) => {
+          if (value.trimStart().startsWith("/")) {
+            this.palette.dismiss()
+            return
+          }
+          this.placePalette()
+          this.palette.update(value, cursor, this.paletteLimit())
+        },
+        resize: () => this.syncFooter(),
+      },
+      COLORS.agent,
+    )
     this.tasks = new BackgroundTasks(
       renderer,
       {
         changed: () => {
           this.jobViewer.refresh()
+          this.refreshActiveAgentStatusBar()
           this.syncFooter()
         },
         released: () => {
-          if (!this.overlayVisible) this.composer.focus()
+          if (!this.overlayVisible) this.activeComposer.focus()
         },
         viewJob: (task) => this.viewJob(task),
-        scrollViewer: (name) => this.jobViewer.scrollKey(name),
+        scrollViewer: (name) => this.page.kind === "job" && this.jobViewer.scrollKey(name),
         error: (message) => this.scrollback.append({ kind: "error", text: message }),
       },
       shortcuts.help("agents.stop-all"),
       () => this.session.id,
     )
+    const unsubscribeChildStores = subscribeBackgroundTasks(() => this.syncChildStores())
+    this.view.on(RenderableEvents.DESTROYED, unsubscribeChildStores)
 
     this.mainPanel = column(renderer, { paddingLeft: 2, paddingRight: 2, marginBottom: "auto" })
     this.mainPanel.add(this.live.view)
@@ -197,6 +258,7 @@ export class Screen {
     this.view.add(this.config.view)
     this.view.add(this.jobViewer.view)
     this.view.add(this.composer.view)
+    this.view.add(this.agentComposer.view)
     this.view.add(this.shortcutHelp.view)
     this.view.add(this.palette.view)
     this.view.add(this.statusBar.view)
@@ -212,6 +274,37 @@ export class Screen {
       this.picker.visible ||
       this.config.visible
     )
+  }
+
+  get agentPageOpen(): boolean {
+    return this.page.kind === "agent"
+  }
+
+  get activeScrollback(): Scrollback {
+    if (this.page.kind === "agent") return this.childStores.get(this.page.taskId)?.scrollback ?? this.scrollback
+    return this.scrollback
+  }
+
+  get activeComposer(): Composer {
+    if (this.page.kind === "agent") return this.agentComposer
+    return this.composer
+  }
+
+  get activeStatusBar(): StatusBar {
+    if (this.page.kind === "agent") return this.childStores.get(this.page.taskId)?.statusBar ?? this.statusBar
+    return this.statusBar
+  }
+
+  setTerminalBackground(background: RGBA): boolean {
+    let changed = this.scrollback.setTerminalBackground(background)
+    for (const store of this.childStores.values()) {
+      changed = store.scrollback.setTerminalBackground(background) || changed
+    }
+    return changed
+  }
+
+  replayActiveTranscript(): void {
+    this.activeScrollback.replay()
   }
 
   requestApproval(suggestion: string | undefined): void {
@@ -275,6 +368,7 @@ export class Screen {
   }
 
   async select<T>(request: SelectRequest<T>): Promise<T | undefined> {
+    this.tasks.closeViewer()
     this.config.hide()
     const options = request.options.map((option) => ({
       ...option,
@@ -289,12 +383,14 @@ export class Screen {
   }
 
   async ask(question: string): Promise<string | undefined> {
+    this.tasks.closeViewer()
     this.config.hide()
     this.picker.hide()
     return this.secret.show(redactText(question), false)
   }
 
   async askSecret(question: string): Promise<string | undefined> {
+    this.tasks.closeViewer()
     this.config.hide()
     this.picker.hide()
     const value = await this.secret.show(redactText(question))
@@ -334,6 +430,28 @@ export class Screen {
 
   syncFooter(): void {
     const overlaid = this.overlayVisible
+    if (this.page.kind === "agent") {
+      this.shortcutHelp.setCovered(true)
+      this.composer.setVisible(false)
+      this.composer.blur()
+      this.agentComposer.setVisible(true)
+      this.statusBar.view.visible = false
+      this.showAgentStatusBar(this.page.taskId)
+      this.tasks.view.visible = true
+      const paletteRows = this.palette.visible ? this.palette.height : 0
+      if (this.paletteBelow) this.reserved = 0
+      else this.reserved = Math.max(this.reserved, paletteRows)
+      const editing = this.agentComposer.rows + this.shortcutHelp.height + Math.max(paletteRows, this.reserved)
+      const contentRows = editing + STATUS_ROWS + this.tasks.height
+      this.renderer.footerHeight = mainFooterHeight(
+        this.renderer.terminalHeight,
+        this.activeScrollback.rows + this.pendingScrollbackRows,
+        contentRows,
+        0,
+      )
+      this.activeStatusBar.setHint(this.palette.visible ? "↑↓ · Tab · Enter · Esc" : undefined)
+      return
+    }
     const jobPage = this.page.kind === "job"
     this.shortcutHelp.setCovered(overlaid || jobPage)
     if (jobPage) {
@@ -341,12 +459,16 @@ export class Screen {
       this.reserved = 0
       this.composer.setVisible(false)
       this.composer.blur()
+      this.agentComposer.setVisible(false)
       this.statusBar.view.visible = false
+      this.showAgentStatusBar(undefined)
       this.tasks.view.visible = false
       this.jobViewer.resize(this.renderer.terminalHeight)
       return
     }
     this.statusBar.view.visible = true
+    this.showAgentStatusBar(undefined)
+    this.agentComposer.setVisible(false)
     this.tasks.view.visible = true
     if (overlaid !== this.overlaid) {
       this.overlaid = overlaid
@@ -365,7 +487,7 @@ export class Screen {
       this.composer.setVisible(!overlaid)
     }
     if (overlaid) this.palette.dismiss()
-    this.statusBar.setHint(this.palette.visible ? "↑↓ · Tab · Enter · Esc" : undefined)
+    this.activeStatusBar.setHint(this.palette.visible ? "↑↓ · Tab · Enter · Esc" : undefined)
     this.elicitation.fit()
     const overlayRows = this.permission.visible
       ? this.permission.height
@@ -407,6 +529,9 @@ export class Screen {
   }
 
   private closedFooterRows(): number {
+    if (this.page.kind === "agent") {
+      return this.agentComposer.rows + this.shortcutHelp.height + STATUS_ROWS + this.tasks.height
+    }
     if (this.jobViewer.visible) {
       return this.jobViewer.height + this.composer.rows + this.shortcutHelp.height + STATUS_ROWS + this.tasks.height
     }
@@ -424,7 +549,7 @@ export class Screen {
   private spaceBelowFooter(): number {
     const terminal = this.renderer.terminalHeight
     const footer = this.closedFooterRows()
-    const content = this.scrollback.rows + SCROLLBACK_GAP_ROWS
+    const content = this.activeScrollback.rows + SCROLLBACK_GAP_ROWS
     const top = Math.max(0, Math.min(content, terminal - footer))
     return Math.max(0, terminal - top - footer)
   }
@@ -442,7 +567,7 @@ export class Screen {
     if (below === this.paletteBelow) return
     this.paletteBelow = below
     this.view.remove(this.palette.view)
-    this.view.insertBefore(this.palette.view, below ? this.statusBar.view : this.composer.view)
+    this.view.insertBefore(this.palette.view, below ? this.activeStatusBar.view : this.activeComposer.view)
     this.syncFooter()
   }
 
@@ -473,27 +598,181 @@ export class Screen {
   }
 
   private viewJob(task: BackgroundTask | undefined): void {
-    if (task) {
-      const entering = this.page.kind === "main"
-      this.page = { kind: "job" }
-      this.jobViewer.show(task)
-      this.mainPanel.visible = false
-      this.palette.dismiss()
-      if (entering) {
-        this.scrollback.setActive(false)
-        this.renderer.externalOutputMode = "passthrough"
-        this.renderer.screenMode = "alternate-screen"
-      }
-      this.syncFooter()
+    if (task === undefined) {
+      this.openMainPage()
       return
     }
-    if (this.page.kind === "main") return
-    this.page = { kind: "main" }
-    this.jobViewer.hide()
-    this.mainPanel.visible = true
+    if (task.kind === "agent" && this.childStores.has(task.id)) {
+      this.openAgentPage(task)
+      return
+    }
+    this.openJobPage(task)
+  }
+
+  private openMainPage(): void {
+    switch (this.page.kind) {
+      case "main":
+        return
+      case "agent": {
+        const store = this.childStores.get(this.page.taskId)
+        this.page = { kind: "main" }
+        this.palette.dismiss()
+        store?.scrollback.setActive(false)
+        this.scrollback.setActive(true)
+        this.mainPanel.visible = true
+        this.agentComposer.setVisible(false)
+        this.agentComposer.setBadge(undefined)
+        this.agentComposer.blur()
+        if (!this.tasks.focused) this.composer.focus()
+        this.syncFooter()
+        return
+      }
+      case "job":
+        this.page = { kind: "main" }
+        this.jobViewer.hide()
+        this.mainPanel.visible = true
+        this.syncFooter()
+        this.renderer.screenMode = "split-footer"
+        this.renderer.externalOutputMode = "capture-stdout"
+        this.scrollback.setActive(true)
+        return
+    }
+  }
+
+  private openAgentPage(task: BackgroundAgentTask): void {
+    const store = this.childStores.get(task.id)
+    if (!store) return
+    const previous = this.page
+    if (previous.kind === "agent") {
+      if (previous.taskId === task.id) return
+      this.childStores.get(previous.taskId)?.scrollback.setActive(false)
+    }
+    if (previous.kind === "job") {
+      this.jobViewer.hide()
+      this.renderer.screenMode = "split-footer"
+      this.renderer.externalOutputMode = "capture-stdout"
+    } else {
+      this.scrollback.setActive(false)
+    }
+    this.page = { kind: "agent", taskId: task.id }
+    this.palette.dismiss()
+    this.mainPanel.visible = false
+    this.agentComposer.setBadge(` ${truncateToWidth(redactText(task.id), 24)}`)
+    store.scrollback.setActive(true)
+    this.seedAgentStatusBar(store)
     this.syncFooter()
-    this.renderer.screenMode = "split-footer"
-    this.renderer.externalOutputMode = "capture-stdout"
-    this.scrollback.setActive(true)
+    this.tasks.blur()
+    this.agentComposer.focus()
+  }
+
+  private openJobPage(task: BackgroundTask): void {
+    const previous = this.page
+    this.page = { kind: "job" }
+    if (previous.kind === "agent") {
+      this.palette.dismiss()
+      this.childStores.get(previous.taskId)?.scrollback.setActive(false)
+      this.agentComposer.setVisible(false)
+      this.agentComposer.blur()
+    }
+    this.jobViewer.show(task)
+    this.mainPanel.visible = false
+    this.palette.dismiss()
+    if (previous.kind !== "job") {
+      this.scrollback.setActive(false)
+      this.renderer.externalOutputMode = "passthrough"
+      this.renderer.screenMode = "alternate-screen"
+    }
+    this.syncFooter()
+  }
+
+  private activeChildStore(): ChildStore | undefined {
+    if (this.page.kind !== "agent") return undefined
+    return this.childStores.get(this.page.taskId)
+  }
+
+  private submitAgentSteer(input: UserInput): boolean {
+    const store = this.activeChildStore()
+    if (!store) return false
+    const steerable = store.task.state().running && store.task.childSessionId() !== undefined
+    const decision = agentSteerDecision(steerable, input)
+    if (decision.kind === "error") {
+      this.appendAgentSteerError(decision.message)
+      return false
+    }
+    if (decision.kind === "bounce" || !store.task.send(input.text)) {
+      this.activeStatusBar.flashNotice(`${store.task.id} is not accepting input`)
+      return false
+    }
+    return true
+  }
+
+  private rejectAgentCommand(): void {
+    this.appendAgentSteerError("commands are not available while steering a task agent")
+  }
+
+  private appendAgentSteerError(message: string): void {
+    this.activeScrollback.append({ kind: "error", text: message })
+  }
+
+  private showAgentStatusBar(taskId: string | undefined): void {
+    for (const [id, store] of this.childStores) {
+      store.statusBar.view.visible = id === taskId
+    }
+  }
+
+  private seedAgentStatusBar(store: ChildStore): void {
+    store.statusBar.setModel(store.task.model)
+    store.statusBar.setMode(store.task.mode)
+    store.statusBar.setMetrics(agentSnapshotMetrics(store.task.state(), store.task.snapshot()))
+  }
+
+  private refreshActiveAgentStatusBar(): void {
+    if (this.page.kind !== "agent") return
+    const store = this.childStores.get(this.page.taskId)
+    if (store) this.seedAgentStatusBar(store)
+  }
+
+  private syncChildStores(): void {
+    const agents = listBackgroundTasks().filter((task): task is BackgroundAgentTask => task.kind === "agent")
+    for (const task of agents) {
+      if (this.childStores.has(task.id)) continue
+      this.childStores.set(task.id, this.createChildStore(task))
+    }
+    for (const id of [...this.childStores.keys()]) {
+      if (agents.some((task) => task.id === id)) continue
+      this.disposeChildStore(id)
+    }
+  }
+
+  private createChildStore(task: BackgroundAgentTask): ChildStore {
+    const scrollback = new Scrollback(
+      this.renderer,
+      0,
+      (rows) => this.reclaim(rows),
+      this.preferences,
+      this.shortcuts.help("display.toggle-details"),
+    )
+    scrollback.setActive(false)
+    const statusBar = new StatusBar(this.renderer, task.model, undefined, task.mode)
+    statusBar.view.visible = false
+    this.view.insertBefore(statusBar.view, this.tasks.view)
+    const controller = new ChildEventController(scrollback, statusBar)
+    return {
+      task,
+      scrollback,
+      statusBar,
+      detach: task.onEvent === undefined ? () => {} : task.onEvent((event) => controller.handle(event)),
+    }
+  }
+
+  private disposeChildStore(id: string): void {
+    const store = this.childStores.get(id)
+    if (!store) return
+    if (this.page.kind === "agent" && this.page.taskId === id) this.openMainPage()
+    this.childStores.delete(id)
+    store.scrollback.setActive(false)
+    store.detach()
+    this.view.remove(store.statusBar.view)
+    store.statusBar.view.destroyRecursively()
   }
 }

@@ -410,20 +410,14 @@ export class BackgroundTasks {
     const entry = this.rows[this.selected]
     if (this.viewedJobId !== undefined) {
       const viewed = this.rows.find((row) => row.kind === "task" && row.task.id === this.viewedJobId)
-      const steer =
-        viewed?.kind === "task" &&
-        viewed.task.kind === "agent" &&
-        viewed.task.state().running &&
-        viewed.task.childSessionId() !== undefined
-          ? ["i steer"]
-          : []
+      const scroll = viewed?.kind === "task" && viewed.task.kind !== "agent" ? ["pgup/pgdn scroll", "end follow"] : []
       const open =
         !entry || entry.kind === "main"
           ? "enter main"
           : entry.task.id === this.viewedJobId
             ? "enter close"
             : "enter view"
-      return ["↑↓ move", open, "pgup/pgdn scroll", "end follow", ...steer, "esc close"].join(" · ")
+      return ["↑↓ move", open, ...scroll, "esc close"].join(" · ")
     }
     const stopAll = this.stopAllShortcut ? [`${this.stopAllShortcut} stop all`] : []
     if (!entry || entry.kind === "main") return ["↑↓ move", "enter main", ...stopAll, "esc back"].join(" · ")

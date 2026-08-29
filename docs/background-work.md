@@ -83,7 +83,7 @@ Stopping a job from the TUI is never silent: the result is marked `stopped by th
 
 - The status bar shows live counts (`2 agents · 1 job · …`) whenever background work exists.
 - Running agents are summarized above the composer by ID and elapsed time; queued agents show `queued <time>` until they start.
-- The navigator at the bottom lists every process, task agent, and schedule: running rows first, then finished rows (newest first). Schedule rows show their remaining time. The full viewer shows live activity and timing, plus context, tool, and turn metrics for agents. Successfully completed agents are dismissed when the primary session returns to idle; failed agents and finished jobs remain reviewable until dismissed or evicted, and jobs started by a sub-agent are attributed with `⟨agent-id⟩`.
+- The navigator at the bottom lists every process, task agent, and schedule: running rows first, then finished rows (newest first). Schedule rows show their remaining time. Successfully completed agents are dismissed when the primary session returns to idle; failed agents and finished jobs remain reviewable until dismissed or evicted, and jobs started by a sub-agent are attributed with `⟨agent-id⟩`.
 - Normal transcript mode shows a completed background result as its ID and first report line. Use `display.toggle-details` (default `ctrl+o`) to reveal its assignment, status, line count, report output, and record path.
 
 Open the navigator with `/agents` (alias `/jobs`), the `agents.open` shortcut (default `ctrl+x ctrl+a`), or by pressing `↓` with an empty composer.
@@ -98,7 +98,9 @@ Navigator keys:
 | `x` / `k` | Stop a running job, or dismiss a finished row              |
 | `esc`     | Close the viewer, collapse the preview, or leave           |
 
-The viewer takes over the screen and follows the job's output live. While it is open, `↑`/`↓` keep moving the selection in the list below and `enter` switches the viewer to the selected job (or closes it on the viewed row), so you can hop between running agents without leaving the viewer. `pgup`/`pgdn` scroll the transcript, `home` jumps to the top, and `end` returns to the bottom and resumes following (scrolling up pauses following and shows `· paused`). For a running agent, `i` opens a steering input, type guidance and press `enter` to queue it into the agent's current turn; the transcript marks it as `User guidance`.
+Opening a process or schedule job takes over the screen with the raw-text viewer and follows its output live. While it is open, `↑`/`↓` keep moving the selection in the list below and `enter` switches the viewer to the selected job (or closes it on the viewed row), so you can hop between jobs without leaving the viewer. `pgup`/`pgdn` scroll the transcript, `home` jumps to the top, and `end` returns to the bottom and resumes following (scrolling up pauses following and shows `· paused`).
+
+Opening a task agent instead clears the terminal scrollback and prints the agent's transcript (reasoning, tool activity, errors, and guidance) through the same native scrollback as the main session, with its own status bar showing the agent's model, mode, and live metrics; the navigator stays visible below it. The composer shows an agent-colored indicator while the page is open and steers the viewed agent: submitted text is queued into the agent's current turn, appears as a user block in its transcript, and is recorded as `User guidance` in the plain-text transcript surfaced by `job_output`. Slash commands and image input are rejected with an error in the transcript, and submissions bounce with a status-bar notice while the agent is queued, stopping, between turns, or finished. `esc` closes the page and restores the main transcript from memory; the steering draft is kept for the next visit. Approvals, prompts, and other popovers always close the agent page and render on the main page.
 
 `agents.stop-all` (default `ctrl+x ctrl+k`) stops every running agent at once.
 

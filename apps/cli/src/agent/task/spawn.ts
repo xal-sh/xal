@@ -18,7 +18,9 @@ import { createManagedWorktree, type ManagedWorktree } from "../../git/worktrees
 import { describeError } from "../../lib/error"
 import { compactPath } from "../../lib/path"
 import type { PermissionMode } from "../../permissions/types"
+import { redactText } from "../../secrets/redactor"
 import type { SessionToolContext } from "../../tools/types"
+import type { AgentEvent } from "../events"
 import { AgentSession } from "../session/session"
 import { activity, type ActivityState } from "./activity"
 import { driveTaskToQuiescence, type TaskDriveOutcome } from "./drive"
@@ -82,6 +84,30 @@ function childMode(access: TaskAccess, parentMode: PermissionMode): PermissionMo
   return access === "read" ? "plan" : parentMode
 }
 
+export interface AgentEventMulticast {
+  onEvent(listener: (event: AgentEvent) => void): () => void
+  emit(event: AgentEvent): void
+}
+
+export function createAgentEventMulticast(): AgentEventMulticast {
+  const listeners = new Set<(event: AgentEvent) => void>()
+  return {
+    onEvent: (listener) => {
+      listeners.add(listener)
+      return () => listeners.delete(listener)
+    },
+    emit: (event) => {
+      for (const listener of listeners) {
+        try {
+          listener(event)
+        } catch (error) {
+          console.error(redactText(`task agent event listener failed: ${describeError(error)}`))
+        }
+      }
+    },
+  }
+}
+
 function childPrompt(context: string, task: string): string {
   return `# Context\n${context}\n\n# Assignment\n${task}`
 }
@@ -93,6 +119,7 @@ function registerTask(
   state: ActivityState,
   cwd: () => string,
   child: () => AgentSession | undefined,
+  onEvent: (listener: (event: AgentEvent) => void) => () => void,
 ): void {
   registerBackgroundTask({
     kind: "agent",
@@ -102,11 +129,15 @@ function registerTask(
     startedAt: job.startedAt,
     role: item.isolation === "worktree" ? "task agent · worktree" : "task agent",
     model: ctx.session.model,
+    get mode() {
+      return child()?.currentMode ?? childMode(item.access, ctx.session.mode)
+    },
     get cwd() {
       return cwd()
     },
     childSessionId: () => child()?.id,
     send: (message) => sendAgentGuidance(job, message, "user") !== false,
+    onEvent,
     state: () =>
       job.done
         ? {
@@ -150,6 +181,7 @@ async function runTask(
   questions: ParentQuestionChannel,
   setChild: (child: AgentSession) => void,
   setCwd: (cwd: string) => void,
+  emitEvent: (event: AgentEvent) => void,
 ): Promise<void> {
   let acquired = false
   let timedOut = false
@@ -157,6 +189,7 @@ async function runTask(
   let worktree: ManagedWorktree | undefined
   let child: AgentSession | undefined
   let terminal: TaskTerminal | undefined
+  let unsubscribeEvents: (() => void) | undefined
   const record = (text: string): void => appendAgentTranscript(job, text)
   const cleanupFailure = (error: unknown): void => {
     const message = describeError(error)
@@ -224,6 +257,7 @@ async function runTask(
     })
     child = taskSession
     setChild(taskSession)
+    unsubscribeEvents = taskSession.subscribe(emitEvent)
     taskSession.setMode(childMode(item.access, ctx.session.mode))
     const abortChild = (): void => {
       taskSession.suppressAsyncDeliveries()
@@ -276,6 +310,7 @@ async function runTask(
       terminal = { outcome: { status: "failed" }, detail: `failed: ${message}` }
     }
   } finally {
+    unsubscribeEvents?.()
     beginAgentStop(job)
     questions.close("the task ended before the parent answered")
     if (deadline) clearTimeout(deadline)
@@ -306,6 +341,7 @@ async function runTask(
 export function spawnTask(item: TaskItem, context: string, ctx: SessionToolContext): BackgroundAgentJob {
   const controller = new AbortController()
   const agentSettings = settings().agents
+  const events = createAgentEventMulticast()
   let child: AgentSession | undefined
   let cwd = ctx.session.cwd
   const job = createAgentJob("agent", {
@@ -351,6 +387,7 @@ export function spawnTask(item: TaskItem, context: string, ctx: SessionToolConte
     state,
     () => cwd,
     () => child,
+    events.onEvent,
   )
   void runTask(
     job,
@@ -366,6 +403,7 @@ export function spawnTask(item: TaskItem, context: string, ctx: SessionToolConte
     (value) => {
       cwd = value
     },
+    events.emit,
   )
   return job
 }

@@ -120,7 +120,8 @@ export async function startTui(events: EventService, config: TuiConfig, options:
   })
   const unsubscribeTerminalBackground = renderer.subscribeOsc((sequence) => {
     const background = terminalBackground(sequence)
-    if (background && screen.scrollback.setTerminalBackground(background)) screen.scrollback.replay()
+    if (!background) return
+    if (screen.setTerminalBackground(background)) screen.replayActiveTranscript()
   })
   let paletteSignature = initialPalette ? buildTerminalPaletteSignature(initialPalette) : undefined
   const applyPalette = (palette: TerminalColors): void => {
@@ -129,8 +130,8 @@ export async function startTui(events: EventService, config: TuiConfig, options:
     paletteSignature = signature
     applyTerminalPalette(palette)
     renderer.setBackgroundColor(COLORS.background)
-    screen.scrollback.setTerminalBackground(COLORS.background)
-    screen.scrollback.replay()
+    screen.setTerminalBackground(COLORS.background)
+    screen.replayActiveTranscript()
   }
   renderer.on(CliRenderEvents.PALETTE, applyPalette)
   if (paletteError) {
@@ -163,11 +164,12 @@ export async function startTui(events: EventService, config: TuiConfig, options:
   let editing = false
   const syncLayout = (): void => {
     screen.composer.reflow()
+    screen.agentComposer.reflow()
     screen.syncFooter()
   }
   const replayLayout = (): void => {
     syncLayout()
-    screen.scrollback.reflow()
+    screen.replayActiveTranscript()
   }
   renderer.on(CliRenderEvents.RESIZE, () => {
     if (renderer.terminalWidth === lastWidth && renderer.terminalHeight === lastHeight) return
@@ -181,7 +183,7 @@ export async function startTui(events: EventService, config: TuiConfig, options:
     clearTimeout(replayTimer)
     replayTimer = setTimeout(() => {
       replayTimer = undefined
-      screen.scrollback.reflow()
+      screen.replayActiveTranscript()
     }, RESIZE_DEBOUNCE_MS)
   })
   const resetCommands = setTuiCommandActions({
@@ -250,7 +252,7 @@ export async function startTui(events: EventService, config: TuiConfig, options:
     }
     try {
       const command = externalEditorCommand()
-      const draft = screen.composer.draft()
+      const draft = screen.activeComposer.draft()
       const ignoreInterrupt = (): void => {}
       let suspended = false
       let text: string
@@ -275,7 +277,7 @@ export async function startTui(events: EventService, config: TuiConfig, options:
         }
       }
       if (comparableEditorText(text) !== comparableEditorText(draft.text)) {
-        screen.composer.replaceDraft({ ...draft, text }, draft)
+        screen.activeComposer.replaceDraft({ ...draft, text }, draft)
       }
       screen.syncFooter()
     } finally {

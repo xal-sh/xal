@@ -1,3 +1,5 @@
+import type { AgentEvent } from "../agent/events"
+import type { PermissionMode } from "../permissions/types"
 import { redactText } from "../secrets/redactor"
 
 export type BackgroundTaskState = { running: true } | { running: false; ok: boolean; detail: string }
@@ -42,9 +44,11 @@ export interface BackgroundAgentTask extends BackgroundTaskBase {
   kind: "agent"
   role: string
   model: string
+  mode: PermissionMode
   snapshot(): BackgroundAgentSnapshot
   childSessionId(): string | undefined
   send(message: string): boolean
+  onEvent?(listener: (event: AgentEvent) => void): () => void
 }
 
 export type BackgroundTask = BackgroundProcessTask | BackgroundAgentTask | BackgroundScheduleTask
