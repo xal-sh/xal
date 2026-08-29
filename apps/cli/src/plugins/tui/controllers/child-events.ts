@@ -142,9 +142,11 @@ export class ChildEventController {
         break
       case "turn_interrupted":
         this.transcript.append({ kind: "info", text: "Interrupted" })
+        this.statusBar.setTurnOutcome("interrupted")
         break
       case "turn_failed":
         this.transcript.append({ kind: "error", text: event.message })
+        this.statusBar.setTurnOutcome("failed")
         break
       case "error":
         this.transcript.append({ kind: "error", text: event.message })

@@ -602,7 +602,7 @@ export class Screen {
       this.openMainPage()
       return
     }
-    if (task.kind === "agent" && this.childStores.has(task.id)) {
+    if (task.kind === "agent") {
       this.openAgentPage(task)
       return
     }
@@ -665,7 +665,7 @@ export class Screen {
     this.agentComposer.focus()
   }
 
-  private openJobPage(task: BackgroundTask): void {
+  private openJobPage(task: Exclude<BackgroundTask, BackgroundAgentTask>): void {
     const previous = this.page
     this.page = { kind: "job" }
     if (previous.kind === "agent") {

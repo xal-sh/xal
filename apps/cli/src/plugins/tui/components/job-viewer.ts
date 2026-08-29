@@ -271,7 +271,7 @@ export class JobViewer {
     ])
   }
 
-  private metricsText(task: BackgroundTask): string {
+  private metricsText(task: Exclude<BackgroundTask, { kind: "agent" }>): string {
     const state = task.state()
     if (!state.running) return redactText(state.detail)
     switch (task.kind) {
@@ -279,14 +279,12 @@ export class JobViewer {
         return formatDuration(Date.now() - task.startedAt)
       case "schedule":
         return `${formatDuration(Math.max(0, task.dueAt - Date.now()))} left`
-      case "agent":
-        throw new Error("task agents render on the agent page, not the legacy viewer")
     }
   }
 
   refresh(): void {
     const task = this.task
-    if (!task) return
+    if (!task || task.kind === "agent") return
     const state = task.state()
     const width = Math.max(10, this.ctx.terminalWidth - HORIZONTAL_PADDING * 2)
     this.title.content = truncateToWidth(firstLine(redactText(task.title)), width)

@@ -257,17 +257,20 @@ describe("child event mapping", () => {
   })
 
   test("interrupts and failures become info and error blocks", () => {
-    expect(
-      run([
-        { type: "turn_interrupted" },
-        { type: "turn_failed", message: "provider exploded" },
-        { type: "error", message: "plain error" },
-      ]),
-    ).toEqual([
+    const recorded = recorder(false)
+    for (const event of [
+      { type: "turn_interrupted" },
+      { type: "turn_failed", message: "provider exploded" },
+      { type: "error", message: "plain error" },
+    ] satisfies AgentEvent[]) {
+      recorded.controller.handle(event)
+    }
+    expect(recorded.blocks).toEqual([
       { kind: "info", text: "Interrupted" },
       { kind: "error", text: "provider exploded" },
       { kind: "error", text: "plain error" },
     ])
+    expect(recorded.status).toEqual(["turn:interrupted", "turn:failed"])
   })
 
   test("status-bar-only and unreachable child events produce no blocks", () => {

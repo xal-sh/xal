@@ -148,8 +148,8 @@ export function bindKeys(renderer: CliRenderer, deps: KeymapDeps): void {
           return
         }
         if (screen.agentPageOpen) {
-          screen.activeComposer.clear()
-          return
+          if (screen.activeComposer.clear()) return
+          if (screen.tasks.closeViewer()) return
         }
         if (!screen.overlayVisible && screen.activeComposer.clear()) return
         handleInterrupt(binding)
