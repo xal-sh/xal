@@ -905,7 +905,9 @@ export class AgentSession {
     if (this.movingHistory || !this.turnActive || !this.acceptingQueuedInput) return false
     this.noteAgentActivity()
     this.queue.push(redactUserInput({ text, images: [] }))
-    if (this.providerRoundActive && this.abortController) interruptForSteering(this.abortController)
+    if ((this.providerRoundActive || this.state === "compacting") && this.abortController) {
+      interruptForSteering(this.abortController)
+    }
     return true
   }
 
@@ -947,7 +949,7 @@ export class AgentSession {
       })
       .catch((error) => {
         if (isAbortError(error) || controller.signal.aborted) {
-          this.emit({ type: "turn_interrupted" })
+          if (!isSteeringInterrupt(controller.signal)) this.emit({ type: "turn_interrupted" })
           return
         }
         failure = describeError(error)

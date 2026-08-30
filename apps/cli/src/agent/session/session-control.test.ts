@@ -174,6 +174,66 @@ describe("AgentSession control flow", () => {
     expect(observed.some((event) => event.type === "turn_interrupted")).toBe(false)
   })
 
+  test("steering interrupts automatic subagent compaction and continues with the guidance", async () => {
+    const entered = latch()
+    const blockedSummary: ProviderRound = async function* (request) {
+      entered.release()
+      await new Promise<void>((resolve, reject) => {
+        if (request.signal?.aborted) {
+          resolve()
+          return
+        }
+        const timeout = setTimeout(() => reject(new Error("compaction was not interrupted")), 1_000)
+        request.signal?.addEventListener(
+          "abort",
+          () => {
+            clearTimeout(timeout)
+            resolve()
+          },
+          { once: true },
+        )
+      })
+      if (!request.signal?.aborted) yield { type: "done" }
+      throw request.signal?.reason
+    }
+    const provider = new ScriptedProvider(
+      [
+        completedRound("s".repeat(1_000), { totalInputTokens: 90 }),
+        blockedSummary,
+        completedRound("Recovered summary"),
+        completedRound("Stopped and returned the compacted result."),
+      ],
+      200,
+      90,
+    )
+    const session = harness.createSession(provider, { kind: "subagent" })
+    const observed: AgentEvent[] = []
+
+    await runSettledTurn(session, { text: "Fill the context.", images: [] })
+    const running = runSettledTurn(session, { text: "Continue the work.", images: [] }, (event) => {
+      observed.push(event)
+    })
+    await entered.promise
+
+    expect(session.steer("Parent guidance:\nStop now and return the result.")).toBe(true)
+    const outcome = await running
+
+    expect(outcome).toEqual({
+      status: "completed",
+      response: "Stopped and returned the compacted result.",
+      usage: undefined,
+      context: undefined,
+    })
+    expect(provider.requests).toHaveLength(4)
+    expect(provider.requests[1]?.signal?.aborted).toBe(true)
+    expect(provider.requests[3]?.input).toContainEqual({
+      type: "user_message",
+      text: interjectionMessage("Parent guidance:\nStop now and return the result."),
+      images: [],
+    })
+    expect(observed.some((event) => event.type === "turn_interrupted")).toBe(false)
+  })
+
   test("hard interruption overrides a steering handoff before the provider settles", async () => {
     const entered = latch()
     const release = latch()
