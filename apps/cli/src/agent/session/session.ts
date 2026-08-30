@@ -68,7 +68,10 @@ import { runDirectShell, runTurn, type TurnHost, type TurnSummary } from "./turn
 import { ToolCallRunner, type ToolRunnerHost } from "./tool-runner"
 import {
   addUsage,
+  interruptForSteering,
   isAbortError,
+  isSteeringInterrupt,
+  supersedeSteeringInterrupt,
   type AgentSessionDeps,
   type AgentSessionState,
   type CompactionOutcome,
@@ -110,6 +113,7 @@ export class AgentSession {
   private readonly redoStack = new RedoStack()
   private readonly contextBudget = new ContextBudget()
   private providerRequests = 0
+  private providerRoundActive = false
   private tasks: TrackedTask[] = []
   private readonly listeners = new Set<(event: AgentEvent) => void>()
   private readonly recorder: SessionRecorder | undefined
@@ -901,11 +905,12 @@ export class AgentSession {
     if (this.movingHistory || !this.turnActive || !this.acceptingQueuedInput) return false
     this.noteAgentActivity()
     this.queue.push(redactUserInput({ text, images: [] }))
+    if (this.providerRoundActive && this.abortController) interruptForSteering(this.abortController)
     return true
   }
 
-  private startTurn(inputs: UserInput[]): void {
-    this.startPreparedTurn((signal) => this.acceptInputs(inputs, signal, false))
+  private startTurn(inputs: UserInput[], interjected = false): void {
+    this.startPreparedTurn((signal) => this.acceptInputs(inputs, signal, interjected))
   }
 
   private startBackgroundResultTurn(): boolean {
@@ -965,11 +970,21 @@ export class AgentSession {
     if (this.settlePause()) return
 
     if (controller.signal.aborted) {
-      this.failAgentQuestions("the parent turn was interrupted")
-      const active = this.goals.active()
-      if (active) this.goals.suspend(active.id, "interruption", "Goal automation was interrupted")
+      const steered = isSteeringInterrupt(controller.signal)
+      if (!steered) {
+        this.failAgentQuestions("the parent turn was interrupted")
+        const active = this.goals.active()
+        if (active) this.goals.suspend(active.id, "interruption", "Goal automation was interrupted")
+      }
       this.setState("idle")
-      if (!failure && this.promoteOnAbort && this.queue.first !== undefined && this.startNextQueued()) return
+      if (
+        !failure &&
+        (steered || this.promoteOnAbort) &&
+        this.queue.first !== undefined &&
+        this.startNextQueued(steered)
+      ) {
+        return
+      }
       this.queue.flush()
       this.settleBackgroundAgents()
       return
@@ -1164,7 +1179,7 @@ export class AgentSession {
       })
   }
 
-  private startNextQueued(): boolean {
+  private startNextQueued(interjected = false): boolean {
     const shell = this.queue.takeDirectShell()
     if (shell) {
       this.startDirectShell(shell)
@@ -1172,7 +1187,7 @@ export class AgentSession {
     }
     const inputs = this.queue.takePrompts()
     if (inputs.length === 0) return false
-    this.startTurn(inputs)
+    this.startTurn(inputs, interjected)
     return true
   }
 
@@ -1342,6 +1357,7 @@ export class AgentSession {
 
   interrupt(queued: "promote" | "flush" = "flush"): void {
     this.promoteOnAbort = queued === "promote"
+    supersedeSteeringInterrupt(this.abortController?.signal)
     this.abortController?.abort()
     this.interactions.resolveApproval({ decision: "deny", cause: "user" })
     this.interactions.resolveElicitation({ status: "rejected" })
@@ -1503,6 +1519,7 @@ export class AgentSession {
       profileId: () => this.selectedProfileId(),
       emit: (event) => this.emit(event),
       commitProviderRound: (items, turnUsage, request) => {
+        this.providerRoundActive = false
         for (const item of items) this.saveItem(item)
         this.contextBudget.commitProvider(
           items,
@@ -1515,7 +1532,10 @@ export class AgentSession {
         this.emit({ type: "context_updated", context: turnUsage })
       },
       redactOutputItem: redactProviderOutputItem,
-      onRequestStarted: () => this.recordProviderRequest(),
+      onRequestStarted: () => {
+        this.providerRoundActive = true
+        this.recordProviderRequest()
+      },
     }
   }
 

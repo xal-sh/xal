@@ -215,7 +215,9 @@ export class ToolCallRunner {
           continue
         }
 
-        const loop = signal.aborted ? "allow" : toolLoops.inspect(call)
+        const tool = this.host.availableTool(call.name)
+        const repeated = tool?.allowRepeatedCalls?.(call.args, { cwd: this.host.cwd() }) ?? false
+        const loop = signal.aborted || repeated ? "allow" : toolLoops.inspect(call)
         if (loop !== "allow") {
           outcomes[index] = this.loopOutcome(call, loop)
           if (loop === "stop") loopError = new Error(`turn stopped after repeated ${call.name} tool calls`)

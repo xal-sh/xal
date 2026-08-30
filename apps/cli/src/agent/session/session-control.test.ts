@@ -97,6 +97,119 @@ describe("AgentSession control flow", () => {
     expect(observed.filter((event) => event.type === "queue_flushed")).toHaveLength(0)
   })
 
+  test("allows tools that explicitly support identical repeated calls", async () => {
+    const toolName = `repeatable_probe_${crypto.randomUUID().replaceAll("-", "_")}`
+    let executions = 0
+    const tool: Tool = {
+      name: toolName,
+      description: "Wait for external activity",
+      parameters: { type: "object", additionalProperties: false },
+      title: () => "Wait for activity",
+      readOnly: () => true,
+      allowRepeatedCalls: () => true,
+      async execute() {
+        executions += 1
+        return { output: "Still waiting." }
+      },
+    }
+    const provider = new ScriptedProvider([
+      toolRound("wait-1", toolName, {}),
+      toolRound("wait-2", toolName, {}),
+      toolRound("wait-3", toolName, {}),
+      toolRound("wait-4", toolName, {}),
+      completedRound("Finished waiting."),
+    ])
+    const session = harness.createSession(provider)
+
+    registerTool(tool)
+    try {
+      const outcome = await runSettledTurn(session, { text: "Wait until the work finishes.", images: [] })
+
+      expect(outcome.status).toBe("completed")
+      expect(outcome.response).toBe("Finished waiting.")
+      expect(executions).toBe(4)
+    } finally {
+      unregisterTool(tool)
+    }
+  })
+
+  test("steering interrupts an active provider round and continues with the guidance", async () => {
+    const entered = latch()
+    const blockedRound: ProviderRound = async function* (request) {
+      entered.release()
+      await new Promise<void>((resolve) => {
+        if (request.signal?.aborted) {
+          resolve()
+          return
+        }
+        request.signal?.addEventListener("abort", () => resolve(), { once: true })
+      })
+      if (!request.signal?.aborted) yield { type: "done" }
+      throw request.signal?.reason
+    }
+    const provider = new ScriptedProvider([blockedRound, completedRound("Stopped and returned the result.")])
+    const session = harness.createSession(provider, { kind: "subagent" })
+    const observed: AgentEvent[] = []
+
+    const running = runSettledTurn(session, { text: "Inspect the repository.", images: [] }, (event) => {
+      observed.push(event)
+    })
+    await entered.promise
+
+    expect(session.steer("Parent guidance:\nStop now and return the result.")).toBe(true)
+    const outcome = await running
+
+    expect(outcome).toEqual({
+      status: "completed",
+      response: "Stopped and returned the result.",
+      usage: undefined,
+      context: undefined,
+    })
+    expect(provider.requests).toHaveLength(2)
+    expect(provider.requests[1]?.input.at(-1)).toEqual({
+      type: "user_message",
+      text: interjectionMessage("Parent guidance:\nStop now and return the result."),
+      images: [],
+    })
+    expect(observed.some((event) => event.type === "turn_interrupted")).toBe(false)
+  })
+
+  test("hard interruption overrides a steering handoff before the provider settles", async () => {
+    const entered = latch()
+    const release = latch()
+    const blockedRound: ProviderRound = async function* (request) {
+      entered.release()
+      await new Promise<void>((resolve) => {
+        if (request.signal?.aborted) {
+          resolve()
+          return
+        }
+        request.signal?.addEventListener("abort", () => resolve(), { once: true })
+      })
+      await release.promise
+      if (!request.signal?.aborted) yield { type: "done" }
+      throw request.signal?.reason
+    }
+    const provider = new ScriptedProvider([blockedRound, completedRound("Guidance should not run.")])
+    const session = harness.createSession(provider, { kind: "subagent" })
+    const observed: AgentEvent[] = []
+
+    const running = runSettledTurn(session, { text: "Inspect the repository.", images: [] }, (event) => {
+      observed.push(event)
+    })
+    await entered.promise
+
+    expect(session.steer("Parent guidance:\nStop now and return the result.")).toBe(true)
+    session.interrupt()
+    release.release()
+    const outcome = await running
+
+    expect(outcome).toEqual({ status: "interrupted", response: "" })
+    expect(provider.requests).toHaveLength(1)
+    expect(session.currentState).toBe("idle")
+    expect(observed.filter((event) => event.type === "turn_interrupted")).toHaveLength(1)
+  })
+
   test("resumes the interrupted work after answering a prompt queued mid-tool-run", async () => {
     const toolName = `resume_probe_${crypto.randomUUID().replaceAll("-", "_")}`
     const tool: Tool = {

@@ -79,6 +79,7 @@ interface ToolContract extends ToolDefinition {
   undo?(args: Record<string, unknown>, ctx: ToolCallContext): UndoAction
   sandboxed?(args: Record<string, unknown>, ctx: ToolCallContext): boolean
   concurrency?(args: Record<string, unknown>, ctx: ToolCallContext): ToolConcurrency
+  allowRepeatedCalls?(args: Record<string, unknown>, ctx: ToolCallContext): boolean
   permission?(args: Record<string, unknown>, ctx: ToolPermissionContext): ToolPermission
 }
 
