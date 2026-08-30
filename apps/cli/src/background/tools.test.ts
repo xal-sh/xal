@@ -41,8 +41,8 @@ test("returns before the deadline with an actionable supervision checkpoint", as
   const output = await collectAgentOutput(job, 60, new AbortController().signal)
 
   expect(output).toContain("turn cycles 0/24")
-  expect(output).toContain("Supervision checkpoint reached before the task deadline")
-  expect(output).toContain("job_extend")
+  expect(output).toContain("Supervision checkpoint reached before the configured task deadline")
+  expect(output).not.toContain("job_extend")
   expect(job.delivery).toBe("none")
 })
 

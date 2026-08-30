@@ -56,6 +56,7 @@ export class StatusBar {
   private turnElapsed: string | undefined
   private turnOutcome: TurnOutcome | undefined
   private model: string
+  private metrics: string | undefined
 
   constructor(
     ctx: RenderContext,
@@ -180,6 +181,11 @@ export class StatusBar {
     this.stopNoticeTimer()
     this.notice = redactText(notice)
     this.toggleSpinner(false)
+    this.render()
+  }
+
+  setMetrics(metrics: string | undefined): void {
+    this.metrics = metrics === undefined ? undefined : redactText(metrics)
     this.render()
   }
 
@@ -329,6 +335,7 @@ export class StatusBar {
     if (this.loading) {
       return new StyledText([paint(COLORS.agent, spinnerGlyph()), muted(` ${this.loading}`)])
     }
+    if (this.metrics) return new StyledText([muted(this.metrics)])
     const state = this.stateContent()
     if (state) return state
     if (this.turnElapsed && this.turnOutcome === "completed") {

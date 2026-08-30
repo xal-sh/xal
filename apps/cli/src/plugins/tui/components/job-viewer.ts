@@ -1,13 +1,5 @@
-import {
-  StyledText,
-  TextAttributes,
-  type BoxRenderable,
-  type CliRenderer,
-  type KeyEvent,
-  type TextRenderable,
-} from "@opentui/core"
+import { StyledText, TextAttributes, type BoxRenderable, type CliRenderer, type TextRenderable } from "@opentui/core"
 import type { BackgroundTask } from "../../../background/registry"
-import { formatTokens } from "../../../lib/format"
 import { compactPath } from "../../../lib/path"
 import { redactText, secretsVersion } from "../../../secrets/redactor"
 import { formatDuration } from "../lib/format"
@@ -69,21 +61,14 @@ export class JobViewer {
   private readonly role: TextRenderable
   private readonly metrics: TextRenderable
   private readonly body: BoxRenderable
-  private readonly guidance: BoxRenderable
-  private readonly guidanceText: TextRenderable
   private readonly hint: TextRenderable
   private readonly lines: TextRenderable[] = []
   private task: BackgroundTask | undefined
   private currentHeight = 0
   private cache: TranscriptCache | undefined
   private scrollFromBottom = 0
-  private guidanceValue = ""
-  private guidanceActive = false
 
-  constructor(
-    private readonly ctx: CliRenderer,
-    private readonly notice: (message: string) => void,
-  ) {
+  constructor(private readonly ctx: CliRenderer) {
     this.view = column(ctx, {
       visible: false,
       paddingLeft: HORIZONTAL_PADDING,
@@ -118,14 +103,6 @@ export class JobViewer {
       ...border(COLORS.border),
     })
     this.view.add(this.body)
-    this.guidance = row(ctx, { height: 1, visible: false })
-    this.guidance.add(label(ctx, { content: `${terminalGlyph("❯", ">")} steer: `, flexShrink: 0, color: COLORS.agent }))
-    this.guidanceText = label(ctx, { content: "", flexGrow: 1, flexShrink: 1, minWidth: 1 })
-    this.guidance.add(this.guidanceText)
-    this.guidance.add(
-      label(ctx, { content: "Enter send · Esc cancel", flexShrink: 0, marginLeft: 1, color: COLORS.faint }),
-    )
-    this.view.add(this.guidance)
     this.hint = label(ctx, {
       content: "↑↓ line · PgUp/PgDn page · Home/End jump · Esc agents",
       height: 1,
@@ -154,21 +131,10 @@ export class JobViewer {
     this.cache = undefined
     this.scrollFromBottom = 0
     this.view.visible = false
-    this.dismissGuidance()
-  }
-
-  get steerable(): boolean {
-    return this.task?.kind === "agent" && this.task.state().running && this.task.childSessionId() !== undefined
   }
 
   scrollKey(name: string): boolean {
     if (!this.task) return false
-    if (name === "i" && this.steerable && !this.guidanceActive) {
-      this.guidanceActive = true
-      this.guidanceValue = ""
-      this.syncGuidance()
-      return true
-    }
     const page = Math.max(1, this.lines.length - 1)
     switch (name) {
       case "up":
@@ -220,64 +186,6 @@ export class JobViewer {
       this.body.add(added)
       this.lines.push(added)
     }
-  }
-
-  private syncGuidance(): void {
-    this.guidance.visible = this.guidanceActive
-    this.hint.visible = !this.guidanceActive
-    this.guidanceText.content = this.guidanceValue || new StyledText([muted("type guidance for this agent")])
-    this.layoutBody()
-    this.refresh()
-  }
-
-  private dismissGuidance(): void {
-    if (!this.guidanceActive) return
-    this.guidanceActive = false
-    this.guidanceValue = ""
-    this.guidance.visible = false
-    this.hint.visible = true
-    if (this.task) {
-      this.layoutBody()
-      this.refresh()
-    }
-  }
-
-  handleInputKey(key: KeyEvent): boolean {
-    if (!this.guidanceActive || !this.task) return false
-    if (key.name === "escape") {
-      this.dismissGuidance()
-      return true
-    }
-    if (key.name === "return" || key.name === "enter") {
-      const task = this.task
-      const message = this.guidanceValue.trim()
-      if (!message || task.kind !== "agent") {
-        this.dismissGuidance()
-        return true
-      }
-      if (!task.send(message)) {
-        this.notice(`${task.id} did not accept the guidance`)
-        return true
-      }
-      this.notice(`Guidance queued for ${task.id}`)
-      this.dismissGuidance()
-      return true
-    }
-    if (key.name === "backspace" || key.name === "delete") {
-      this.guidanceValue = Array.from(this.guidanceValue).slice(0, -1).join("")
-      this.syncGuidance()
-      return true
-    }
-    if (key.ctrl && !key.meta && !key.option && !key.shift && !key.super && !key.hyper && key.name === "u") {
-      this.guidanceValue = ""
-      this.syncGuidance()
-      return true
-    }
-    if (key.ctrl || key.meta || key.option || key.super || key.hyper) return false
-    if (!key.sequence || /[\u0000-\u001f\u007f]/.test(key.sequence)) return true
-    this.guidanceValue += key.sequence
-    this.syncGuidance()
-    return true
   }
 
   private appendRows(cache: TranscriptCache, text: string): void {
@@ -356,48 +264,31 @@ export class JobViewer {
 
   private header(task: BackgroundTask, running: boolean, ok: boolean): void {
     const glyph = paint(running ? COLORS.agent : ok ? COLORS.success : COLORS.error, running ? "● " : ok ? "✓ " : "x ")
-    switch (task.kind) {
-      case "agent":
-        this.role.content = new StyledText([
-          glyph,
-          paint(COLORS.foreground, redactText(`${task.id} · ${task.role}`)),
-          muted(redactText(` · ${task.model} · ${compactPath(task.cwd)}`)),
-        ])
-        return
-      case "process":
-      case "schedule":
-        this.role.content = new StyledText([
-          glyph,
-          paint(COLORS.foreground, task.id),
-          muted(redactText(` · ${compactPath(task.cwd)}`)),
-        ])
-        return
-    }
+    this.role.content = new StyledText([
+      glyph,
+      paint(COLORS.foreground, task.id),
+      muted(redactText(` · ${compactPath(task.cwd)}`)),
+    ])
   }
 
-  private metricsText(task: BackgroundTask): string {
+  private metricsText(task: Exclude<BackgroundTask, { kind: "agent" }>): string {
     const state = task.state()
     if (!state.running) return redactText(state.detail)
-    if (task.kind === "process") return formatDuration(Date.now() - task.startedAt)
-    if (task.kind === "schedule") return `${formatDuration(Math.max(0, task.dueAt - Date.now()))} left`
-    const snapshot = task.snapshot()
-    if (snapshot.queued) return `queued ${formatDuration(snapshot.queuedMs)}`
-    if (snapshot.stopping) return "stopping"
-    const requests = ` · ${snapshot.providerRequests} provider requests`
-    const tokens = snapshot.contextTokens ? ` · ↓ ${formatTokens(snapshot.contextTokens)} tokens` : ""
-    const turns = ` · turn cycle ${snapshot.completedTurns}/${snapshot.turnBudget} (${snapshot.turnLimit} max)`
-    const remaining = snapshot.remainingMs === undefined ? "" : ` · ${formatDuration(snapshot.remainingMs)} left`
-    return `${formatDuration(snapshot.elapsedMs)}${requests}${tokens}${turns}${remaining} · idle ${formatDuration(snapshot.idleMs)}`
+    switch (task.kind) {
+      case "process":
+        return formatDuration(Date.now() - task.startedAt)
+      case "schedule":
+        return `${formatDuration(Math.max(0, task.dueAt - Date.now()))} left`
+    }
   }
 
   refresh(): void {
     const task = this.task
-    if (!task) return
+    if (!task || task.kind === "agent") return
     const state = task.state()
     const width = Math.max(10, this.ctx.terminalWidth - HORIZONTAL_PADDING * 2)
     this.title.content = truncateToWidth(firstLine(redactText(task.title)), width)
     this.header(task, state.running, !state.running && state.ok)
-    this.hint.content = `↑↓ line · PgUp/PgDn page · Home/End jump${this.steerable ? " · i steer" : ""} · Esc tasks`
     const cache = this.syncCache(task, width)
     const partialRows = cache.partial ? wrapLine(sanitize(cache.partial), width) : []
     const renderedRowCount = cache.rowCount + partialRows.length
@@ -406,8 +297,7 @@ export class JobViewer {
     }
     cache.renderedRowCount = renderedRowCount
     const all = partialRows.length > 0 ? [...cache.rows, ...partialRows] : cache.rows
-    const fallback = task.kind === "agent" ? task.snapshot().activity : "(no output yet)"
-    const filled = all.length > 0 ? all : [redactText(fallback)]
+    const filled = all.length > 0 ? all : ["(no output yet)"]
     this.scrollFromBottom = Math.min(this.scrollFromBottom, Math.max(0, filled.length - this.lines.length))
     const end = filled.length - this.scrollFromBottom
     const visible = filled.slice(Math.max(0, end - this.lines.length), end)

@@ -1,5 +1,7 @@
+import { effectiveAutoCompactTokenLimit } from "../agent/session/context-budget"
 import { registerCommand } from "../commands/registry"
 import type { Command, CommandContext } from "../commands/types"
+import { saveCompactionLimit } from "../config/compaction-limit"
 import {
   createProfile,
   deleteProfile,
@@ -237,8 +239,8 @@ const logoutCommand: Command = {
   },
 }
 
-function contextWindowLabel(tokens: number): string {
-  if (tokens === 1_000_000) return "1M"
+function tokenLabel(tokens: number): string {
+  if (tokens >= 1_000_000) return `${Number((tokens / 1_000_000).toFixed(1))}M`
   return `${Math.round(tokens / 1_000)}K`
 }
 
@@ -264,7 +266,7 @@ const contextWindowCommand: Command = {
 
     const selected = await ctx.select({
       options: modelInfo.contextWindows.map((contextWindow, index, options) => ({
-        label: contextWindowLabel(contextWindow),
+        label: tokenLabel(contextWindow),
         detail:
           index === 0 ? "model default" : index === options.length - 1 ? "model maximum" : "custom context window",
         note: contextWindow === modelInfo.contextWindow ? "current" : undefined,
@@ -287,6 +289,58 @@ const contextWindowCommand: Command = {
     }
     await saveContextWindow(provider, modelInfo.id, selected)
     ctx.session.contextWindowChanged()
+  },
+}
+
+const compactionLimitCommand: Command = {
+  name: "compaction-limit",
+  describe: "choose when context is compacted for the current model",
+  async run(args, ctx) {
+    if (args.length > 0) throw new Error("usage: /compaction-limit")
+    if (ctx.session.currentState !== "idle") {
+      ctx.print("cannot change compaction limit while a turn is running")
+      return
+    }
+
+    const profileId = ctx.session.currentProfileId
+    if (!profileId) throw new Error("no active profile; run /connect first")
+    const provider = ctx.session.currentProvider
+    const model = ctx.session.currentModel
+    const modelInfo = await findModel(provider, profileId, model)
+    const contextWindow = modelInfo?.contextWindow
+    if (!modelInfo || contextWindow === undefined) {
+      ctx.print(`${model} does not have a known context window; compaction limits are unavailable`)
+      return
+    }
+
+    const effectiveLimit = effectiveAutoCompactTokenLimit(contextWindow, modelInfo.autoCompactTokenLimit)!
+    const defaultLimit = effectiveAutoCompactTokenLimit(contextWindow)!
+    const options = [...[0.5, 0.6, 0.7, 0.8].map((ratio) => Math.floor(contextWindow * ratio)), effectiveLimit]
+      .filter((limit, index, limits) => limit > 0 && limits.indexOf(limit) === index)
+      .sort((left, right) => left - right)
+    const selected = await ctx.select({
+      options: options.map((limit) => ({
+        label: tokenLabel(limit),
+        detail: `${Math.round((limit / contextWindow) * 100)}% of ${tokenLabel(contextWindow)} context window${limit === defaultLimit ? " · Xal default maximum" : ""}`,
+        note: limit === effectiveLimit ? "current" : undefined,
+        active: limit === effectiveLimit,
+        value: limit,
+      })),
+    })
+    if (selected === undefined || selected === effectiveLimit) return
+    if (ctx.session.currentState !== "idle") {
+      ctx.print("cannot change compaction limit while a turn is running")
+      return
+    }
+    if (
+      ctx.session.currentProvider.id !== provider.id ||
+      ctx.session.currentProfileId !== profileId ||
+      ctx.session.currentModel !== model
+    ) {
+      ctx.print("active model changed; run /compaction-limit again")
+      return
+    }
+    await saveCompactionLimit(provider, modelInfo.id, selected)
   },
 }
 
@@ -342,5 +396,6 @@ export function registerProviderCommands(): void {
   registerCommand(profilesCommand)
   registerCommand(logoutCommand)
   registerCommand(contextWindowCommand)
+  registerCommand(compactionLimitCommand)
   registerCommand(thinkingCommand)
 }

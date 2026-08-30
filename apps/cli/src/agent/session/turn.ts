@@ -10,7 +10,7 @@ import { ToolLoopDetector } from "./loop-detection"
 import type { OutputContract } from "./output-contract"
 import { directShellCommand, interjectionResumeMessage } from "./queue"
 import { streamProviderTurn, type StreamRoundHost } from "./stream"
-import type { TurnUsage } from "./types"
+import { isSteeringInterrupt, type TurnUsage } from "./types"
 import { ToolCallRunner, type PreparedToolCall, type ToolCallEntry, type ToolCallOutcome } from "./tool-runner"
 
 export interface TurnHost {
@@ -67,7 +67,7 @@ export async function runTurn(
     if (host.drainBackgroundResults()) toolLoops.reset()
     if (host.drainAgentQuestions()) toolLoops.reset()
     if (signal.aborted) {
-      host.emit({ type: "turn_interrupted" })
+      if (!isSteeringInterrupt(signal)) host.emit({ type: "turn_interrupted" })
       return
     }
     if (host.paused()) return
@@ -165,7 +165,7 @@ export async function runTurn(
     if (contract?.exhausted) throw contract.failure()
 
     if (signal.aborted) {
-      host.emit({ type: "turn_interrupted" })
+      if (!isSteeringInterrupt(signal)) host.emit({ type: "turn_interrupted" })
       return
     }
     if (host.restartRequested()) {

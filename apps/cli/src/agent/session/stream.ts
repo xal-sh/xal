@@ -11,7 +11,7 @@ import type { Provider, ProviderOutputItem, StreamRequest, Usage } from "../../p
 import { createRedactedStream, type RedactedStream } from "../../secrets/redactor"
 import type { AgentEvent } from "../events"
 import { OutputLoopDetector, type OutputLoop } from "./loop-detection"
-import { isAbortError } from "./types"
+import { isAbortError, isSteeringInterrupt } from "./types"
 import type { SessionKind } from "../types"
 
 const MAX_PROVIDER_ATTEMPTS = 6
@@ -122,7 +122,7 @@ export async function streamProviderTurn(
       if (isAbortError(error) || signal.aborted) {
         host.buffer.flush()
         host.commitProviderRound(round.items, round.usage, request)
-        host.emit({ type: "turn_interrupted" })
+        if (!isSteeringInterrupt(signal)) host.emit({ type: "turn_interrupted" })
         return undefined
       }
       const outputLoop = error instanceof OutputLoopError
@@ -151,7 +151,7 @@ export async function streamProviderTurn(
         await sleep(delayMs, undefined, { signal })
       } catch (waitError) {
         if (!isAbortError(waitError) && !signal.aborted) throw waitError
-        host.emit({ type: "turn_interrupted" })
+        if (!isSteeringInterrupt(signal)) host.emit({ type: "turn_interrupted" })
         return undefined
       }
     }

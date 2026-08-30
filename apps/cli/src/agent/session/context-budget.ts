@@ -3,7 +3,7 @@ import { occupiedContext } from "../../providers/types"
 import type { ProviderOutputItem, StreamRequest, Usage } from "../../providers/types"
 import { activeHistory, directShellMessage, type HistoryItem } from "../history"
 
-export const DEFAULT_AUTO_COMPACT_RATIO = 0.9
+export const DEFAULT_AUTO_COMPACT_RATIO = 0.8
 
 export function effectiveAutoCompactTokenLimit(
   contextWindow: number | undefined,

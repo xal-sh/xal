@@ -50,9 +50,10 @@ export interface Settings {
   pluginConfig: Record<string, Record<string, unknown>>
   thinking: Record<string, Record<string, ThinkingEffort>>
   contextWindows: Record<string, Record<string, number>>
+  compactionLimits: Record<string, Record<string, number>>
 }
 
-const AGENT_DEFAULTS: AgentSettings = { maxConcurrent: 4, timeoutMinutes: 10, maxTurns: 24 }
+const AGENT_DEFAULTS: AgentSettings = { maxConcurrent: 4, timeoutMinutes: 0, maxTurns: 24 }
 
 let current: Settings = {
   plugins: [],
@@ -65,6 +66,7 @@ let current: Settings = {
   pluginConfig: {},
   thinking: {},
   contextWindows: {},
+  compactionLimits: {},
 }
 
 export function settings(): Settings {
@@ -80,6 +82,30 @@ export async function saveSettings(patch: Partial<Settings>): Promise<void> {
   const path = userConfigPath()
   const [user, project] = await Promise.all([readSettingsFile(path), readProjectSettings()])
   const nextUser = mergeSettings(user, { ...patch })
+  const next = parseSettings(mergeSettings(nextUser, project))
+  await writeSecureJson(path, nextUser)
+  current = next
+}
+
+export async function saveProviderModelNumber(
+  field: "contextWindows" | "compactionLimits",
+  provider: string,
+  model: string,
+  value: number,
+): Promise<void> {
+  const path = userConfigPath()
+  const [user, project] = await Promise.all([readSettingsFile(path), readProjectSettings()])
+  const section = sectionRecord(user, field)
+  const providerValues = section[provider]
+  if (providerValues !== undefined && !isRecord(providerValues)) {
+    throw new Error(`${field}.${provider} must be an object`)
+  }
+  const nextUser = mergeSettings(user, {
+    [field]: {
+      ...section,
+      [provider]: { ...providerValues, [model]: strictPositiveInteger(value, `${field}.${provider}.${model}`) },
+    },
+  })
   const next = parseSettings(mergeSettings(nextUser, project))
   await writeSecureJson(path, nextUser)
   current = next
@@ -210,6 +236,15 @@ function parseSettings(raw: Record<string, unknown>): Settings {
     }
     contextWindows[provider] = windows
   }
+  const compactionLimits: Record<string, Record<string, number>> = {}
+  for (const [provider, models] of Object.entries(sectionRecord(raw, "compactionLimits"))) {
+    if (!isRecord(models)) throw new Error(`compactionLimits.${provider} must be an object`)
+    const limits: Record<string, number> = {}
+    for (const [model, value] of Object.entries(models)) {
+      limits[model] = strictPositiveInteger(value, `compactionLimits.${provider}.${model}`)
+    }
+    compactionLimits[provider] = limits
+  }
   return {
     plugins,
     provider: asString(raw.provider),
@@ -240,7 +275,7 @@ function parseSettings(raw: Record<string, unknown>): Settings {
         agents.timeoutMinutes,
         "agents.timeoutMinutes",
         AGENT_DEFAULTS.timeoutMinutes,
-        1,
+        0,
         60,
       ),
       maxTurns: strictBoundedInteger(agents.maxTurns, "agents.maxTurns", AGENT_DEFAULTS.maxTurns, 1, 100),
@@ -248,5 +283,6 @@ function parseSettings(raw: Record<string, unknown>): Settings {
     pluginConfig,
     thinking,
     contextWindows,
+    compactionLimits,
   }
 }

@@ -39,6 +39,7 @@ function agentTask(id: string, state: BackgroundTaskState): BackgroundAgentTask 
     cwd: "/tmp",
     role: "task agent",
     model: "test",
+    mode: "plan",
     state: () => state,
     output: () => "",
     stop: async () => {},

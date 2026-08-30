@@ -19,28 +19,29 @@ Both files are optional and must contain a JSON object when present. Objects mer
 
 A project-root `.mcp.json` is a discovery source rather than a third configuration layer. On interactive launch, Xal can use its new MCP server names for the current process or copy them into either configuration file. Existing Xal server names are not overwritten. See [Project `.mcp.json` discovery](/docs/integrations#project-mcpjson-discovery) for the accepted schema and launch choices.
 
-Commands that save model, thinking, context-window, or TUI display preferences write the user file. Xal then recomputes the effective configuration, and any project override remains active. Importing discovered MCP servers and deleting servers from `/mcp` are source-aware exceptions: project choices update the project file, global choices update the user file, and deletion updates the file that supplied the effective server.
+Commands that save model, thinking, context-window, compaction-limit, or TUI display preferences write the user file. Xal then recomputes the effective configuration, and any project override remains active. Importing discovered MCP servers and deleting servers from `/mcp` are source-aware exceptions: project choices update the project file, global choices update the user file, and deletion updates the file that supplied the effective server.
 
 Global memory is stored at `<app-home>/MEMORY.md`. On Unix, Xal creates it with mode `0600` and rejects broader permissions. Windows does not expose an equivalent mode through the filesystem API, so Xal relies on the inherited ACL of `<app-home>`. If the app home is overridden on Windows, its directory must be private to the current user.
 
 ## Top-level options
 
-| Option           | Type       | Default                  | Details                                                                     |
-| ---------------- | ---------- | ------------------------ | --------------------------------------------------------------------------- |
-| `plugins`        | `string[]` | `[]`                     | Additional modules described in [Plugins and hooks](/docs/plugins).         |
-| `provider`       | `string`   | Last registered provider | Provider ID or alias used for new sessions.                                 |
-| `profile`        | `string`   | Selected connection      | Internal ID of the named provider profile used for new sessions.            |
-| `model`          | `string`   | Provider default         | Model ID used for new sessions.                                             |
-| `ui`             | `string`   | `"tui"`                  | UI ID started when Xal runs without a command.                              |
-| `mode`           | `string`   | `"normal"`               | Permission mode used for new TUI and headless sessions.                     |
-| `permissions`    | `object`   | `{}`                     | Global rules described in [Permissions and security](/docs/permissions).    |
-| `modes`          | `object`   | `{}`                     | [Custom permission modes](/docs/permissions#custom-modes) keyed by name.    |
-| `goal`           | `object`   | `{}`                     | Evaluator models described in [Goals](/docs/goals).                         |
-| `redaction`      | `object`   | `{}`                     | [Sensitive values](/docs/permissions#redaction) to redact.                  |
-| `agents`         | `object`   | `{}`                     | Limits described in [Background work](/docs/background-work#configuration). |
-| `pluginConfig`   | `object`   | `{}`                     | Configuration keyed by plugin name.                                         |
-| `thinking`       | `object`   | `{}`                     | Thinking effort keyed by provider ID and model ID.                          |
-| `contextWindows` | `object`   | `{}`                     | Context-window choices keyed by provider ID and model ID.                   |
+| Option             | Type       | Default                  | Details                                                                     |
+| ------------------ | ---------- | ------------------------ | --------------------------------------------------------------------------- |
+| `plugins`          | `string[]` | `[]`                     | Additional modules described in [Plugins and hooks](/docs/plugins).         |
+| `provider`         | `string`   | Last registered provider | Provider ID or alias used for new sessions.                                 |
+| `profile`          | `string`   | Selected connection      | Internal ID of the named provider profile used for new sessions.            |
+| `model`            | `string`   | Provider default         | Model ID used for new sessions.                                             |
+| `ui`               | `string`   | `"tui"`                  | UI ID started when Xal runs without a command.                              |
+| `mode`             | `string`   | `"normal"`               | Permission mode used for new TUI and headless sessions.                     |
+| `permissions`      | `object`   | `{}`                     | Global rules described in [Permissions and security](/docs/permissions).    |
+| `modes`            | `object`   | `{}`                     | [Custom permission modes](/docs/permissions#custom-modes) keyed by name.    |
+| `goal`             | `object`   | `{}`                     | Evaluator models described in [Goals](/docs/goals).                         |
+| `redaction`        | `object`   | `{}`                     | [Sensitive values](/docs/permissions#redaction) to redact.                  |
+| `agents`           | `object`   | `{}`                     | Limits described in [Background work](/docs/background-work#configuration). |
+| `pluginConfig`     | `object`   | `{}`                     | Configuration keyed by plugin name.                                         |
+| `thinking`         | `object`   | `{}`                     | Thinking effort keyed by provider ID and model ID.                          |
+| `contextWindows`   | `object`   | `{}`                     | Context-window choices keyed by provider ID and model ID.                   |
+| `compactionLimits` | `object`   | `{}`                     | Auto-compaction limits keyed by provider ID and model ID.                   |
 
 The `profile` value is managed by `/connect` and `/model`. Profile names remain user-facing and may be renamed without changing this ID.
 
@@ -95,6 +96,27 @@ Context-window preferences use the same provider and model keys:
 
 Use `/context-window` to save this preference for the current model. The command is available when a provider advertises multiple windows. Provider entries must be objects, and each model value must be a positive integer. A saved value that is no longer offered is ignored in favor of the model default.
 
+## Compaction limits
+
+Automatic-compaction preferences use fixed token counts for each provider and canonical model:
+
+```json
+{
+  "compactionLimits": {
+    "openai-chatgpt": {
+      "gpt-5.6-terra": 180000
+    },
+    "anthropic": {
+      "claude-opus-4-6": 140000
+    }
+  }
+}
+```
+
+Use `/compaction-limit` to choose a context-relative limit for the active model. The command offers fixed token values at 50%, 60%, 70%, and 80% of the active context window and saves the selected absolute value under the canonical model ID. It is available only when the model has a known context window.
+
+Provider entries must be objects, and each model value must be a positive integer. A saved value takes precedence over a provider-advertised limit, but every effective limit is capped at 80% of the active context window. This cap also keeps a stale value safe when `/context-window` changes the model's active window.
+
 ## Combined example
 
 Every option is optional. This example shows how the top-level sections fit together. Each linked feature page documents its complete nested schema.
@@ -124,7 +146,7 @@ Every option is optional. This example shows how the top-level sections fit toge
   },
   "agents": {
     "maxConcurrent": 4,
-    "timeoutMinutes": 10,
+    "timeoutMinutes": 0,
     "maxTurns": 24
   },
   "thinking": {
@@ -135,6 +157,11 @@ Every option is optional. This example shows how the top-level sections fit toge
   "contextWindows": {
     "openai-chatgpt": {
       "gpt-5.6-terra": 600000
+    }
+  },
+  "compactionLimits": {
+    "openai-chatgpt": {
+      "gpt-5.6-terra": 180000
     }
   },
   "pluginConfig": {

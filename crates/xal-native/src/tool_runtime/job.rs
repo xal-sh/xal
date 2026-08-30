@@ -181,16 +181,14 @@ fn agent_status(request: &Map<String, Value>) -> napi::Result<String> {
         String::new()
     } else if let Some(deadline) = request.get("deadlineAt").and_then(Value::as_i64) {
         format!(" · deadline in {}", duration(deadline - now))
+    } else if let Some(timeout) = request
+        .get("timeoutMs")
+        .and_then(Value::as_i64)
+        .filter(|timeout| *timeout > 0)
+    {
+        format!(" · runtime budget {}", duration(timeout))
     } else {
-        format!(
-            " · runtime budget {}",
-            duration(
-                request
-                    .get("timeoutMs")
-                    .and_then(Value::as_i64)
-                    .unwrap_or(0)
-            )
-        )
+        String::new()
     };
     let task = required_string(request, "task")?;
     Ok(format!(
@@ -204,7 +202,7 @@ pub(super) fn agent_output(value: &Value) -> napi::Result<Value> {
     if request.get("done").and_then(Value::as_bool) != Some(true) {
         let mut output = agent_status(request)?;
         if request.get("checkpoint").and_then(Value::as_bool) == Some(true) {
-            output.push_str("\nSupervision checkpoint reached before the task deadline. Use job_status, then job_extend to add time or job_kill to stop it before waiting again.");
+            output.push_str("\nSupervision checkpoint reached before the configured task deadline. Use job_status, then job_kill to stop it or wait again.");
         }
         return Ok(json!({ "output": output }));
     }
@@ -373,51 +371,17 @@ fn extension(value: Option<&Value>, field: &str, maximum: i64) -> napi::Result<i
 pub(super) fn job_extend_prepare(value: &Value) -> napi::Result<Value> {
     let request = object(value)?;
     let id = required_string(request, "id")?;
-    let minutes = extension(request.get("minutes"), "minutes", MAX_EXTENSION_MINUTES)?;
     let turns = extension(request.get("turns"), "turns", MAX_EXTENSION_TURNS)?;
-    if minutes == 0 && turns == 0 {
-        return Err(invalid("minutes or turns is required"));
+    if turns == 0 {
+        return Err(invalid("turns is required"));
     }
-    Ok(json!({ "id": id, "minutes": minutes, "turns": turns }))
+    Ok(json!({ "id": id, "turns": turns }))
 }
 
 pub(super) fn job_extend_finalize(value: &Value) -> napi::Result<Value> {
     let request = object(value)?;
     let id = required_string(request, "id")?;
-    let minutes = request.get("minutes").and_then(Value::as_i64).unwrap_or(0);
     let turns = request.get("turns").and_then(Value::as_i64).unwrap_or(0);
-    let added = [
-        if minutes > 0 {
-            format!("{minutes}m")
-        } else {
-            String::new()
-        },
-        if turns > 0 {
-            format!("{turns} turns")
-        } else {
-            String::new()
-        },
-    ]
-    .into_iter()
-    .filter(|part| !part.is_empty())
-    .collect::<Vec<_>>()
-    .join(" and ");
-    let now = request
-        .get("now")
-        .and_then(Value::as_i64)
-        .ok_or_else(|| invalid("now is required"))?;
-    let time = match request.get("deadlineAt").and_then(Value::as_i64) {
-        Some(deadline) => format!("{} until deadline", duration(deadline - now)),
-        None => format!(
-            "{} runtime when it starts",
-            duration(
-                request
-                    .get("timeoutMs")
-                    .and_then(Value::as_i64)
-                    .unwrap_or(0)
-            )
-        ),
-    };
     let completed = request
         .get("completedTurns")
         .and_then(Value::as_u64)
@@ -431,7 +395,7 @@ pub(super) fn job_extend_finalize(value: &Value) -> napi::Result<Value> {
         .and_then(Value::as_u64)
         .unwrap_or(0);
     Ok(
-        json!({ "output": format!("Extended {id} by {added}. New budget: {completed}/{budget} turns (limit {limit}); {time}.") }),
+        json!({ "output": format!("Extended {id} by {turns} turns. New budget: {completed}/{budget} turns (limit {limit}).") }),
     )
 }
 
@@ -464,7 +428,9 @@ pub(super) fn job_send_finalize(value: &Value) -> napi::Result<Value> {
 
 #[cfg(test)]
 mod tests {
-    use super::{job_kill, job_send_finalize, job_status, run};
+    use super::{
+        job_extend_finalize, job_extend_prepare, job_kill, job_send_finalize, job_status, run,
+    };
 
     #[test]
     fn formats_scheduled_job_status() {
@@ -480,6 +446,32 @@ mod tests {
         )
         .unwrap();
         assert!(stopped.contains("finished after stop was requested"));
+    }
+
+    #[test]
+    fn extends_only_turn_budgets() {
+        let prepared = run(
+            r#"{"id":"child-1","turns":10}"#.to_owned(),
+            job_extend_prepare,
+        )
+        .unwrap();
+        assert_eq!(prepared, r#"{"id":"child-1","turns":10}"#);
+        assert!(
+            run(
+                r#"{"id":"child-1","minutes":10}"#.to_owned(),
+                job_extend_prepare,
+            )
+            .is_err()
+        );
+
+        let finalized = run(
+            r#"{"id":"child-1","turns":10,"completedTurns":2,"turnBudget":34,"turnLimit":51}"#
+                .to_owned(),
+            job_extend_finalize,
+        )
+        .unwrap();
+        assert!(finalized.contains("Extended child-1 by 10 turns"));
+        assert!(!finalized.contains("deadline"));
     }
 
     #[test]

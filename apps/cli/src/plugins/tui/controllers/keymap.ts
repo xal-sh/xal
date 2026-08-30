@@ -6,6 +6,7 @@ import { nextPermissionMode } from "../../../permissions/modes"
 import { hasPromotion, requestBackground } from "../../../background/promotion"
 import type { Screen } from "../screen"
 import type { ResolvedShortcuts, ShortcutAction, ShortcutStroke } from "../shortcuts"
+import type { StatusBar } from "../components/status-bar"
 
 const QUIT_WINDOW_MS = 2000
 
@@ -46,6 +47,7 @@ export function bindKeys(renderer: CliRenderer, deps: KeymapDeps): void {
   let pendingUntil = 0
   let pendingTimer: ReturnType<typeof setTimeout> | undefined
   let pendingNotice = false
+  let pendingStatusBar: StatusBar | undefined
   let thinkingChange = Promise.resolve()
 
   function clearPending(): void {
@@ -54,8 +56,9 @@ export function bindKeys(renderer: CliRenderer, deps: KeymapDeps): void {
     pendingUntil = 0
     if (pendingTimer !== undefined) clearTimeout(pendingTimer)
     pendingTimer = undefined
-    if (pendingNotice) screen.statusBar.clearNotice()
+    if (pendingNotice) pendingStatusBar?.clearNotice()
     pendingNotice = false
+    pendingStatusBar = undefined
   }
 
   function handleInterrupt(binding: string): void {
@@ -69,11 +72,12 @@ export function bindKeys(renderer: CliRenderer, deps: KeymapDeps): void {
       return
     }
     lastInterrupt = now
-    screen.statusBar.flashNotice(`${binding} again to quit`, QUIT_WINDOW_MS)
+    screen.activeStatusBar.flashNotice(`${binding} again to quit`, QUIT_WINDOW_MS)
   }
 
   function active(action: ShortcutAction, key: KeyEvent, first: ShortcutStroke): boolean {
     if (screen.jobViewer.visible) return action === "agents.stop-all"
+    const agentPage = screen.agentPageOpen
     switch (action) {
       case "agents.open":
         return screen.tasks.count > 0 && !screen.overlayVisible
@@ -84,19 +88,21 @@ export function bindKeys(renderer: CliRenderer, deps: KeymapDeps): void {
       case "app.cancel":
       case "display.clear":
       case "display.toggle-details":
-      case "display.toggle-todos":
         return true
+      case "display.toggle-todos":
+        return !agentPage
       case "composer.clear":
       case "composer.newline":
-      case "session.next-mode":
         return !screen.overlayVisible
+      case "session.next-mode":
+        return !screen.overlayVisible && !agentPage
       case "composer.external-editor":
       case "composer.paste-image":
       case "thinking.decrease":
       case "thinking.increase":
-        return !key.repeated && !screen.overlayVisible
+        return !key.repeated && !screen.overlayVisible && !agentPage
       case "history.open":
-        if (screen.overlayVisible) return false
+        if (screen.overlayVisible || agentPage) return false
         if (first.name !== "escape") return true
         return (
           session.currentState === "idle" &&
@@ -124,13 +130,13 @@ export function bindKeys(renderer: CliRenderer, deps: KeymapDeps): void {
         screen.openAgents()
         return
       case "jobs.background":
-        screen.statusBar.flashNotice(
+        screen.activeStatusBar.flashNotice(
           requestBackground(session.id) ? "Moved the running command to background" : "No command to background",
           QUIT_WINDOW_MS,
         )
         return
       case "agents.stop-all":
-        screen.statusBar.flashNotice(
+        screen.activeStatusBar.flashNotice(
           screen.tasks.stopAllAgents() ? "Stopping all agents…" : "No agents are running",
           QUIT_WINDOW_MS,
         )
@@ -141,35 +147,39 @@ export function bindKeys(renderer: CliRenderer, deps: KeymapDeps): void {
           screen.syncFooter()
           return
         }
-        if (!screen.overlayVisible && screen.composer.clear()) return
+        if (screen.agentPageOpen) {
+          if (screen.activeComposer.clear()) return
+          if (screen.tasks.closeViewer()) return
+        }
+        if (!screen.overlayVisible && screen.activeComposer.clear()) return
         handleInterrupt(binding)
         return
       case "composer.clear":
-        screen.composer.setValue("")
+        screen.activeComposer.setValue("")
         return
       case "composer.external-editor":
         void edit().catch((error: unknown) => {
-          screen.scrollback.append({ kind: "error", text: describeError(error) })
+          screen.activeScrollback.append({ kind: "error", text: describeError(error) })
         })
         return
       case "composer.newline":
-        screen.composer.newLine()
+        screen.activeComposer.newLine()
         return
       case "composer.paste-image":
-        screen.statusBar.setNotice("Pasting image…")
-        void screen.composer.pasteImage().then((pasted) => {
-          screen.statusBar.flashNotice(pasted ? "Image attached" : "No image found in clipboard", QUIT_WINDOW_MS)
+        screen.activeStatusBar.setNotice("Pasting image…")
+        void screen.activeComposer.pasteImage().then((pasted) => {
+          screen.activeStatusBar.flashNotice(pasted ? "Image attached" : "No image found in clipboard", QUIT_WINDOW_MS)
         })
         return
       case "display.clear":
-        screen.scrollback.clearTranscript()
+        screen.activeScrollback.clearTranscript()
         return
       case "display.toggle-details":
-        screen.scrollback.toggleExpanded()
+        screen.activeScrollback.toggleExpanded()
         return
       case "display.toggle-todos": {
         const visible = screen.taskList.toggleVisibility()
-        screen.statusBar.flashNotice(`Todos ${visible ? "shown" : "hidden"}`, QUIT_WINDOW_MS)
+        screen.activeStatusBar.flashNotice(`Todos ${visible ? "shown" : "hidden"}`, QUIT_WINDOW_MS)
         return
       }
       case "history.open":
@@ -177,7 +187,7 @@ export function bindKeys(renderer: CliRenderer, deps: KeymapDeps): void {
         return
       case "session.next-mode":
         if (session.setMode(nextPermissionMode(session.currentMode))) return
-        screen.statusBar.flashNotice("Cannot change mode while a turn or interaction is active", QUIT_WINDOW_MS)
+        screen.activeStatusBar.flashNotice("Cannot change mode while a turn or interaction is active", QUIT_WINDOW_MS)
         return
       case "thinking.decrease":
         changeThinking(-1)
@@ -226,29 +236,16 @@ export function bindKeys(renderer: CliRenderer, deps: KeymapDeps): void {
     pendingStartedAt = startedAt
     pendingUntil = now + resolution.timeoutMs
     pendingNotice = resolution.notice !== undefined
-    if (resolution.notice) screen.statusBar.setNotice(resolution.notice)
+    if (resolution.notice) {
+      pendingStatusBar = screen.activeStatusBar
+      pendingStatusBar.setNotice(resolution.notice)
+    }
     pendingTimer = setTimeout(clearPending, resolution.timeoutMs)
     pendingTimer.unref()
     return true
   }
 
   renderer.keyInput.on("keypress", (key) => {
-    if (
-      !screen.overlayVisible &&
-      key.ctrl &&
-      !key.meta &&
-      !key.option &&
-      !key.shift &&
-      !key.super &&
-      !key.hyper &&
-      key.name === "u" &&
-      screen.jobViewer.handleInputKey(key)
-    ) {
-      clearPending()
-      key.preventDefault()
-      screen.syncFooter()
-      return
-    }
     if (handleShortcut(key)) return
     if (screen.config.handleKey(key.name)) {
       key.preventDefault()
@@ -275,11 +272,6 @@ export function bindKeys(renderer: CliRenderer, deps: KeymapDeps): void {
       screen.syncFooter()
       return
     }
-    if (screen.jobViewer.handleInputKey(key)) {
-      key.preventDefault()
-      screen.syncFooter()
-      return
-    }
     const unmodified = !key.ctrl && !key.meta && !key.shift
     if (!screen.overlayVisible && unmodified && screen.tasks.handleKey(key.name)) {
       key.preventDefault()
@@ -292,10 +284,10 @@ export function bindKeys(renderer: CliRenderer, deps: KeymapDeps): void {
       key.name === "down" &&
       !screen.tasks.focused &&
       screen.tasks.count > 0 &&
-      screen.composer.empty
+      screen.activeComposer.empty
     ) {
       key.preventDefault()
-      screen.composer.blur()
+      screen.activeComposer.blur()
       screen.tasks.focus()
       screen.syncFooter()
       return
@@ -308,7 +300,7 @@ export function bindKeys(renderer: CliRenderer, deps: KeymapDeps): void {
       !screen.overlayVisible &&
       unmodified &&
       (key.name === "up" || key.name === "down") &&
-      screen.composer.navigateHistory(key.name === "up" ? "older" : "newer")
+      screen.activeComposer.navigateHistory(key.name === "up" ? "older" : "newer")
     ) {
       key.preventDefault()
       return

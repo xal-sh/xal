@@ -28,7 +28,6 @@ import { nativeToolRecord, nativeToolString } from "../native/tool-runtime"
 import type { SessionTool } from "../tools/types"
 
 const MAX_WAIT_S = 600
-const MAX_EXTENSION_MINUTES = 60
 const MAX_EXTENSION_TURNS = 100
 
 function jobOf(args: Record<string, unknown>, ownerId: string): BackgroundJob {
@@ -183,7 +182,7 @@ function nativeStatusOutput(id: string | undefined, ownerId: string): string {
 export const jobOutputTool: SessionTool = {
   name: "job_output",
   description:
-    "Collect a background job explicitly. For a process, returns new output and optionally waits for output or exit. Task-agent results normally deliver automatically. An explicit task-agent wait returns before its deadline with a supervision checkpoint, and collecting a finished report suppresses duplicate automatic delivery.",
+    "Collect a background job explicitly. For a process, returns new output and optionally waits for output or exit. Task-agent results normally deliver automatically. With a configured agent deadline, an explicit wait returns at a supervision checkpoint before it; collecting a finished report suppresses duplicate automatic delivery.",
   parameters: {
     type: "object",
     properties: {
@@ -271,7 +270,7 @@ export const jobKillTool: SessionTool = {
 export const jobStatusTool: SessionTool = {
   name: "job_status",
   description:
-    "Inspect one background job or list every job without consuming output. Includes processes, task agents, and schedules. Task-agent status includes queue state, current activity, idle and elapsed time, turn usage and limits, and its remaining deadline after it starts.",
+    "Inspect one background job or list every job without consuming output. Includes processes, task agents, and schedules. Task-agent status includes queue state, current activity, idle and elapsed time, turn usage and limits, and any configured remaining deadline.",
   parameters: {
     type: "object",
     properties: { id: idProperty },
@@ -293,17 +292,11 @@ export const jobStatusTool: SessionTool = {
 export const jobExtendTool: SessionTool = {
   name: "job_extend",
   description:
-    "Extend a running or queued task agent's execution budget by wall-clock minutes, turns, or both without restarting it. job_status reports the current remaining budget.",
+    "Extend a running or queued task agent's soft turn budget without restarting it. job_status reports the current turn usage and limits.",
   parameters: {
     type: "object",
     properties: {
       id: idProperty,
-      minutes: {
-        type: "integer",
-        minimum: 1,
-        maximum: MAX_EXTENSION_MINUTES,
-        description: `Wall-clock minutes to add; maximum ${MAX_EXTENSION_MINUTES} per call`,
-      },
       turns: {
         type: "integer",
         minimum: 1,
@@ -311,7 +304,7 @@ export const jobExtendTool: SessionTool = {
         description: `Soft-budget turns to add; maximum ${MAX_EXTENSION_TURNS} per call`,
       },
     },
-    required: ["id"],
+    required: ["id", "turns"],
     additionalProperties: false,
   },
   sessionAware: true,
@@ -327,26 +320,19 @@ export const jobExtendTool: SessionTool = {
   async execute(args, ctx) {
     const prepared = nativeToolRecord("job_extend_prepare", args)
     const id = asString(prepared.id)
-    const minutes = asNumber(prepared.minutes)
     const turns = asNumber(prepared.turns)
-    if (id === undefined || minutes === undefined || turns === undefined) {
-      throw new Error("native job_extend returned an invalid value")
-    }
+    if (id === undefined || turns === undefined) throw new Error("native job_extend returned an invalid value")
     const job = jobOf({ id }, ctx.session.id)
     if (job.kind !== "agent") throw new Error(`${job.id} is not a task agent`)
     if (job.done) throw new Error(`${job.id} has already finished (${jobStatus(job)})`)
-    extendAgentBudget(job, { minutes, turns }, "parent")
+    extendAgentBudget(job, turns, "parent")
     try {
       const finalized = nativeToolRecord("job_extend_finalize", {
         id: job.id,
-        minutes,
         turns,
         completedTurns: job.completedTurns,
         turnBudget: job.turnBudget,
         turnLimit: job.turnLimit,
-        timeoutMs: job.timeoutMs,
-        now: Date.now(),
-        ...(job.deadlineAt === undefined ? {} : { deadlineAt: job.deadlineAt }),
       })
       return { output: nativeToolString(finalized, "output", "job_extend") }
     } catch (error) {
@@ -360,7 +346,7 @@ export const jobExtendTool: SessionTool = {
 export const jobSendTool: SessionTool = {
   name: "job_send",
   description:
-    "Answer a running task agent's pending parent question, or send additional context or a correction when no question is pending. The message does not restart or extend the task deadline.",
+    "Answer a running task agent's pending parent question, or send additional context or a correction when no question is pending. The message does not restart the task or extend its limits.",
   parameters: {
     type: "object",
     properties: {

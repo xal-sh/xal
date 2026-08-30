@@ -7,19 +7,27 @@ import type { ModelCatalog, Provider, StreamEvent, StreamRequest } from "./types
 import { registerProviderCommands } from "./commands"
 
 class BlockingProvider implements Provider {
-  readonly id = "context-window-command"
-  readonly name = "Context window command"
+  readonly id = `provider-command-${crypto.randomUUID()}`
+  readonly name = "Provider command"
   readonly aliases: string[] = []
   readonly capabilities = { imageInput: false }
 
+  constructor(
+    private readonly contextWindow: number | null = 260_000,
+    private readonly autoCompactTokenLimit?: number,
+  ) {}
+
   async listModels(): Promise<ModelCatalog> {
+    const contextWindow = this.contextWindow ?? undefined
     return {
       models: [
         {
-          id: "test-model",
+          id: "canonical-model",
           name: "Test model",
-          contextWindow: 260_000,
-          contextWindows: [260_000, 400_000],
+          aliases: [{ id: "test-model" }],
+          contextWindow,
+          contextWindows: contextWindow === undefined ? undefined : [contextWindow, 400_000],
+          autoCompactTokenLimit: this.autoCompactTokenLimit,
           inputModalities: ["text"],
         },
       ],
@@ -86,6 +94,160 @@ test("does not save a context window when a turn starts while selection is pendi
       unsubscribe()
       session.interrupt()
     }
+  } finally {
+    await harness.cleanup()
+  }
+})
+
+test("saves a canonical compaction limit and shows current and default choices", async () => {
+  const harness = await setupAgentSessionTests("compaction-limit-command-")
+  try {
+    await loadSettings()
+    const provider = new BlockingProvider(260_000, 195_000)
+    const session = harness.createSession(provider)
+    let optionValues: unknown[] = []
+    let currentOption: { note?: string; active?: boolean } | undefined
+    let defaultDetail: string | undefined
+    const context = {
+      session,
+      print() {},
+      busy() {},
+      async select<T>(selection: SelectRequest<T>): Promise<T | undefined> {
+        optionValues = selection.options.map((option) => option.value)
+        currentOption = selection.options.find((option) => option.value === 195_000)
+        defaultDetail = selection.options.find((option) => option.value === 208_000)?.detail
+        return selection.options.find((option) => option.value === 156_000)?.value
+      },
+      restore() {},
+      async ask(): Promise<string | undefined> {
+        return undefined
+      },
+      async askSecret(): Promise<string | undefined> {
+        return undefined
+      },
+    } satisfies CommandContext
+    const command = getCommand("compaction-limit")
+    if (!command) throw new Error("compaction-limit command was not registered")
+
+    await command.run([], context)
+
+    expect(optionValues).toEqual([130_000, 156_000, 182_000, 195_000, 208_000])
+    expect(currentOption).toMatchObject({ note: "current", active: true })
+    expect(defaultDetail).toContain("Xal default maximum")
+    expect(settings().compactionLimits).toEqual({ [provider.id]: { "canonical-model": 156_000 } })
+  } finally {
+    await harness.cleanup()
+  }
+})
+
+test("does not save a compaction limit when a turn starts while selection is pending", async () => {
+  const harness = await setupAgentSessionTests("compaction-limit-busy-")
+  try {
+    await loadSettings()
+    const provider = new BlockingProvider()
+    const session = harness.createSession(provider)
+    const printed: string[] = []
+    const context = {
+      session,
+      print(line: string) {
+        printed.push(line)
+      },
+      busy() {},
+      async select<T>(request: SelectRequest<T>): Promise<T | undefined> {
+        expect(session.send({ text: "start turn", images: [] })).toBeTrue()
+        return request.options[0]?.value
+      },
+      restore() {},
+      async ask(): Promise<string | undefined> {
+        return undefined
+      },
+      async askSecret(): Promise<string | undefined> {
+        return undefined
+      },
+    } satisfies CommandContext
+    const command = getCommand("compaction-limit")
+    if (!command) throw new Error("compaction-limit command was not registered")
+
+    try {
+      await command.run([], context)
+      expect(settings().compactionLimits).toEqual({})
+      expect(printed).toEqual(["cannot change compaction limit while a turn is running"])
+    } finally {
+      session.interrupt()
+    }
+  } finally {
+    await harness.cleanup()
+  }
+})
+
+test("does not save a compaction limit when the active model changes during selection", async () => {
+  const harness = await setupAgentSessionTests("compaction-limit-model-change-")
+  try {
+    await loadSettings()
+    const provider = new BlockingProvider()
+    const session = harness.createSession(provider)
+    const printed: string[] = []
+    const context = {
+      session,
+      print(line: string) {
+        printed.push(line)
+      },
+      busy() {},
+      async select<T>(request: SelectRequest<T>): Promise<T | undefined> {
+        expect(session.setModel("test-profile", provider, "other-model")).toBeTrue()
+        return request.options[0]?.value
+      },
+      restore() {},
+      async ask(): Promise<string | undefined> {
+        return undefined
+      },
+      async askSecret(): Promise<string | undefined> {
+        return undefined
+      },
+    } satisfies CommandContext
+    const command = getCommand("compaction-limit")
+    if (!command) throw new Error("compaction-limit command was not registered")
+
+    await command.run([], context)
+
+    expect(settings().compactionLimits).toEqual({})
+    expect(printed).toEqual(["active model changed; run /compaction-limit again"])
+  } finally {
+    await harness.cleanup()
+  }
+})
+
+test("reports unavailable compaction limits when the context window is unknown", async () => {
+  const harness = await setupAgentSessionTests("compaction-limit-unavailable-")
+  try {
+    await loadSettings()
+    const provider = new BlockingProvider(null)
+    const session = harness.createSession(provider)
+    const printed: string[] = []
+    const context = {
+      session,
+      print(line: string) {
+        printed.push(line)
+      },
+      busy() {},
+      async select<T>(): Promise<T | undefined> {
+        throw new Error("selector should not open")
+      },
+      restore() {},
+      async ask(): Promise<string | undefined> {
+        return undefined
+      },
+      async askSecret(): Promise<string | undefined> {
+        return undefined
+      },
+    } satisfies CommandContext
+    const command = getCommand("compaction-limit")
+    if (!command) throw new Error("compaction-limit command was not registered")
+
+    await command.run([], context)
+
+    expect(settings().compactionLimits).toEqual({})
+    expect(printed).toEqual(["test-model does not have a known context window; compaction limits are unavailable"])
   } finally {
     await harness.cleanup()
   }

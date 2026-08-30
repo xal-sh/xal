@@ -46,6 +46,9 @@ export const waitAgentTool: SessionTool = {
   readOnly() {
     return true
   },
+  allowRepeatedCalls() {
+    return true
+  },
   async execute(args, ctx) {
     if (unsettledAgentJobs(ctx.session.id).length === 0 && !ctx.agentActivity.pending) {
       throw new Error("no running task agents or queued task-agent activity")

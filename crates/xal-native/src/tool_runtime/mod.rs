@@ -6,7 +6,6 @@ use serde_json::{Map, Value, json};
 
 const MAX_WAIT_SECONDS: f64 = 600.0;
 const MAX_SCHEDULER_DURATION_MS: i64 = 12 * 60 * 60 * 1_000;
-const MAX_EXTENSION_MINUTES: i64 = 60;
 const MAX_EXTENSION_TURNS: i64 = 100;
 const MAX_MESSAGE_LENGTH: usize = 20_000;
 const MAX_CONTEXT_LENGTH: usize = 20_000;

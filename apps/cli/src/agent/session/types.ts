@@ -93,6 +93,32 @@ export function addUsage(total: Usage | undefined, usage: Usage): Usage {
   }
 }
 
+const steeringInterrupts = new WeakSet<object>()
+const supersededSteeringInterrupts = new WeakSet<object>()
+
+export function interruptForSteering(controller: AbortController): void {
+  const reason = {}
+  steeringInterrupts.add(reason)
+  controller.abort(reason)
+}
+
+export function supersedeSteeringInterrupt(signal: AbortSignal | undefined): void {
+  const reason: unknown = signal?.reason
+  if (typeof reason !== "object" || reason === null || !steeringInterrupts.has(reason)) return
+  supersededSteeringInterrupts.add(reason)
+}
+
+export function isSteeringInterrupt(signal: AbortSignal): boolean {
+  const reason: unknown = signal.reason
+  return (
+    signal.aborted &&
+    typeof reason === "object" &&
+    reason !== null &&
+    steeringInterrupts.has(reason) &&
+    !supersededSteeringInterrupts.has(reason)
+  )
+}
+
 export function isAbortError(error: unknown): boolean {
   return error instanceof Error && error.name === "AbortError"
 }

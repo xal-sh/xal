@@ -176,6 +176,7 @@ export class ElicitationPopover {
       flexGrow: 1,
       flexShrink: 1,
       minWidth: 1,
+      scrollMargin: 0,
       onKeyDown: (key) => {
         imeKeyDown(key, {
           barrier: this.imeCommit,

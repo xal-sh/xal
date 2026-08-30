@@ -8,6 +8,7 @@ import {
   TextAttributes,
   type PasteEvent,
   type RenderContext,
+  type RGBA,
   type TextRenderable,
 } from "@opentui/core"
 import { describeError } from "../../../lib/error"
@@ -97,6 +98,7 @@ export class Composer {
   readonly view: BoxRenderable
   private readonly input: TextareaRenderable
   private readonly prompt: TextRenderable
+  private readonly badge: TextRenderable
   private readonly pastedContentType: number
   private readonly pastedImageType: number
   private readonly skillHighlightType: number
@@ -113,6 +115,7 @@ export class Composer {
     private readonly ctx: RenderContext,
     private readonly history: MessageHistory,
     private readonly actions: ComposerActions,
+    private readonly indicator: RGBA | undefined = undefined,
   ) {
     this.view = row(ctx, {
       height: 3,
@@ -125,12 +128,17 @@ export class Composer {
       marginTop: 1,
       ...border(COLORS.border),
     })
+    if (indicator !== undefined) {
+      const borderColor = resolveColor(indicator)
+      this.view.borderColor = borderColor
+      this.view.focusedBorderColor = borderColor
+    }
 
     this.prompt = label(ctx, {
       content: "❯",
       width: FOOTER_ICON_WIDTH,
       attributes: TextAttributes.BOLD,
-      color: COLORS.accent,
+      color: indicator ?? COLORS.accent,
     })
     this.view.add(this.prompt)
     this.syntaxStyle = SyntaxStyle.create()
@@ -177,10 +185,20 @@ export class Composer {
     this.skillHighlightType = this.input.extmarks.registerType("composer-skill-highlight")
     this.fileHighlightType = this.input.extmarks.registerType("composer-file-highlight")
     this.view.add(this.input)
+    this.badge = label(ctx, {
+      content: "",
+      color: indicator ?? COLORS.accent,
+      flexShrink: 0,
+    })
+    this.view.add(this.badge)
     this.view.on(RenderableEvents.DESTROYED, () => {
       this.imeCommit.clear()
       this.syntaxStyle.destroy()
     })
+  }
+
+  setBadge(text: string | undefined): void {
+    this.badge.content = text ?? ""
   }
 
   get rows(): number {
@@ -348,6 +366,16 @@ export class Composer {
   }
 
   private change(): void {
+    if (this.indicator !== undefined) {
+      const borderColor = resolveColor(this.indicator)
+      this.prompt.fg = borderColor
+      this.view.borderColor = borderColor
+      this.view.focusedBorderColor = borderColor
+      this.syncSkillHighlights()
+      this.reflow()
+      this.notifyCompletion()
+      return
+    }
     const shell =
       this.input.extmarks.getAllForTypeId(this.pastedImageType).length === 0 &&
       this.input.plainText.trimStart().startsWith("!")

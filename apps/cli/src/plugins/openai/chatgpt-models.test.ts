@@ -71,9 +71,9 @@ test("round-trips and caps an optional runtime auto-compaction limit", async () 
   expect(runtime.models[0]).toMatchObject({
     contextWindow: 260_000,
     contextWindows: [260_000, 400_000, 600_000, 800_000, 872_000],
-    autoCompactTokenLimit: 234_000,
+    autoCompactTokenLimit: 208_000,
   })
-  expect(runtime.models[1]).toMatchObject({ id: "gpt-5.6-sol-fast", autoCompactTokenLimit: 234_000 })
+  expect(runtime.models[1]).toMatchObject({ id: "gpt-5.6-sol-fast", autoCompactTokenLimit: 208_000 })
   if (!isRecord(written) || !Array.isArray(written.models)) throw new Error("runtime catalog was not cached")
 
   cachedModels = written.models
