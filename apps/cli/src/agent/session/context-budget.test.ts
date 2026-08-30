@@ -18,11 +18,12 @@ function request(overrides: Partial<StreamRequest> = {}): StreamRequest {
 
 const usage: Usage = { totalInputTokens: 100, outputTokens: 20, cacheReadInputTokens: 0 }
 
-test("uses a 90% automatic ceiling and honors only lower explicit limits", () => {
+test("uses an 80% automatic ceiling and honors only lower explicit limits", () => {
   expect(effectiveAutoCompactTokenLimit(undefined)).toBeUndefined()
-  expect(effectiveAutoCompactTokenLimit(101)).toBe(90)
-  expect(effectiveAutoCompactTokenLimit(100_000, 80_000)).toBe(80_000)
-  expect(effectiveAutoCompactTokenLimit(100_000, 95_000)).toBe(90_000)
+  expect(effectiveAutoCompactTokenLimit(101)).toBe(80)
+  expect(effectiveAutoCompactTokenLimit(100_000)).toBe(80_000)
+  expect(effectiveAutoCompactTokenLimit(100_000, 70_000)).toBe(70_000)
+  expect(effectiveAutoCompactTokenLimit(100_000, 95_000)).toBe(80_000)
 })
 
 test("counts measured provider output once and local deltas after it", () => {

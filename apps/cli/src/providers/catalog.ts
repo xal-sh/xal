@@ -279,10 +279,14 @@ export async function refreshModelCatalogs(): Promise<void> {
   )
 }
 
-function configuredContextWindow(provider: Provider, model: ModelInfo, fallback = model.contextWindow): ModelInfo {
-  const configured = settings().contextWindows[provider.id]?.[model.id]
-  const contextWindow = model.contextWindows?.includes(configured ?? 0) ? configured : fallback
-  return contextWindow === model.contextWindow ? model : { ...model, contextWindow }
+function configuredModel(provider: Provider, model: ModelInfo, fallbackContextWindow = model.contextWindow): ModelInfo {
+  const configuredContextWindow = settings().contextWindows[provider.id]?.[model.id]
+  const contextWindow = model.contextWindows?.includes(configuredContextWindow ?? 0)
+    ? configuredContextWindow
+    : fallbackContextWindow
+  const autoCompactTokenLimit = settings().compactionLimits[provider.id]?.[model.id] ?? model.autoCompactTokenLimit
+  if (contextWindow === model.contextWindow && autoCompactTokenLimit === model.autoCompactTokenLimit) return model
+  return { ...model, contextWindow, autoCompactTokenLimit }
 }
 
 export async function contextWindow(provider: Provider, profileId: string, model: string): Promise<number | undefined> {
@@ -297,10 +301,10 @@ export async function findModel(
 ): Promise<ModelInfo | undefined> {
   const catalog = await modelCatalog(provider, profileId, refresh)
   const found = catalog.models.find((info) => info.id === model)
-  if (found) return configuredContextWindow(provider, found)
+  if (found) return configuredModel(provider, found)
   for (const candidate of catalog.models) {
     const alias = candidate.aliases?.find((entry) => entry.id === model)
-    if (alias) return configuredContextWindow(provider, candidate, alias.contextWindow)
+    if (alias) return configuredModel(provider, candidate, alias.contextWindow)
   }
   return undefined
 }
@@ -324,7 +328,7 @@ export async function listModelChoices(refresh = false): Promise<ModelChoices> {
           choices: catalog.models.map((model) => ({
             provider,
             profile,
-            model: configuredContextWindow(provider, model),
+            model: configuredModel(provider, model),
             source: catalog.source,
           })),
           notices: catalog.warning ? [{ provider, profile, message: catalog.warning }] : [],

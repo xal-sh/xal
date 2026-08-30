@@ -5,6 +5,7 @@ import { dirname, join } from "node:path"
 import { appEnvVar, appInfo } from "../app-info"
 import { clearModelCatalog, findModel } from "../providers/catalog"
 import type { Provider } from "../providers/types"
+import { saveCompactionLimit } from "./compaction-limit"
 import { saveContextWindow } from "./context-window"
 import { projectConfigPath } from "./paths"
 import { loadSettings, saveSettings, settings } from "./settings"
@@ -64,6 +65,9 @@ test("trusted project settings override user settings with recursive object merg
       contextWindows: {
         provider: { shared: 400_000, userModel: 600_000 },
       },
+      compactionLimits: {
+        provider: { shared: 300_000, userModel: 450_000 },
+      },
     })
     await writeJson(join(home, "trust.json"), [project])
     await writeJson(projectConfigPath(project), {
@@ -88,6 +92,9 @@ test("trusted project settings override user settings with recursive object merg
       },
       contextWindows: {
         provider: { shared: 800_000, projectModel: 1_000_000 },
+      },
+      compactionLimits: {
+        provider: { shared: 600_000, projectModel: 750_000 },
       },
     })
 
@@ -123,6 +130,9 @@ test("trusted project settings override user settings with recursive object merg
       contextWindows: {
         provider: { shared: 800_000, userModel: 600_000, projectModel: 1_000_000 },
       },
+      compactionLimits: {
+        provider: { shared: 600_000, userModel: 450_000, projectModel: 750_000 },
+      },
     })
   })
 })
@@ -148,6 +158,7 @@ test("does not read malformed project settings until the project is trusted", as
       pluginConfig: {},
       thinking: {},
       contextWindows: {},
+      compactionLimits: {},
     })
 
     await writeJson(join(home, "trust.json"), [project])
@@ -209,6 +220,7 @@ test("saves only user settings securely while retaining project overrides in mem
       pluginConfig: { userPlugin: { enabled: true } },
       thinking: {},
       contextWindows: {},
+      compactionLimits: {},
     })
     expect((await stat(userConfig)).mode & 0o777).toBe(0o600)
   })
@@ -251,8 +263,31 @@ test("rejects malformed context-window settings", async () => {
   })
 })
 
-test("saves a context window for one provider and model", async () => {
-  await withSettingsEnvironment(async () => {
+test("rejects malformed compaction-limit settings", async () => {
+  await withSettingsEnvironment(async ({ home }) => {
+    const config = join(home, "config.json")
+
+    await writeJson(config, { compactionLimits: "early" })
+    await expect(loadSettings()).rejects.toThrow("compactionLimits must be an object")
+
+    await writeJson(config, { compactionLimits: { openai: "early" } })
+    await expect(loadSettings()).rejects.toThrow("compactionLimits.openai must be an object")
+
+    for (const value of [0, -1, 200_000.5]) {
+      await writeJson(config, { compactionLimits: { openai: { "gpt-5.6-sol": value } } })
+      await expect(loadSettings()).rejects.toThrow("compactionLimits.openai.gpt-5.6-sol must be a positive integer")
+    }
+  })
+})
+
+test("saves canonical model limits without copying project-only values into user settings", async () => {
+  await withSettingsEnvironment(async ({ home, project }) => {
+    await writeJson(join(home, "config.json"), { plugins: ["user-plugin"] })
+    await writeJson(join(home, "trust.json"), [project])
+    await writeJson(projectConfigPath(project), {
+      contextWindows: { "provider-a": { "project-model": 300_000 } },
+      compactionLimits: { "provider-a": { "project-model": 200_000 } },
+    })
     await loadSettings()
     const provider: Provider = {
       id: "provider-a",
@@ -281,10 +316,29 @@ test("saves a context window for one provider and model", async () => {
     }
 
     await saveContextWindow(provider, "model-a", 400_000)
+    await saveCompactionLimit(provider, "model-a", 200_000)
 
-    expect(settings().contextWindows).toEqual({ "provider-a": { "model-a": 400_000 } })
-    expect((await findModel(provider, "profile-a", "model-a"))?.contextWindow).toBe(400_000)
-    expect((await findModel(provider, "profile-a", "model-a-large"))?.contextWindow).toBe(400_000)
+    expect(settings().contextWindows).toEqual({
+      "provider-a": { "model-a": 400_000, "project-model": 300_000 },
+    })
+    expect(settings().compactionLimits).toEqual({
+      "provider-a": { "model-a": 200_000, "project-model": 200_000 },
+    })
+    expect(JSON.parse(await readFile(join(home, "config.json"), "utf8"))).toEqual({
+      plugins: ["user-plugin"],
+      contextWindows: { "provider-a": { "model-a": 400_000 } },
+      compactionLimits: { "provider-a": { "model-a": 200_000 } },
+    })
+    expect(await findModel(provider, "profile-a", "model-a")).toMatchObject({
+      id: "model-a",
+      contextWindow: 400_000,
+      autoCompactTokenLimit: 200_000,
+    })
+    expect(await findModel(provider, "profile-a", "model-a-large")).toMatchObject({
+      id: "model-a",
+      contextWindow: 400_000,
+      autoCompactTokenLimit: 200_000,
+    })
     clearModelCatalog("profile-a")
   })
 })

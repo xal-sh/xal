@@ -35,6 +35,7 @@ test("makes the current writable mode override stale plan-mode context", () => {
     pluginConfig: {},
     thinking: {},
     contextWindows: {},
+    compactionLimits: {},
   } satisfies Settings)
 
   const yolo = composeSystemPrompt(prompt("yolo"))

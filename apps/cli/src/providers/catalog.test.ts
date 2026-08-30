@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test"
+import { settings } from "../config/settings"
 import { clearModelCatalog, findModel, modelCatalog } from "./catalog"
 import type { ModelCatalog, Provider } from "./types"
 
@@ -76,6 +77,32 @@ test("accepts ordered context-window options beginning at the model default", as
   expect(result.models[0]?.contextWindows).toEqual([260_000, 400_000, 600_000])
   expect((await findModel(provider, "profile-context-options", "model-a-large"))?.contextWindow).toBe(600_000)
   clearModelCatalog("profile-context-options")
+})
+
+test("applies configured compaction limits after canonical alias resolution", async () => {
+  const provider = fakeProvider("configured-compaction", async () => ({
+    models: [
+      {
+        id: "model-a",
+        name: "model-a",
+        aliases: [{ id: "model-a-alias" }],
+        contextWindow: 100_000,
+        autoCompactTokenLimit: 75_000,
+        inputModalities: ["text"],
+      },
+    ],
+    source: "runtime",
+  }))
+
+  try {
+    expect((await modelCatalog(provider, "profile-configured")).models[0]?.autoCompactTokenLimit).toBe(75_000)
+    settings().compactionLimits[provider.id] = { "model-a": 60_000 }
+    expect((await findModel(provider, "profile-configured", "model-a"))?.autoCompactTokenLimit).toBe(60_000)
+    expect((await findModel(provider, "profile-configured", "model-a-alias"))?.autoCompactTokenLimit).toBe(60_000)
+  } finally {
+    delete settings().compactionLimits[provider.id]
+    clearModelCatalog("profile-configured")
+  }
 })
 
 test("rejects invalid internal auto-compaction limits", async () => {

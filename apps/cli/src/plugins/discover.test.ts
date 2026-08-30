@@ -32,6 +32,7 @@ function settings(plugins: string[] = [], pluginConfig: Settings["pluginConfig"]
     pluginConfig,
     thinking: {},
     contextWindows: {},
+    compactionLimits: {},
   }
 }
 

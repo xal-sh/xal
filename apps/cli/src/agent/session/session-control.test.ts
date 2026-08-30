@@ -454,6 +454,29 @@ describe("AgentSession control flow", () => {
     expect(compacted.tokensBefore).toBeGreaterThan(90)
   })
 
+  test("automatically compacts at the default 80% limit", async () => {
+    const provider = new ScriptedProvider(
+      [
+        completedRound("Initial response", { totalInputTokens: 165 }),
+        completedRound("Early summary"),
+        completedRound("Continued after early compaction"),
+      ],
+      200,
+    )
+    const session = harness.createSession(provider)
+    const observed: AgentEvent[] = []
+
+    await runSettledTurn(session, { text: "Start", images: [] })
+    const outcome = await runSettledTurn(session, { text: "Continue", images: [] }, (event) => observed.push(event))
+
+    expect(outcome.status).toBe("completed")
+    expect(provider.requests.map((request) => request.toolChoice)).toEqual(["auto", "none", "auto"])
+    const compacted = observed.find((event) => event.type === "compacted")
+    if (!compacted || compacted.type !== "compacted") throw new Error("missing compaction event")
+    expect(compacted.tokensBefore).toBeGreaterThanOrEqual(160)
+    expect(compacted.tokensBefore).toBeLessThan(180)
+  })
+
   test("uses the same successful automatic admission path for subagents", async () => {
     const provider = new ScriptedProvider(
       [
