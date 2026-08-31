@@ -4,7 +4,7 @@ Connect a built-in or plugin-provided model service, select a model, and configu
 
 ## Built-in providers
 
-Built-in provider IDs are `anthropic`, `google`, `openai`, `openai-chatgpt`, `openrouter`, `github-copilot`, `xai`, `deepseek`, `alibaba-cloud`, `minimax`, `minimax-coding-plan`, and `opencode-go`. `claude` is an alias for `anthropic`, `gemini` is an alias for `google`, `chatgpt` is an alias for `openai-chatgpt`, `copilot` is an alias for `github-copilot`, `grok` is an alias for `xai`, and `dashscope` is an alias for `alibaba-cloud`.
+Built-in provider IDs are `anthropic`, `google`, `openai`, `openai-chatgpt`, `openrouter`, `github-copilot`, `xai`, `deepseek`, `alibaba-cloud`, `minimax`, `minimax-coding-plan`, and `opencode-go`. `claude` is an alias for `anthropic`, `gemini` is an alias for `google`, `openai-api` is an alias for `openai`, `chatgpt` is an alias for `openai-chatgpt`, `copilot` is an alias for `github-copilot`, `grok` is an alias for `xai`, and `dashscope` is an alias for `alibaba-cloud`.
 
 The only built-in UI ID is `tui`. Plugins may register more providers, aliases, and UIs.
 

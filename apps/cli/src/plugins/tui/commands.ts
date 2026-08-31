@@ -6,7 +6,8 @@ import { clearBackgroundSessions, listBackgroundSessions, type BgView } from "..
 import type { Command, CommandContext } from "../../commands/types"
 import { usageDir } from "../../config/paths"
 import { formatRelative } from "../../lib/time"
-import { getProvider } from "../../providers/registry"
+import { getProvider, listProviders } from "../../providers/registry"
+import type { Provider } from "../../providers/types"
 import { parseUsageActivityView, type UsageActivityView } from "../../usage/activity"
 import { flushProviderUsage } from "../../usage/recorder"
 import { readProviderUsageSummary, type ProviderUsageSummary } from "../../usage/summary"
@@ -73,20 +74,51 @@ export function parseUsageCommandArguments(args: string[]): UsageCommandArgument
   return provider === undefined ? { view } : { view, provider }
 }
 
+type UsageProvider = Pick<Provider, "id" | "name" | "usageGroup">
+
+interface UsageProviderSelection {
+  providerIds: string[]
+  name: string
+}
+
+export function resolveUsageProviderSelection(
+  selector: string,
+  provider: UsageProvider | undefined,
+  providers: readonly UsageProvider[],
+): UsageProviderSelection | undefined {
+  let usageGroup = provider?.usageGroup?.id === selector ? provider.usageGroup : undefined
+  if (!provider && !usageGroup) {
+    usageGroup = providers.find((candidate) => candidate.usageGroup?.id === selector)?.usageGroup
+  }
+  if (usageGroup) {
+    return {
+      providerIds: providers
+        .filter((candidate) => candidate.usageGroup?.id === selector)
+        .map((candidate) => candidate.id),
+      name: usageGroup.name,
+    }
+  }
+  if (!provider) return undefined
+  return { providerIds: [provider.id], name: provider.name }
+}
+
 const usageCommand: Command = {
   name: "usage",
   describe: "show daily, weekly, or cumulative token activity",
   async run(args, ctx) {
     if (!actions) throw new Error("tui is not running")
     const parsed = parseUsageCommandArguments(args)
-    const provider = parsed.provider === undefined ? undefined : getProvider(parsed.provider)
+    const provider =
+      parsed.provider === undefined
+        ? undefined
+        : resolveUsageProviderSelection(parsed.provider, getProvider(parsed.provider), listProviders())
     if (parsed.provider !== undefined && !provider) throw new Error(`unknown provider: ${parsed.provider}`)
 
     await flushProviderUsage()
     const summary = await readProviderUsageSummary(
       usageDir(),
       ctx.session.id,
-      provider === undefined ? {} : { provider: provider.id },
+      provider === undefined ? {} : { providers: provider.providerIds },
     )
     actions.usage(summary, parsed.view, provider?.name)
   },

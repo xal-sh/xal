@@ -10,7 +10,8 @@ import { streamResponse as streamChatgptResponse } from "./chatgpt-transport"
 export const openaiProvider: Provider = {
   id: PROVIDER_ID,
   name: PROVIDER_NAME,
-  aliases: [],
+  aliases: ["openai-api"],
+  usageGroup: { id: "openai", name: "OpenAI" },
   capabilities: { imageInput: true },
   connect,
   listModels,
@@ -22,6 +23,7 @@ export const chatgptProvider: Provider = {
   id: CHATGPT_PROVIDER_ID,
   name: "OpenAI ChatGPT",
   aliases: ["chatgpt"],
+  usageGroup: { id: "openai", name: "OpenAI" },
   capabilities: { imageInput: true },
   connect: login,
   listModels: listChatgptModels,

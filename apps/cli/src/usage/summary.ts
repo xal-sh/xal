@@ -24,7 +24,7 @@ export interface ProviderUsageSummary {
 }
 
 export interface ProviderUsageSummaryOptions {
-  provider?: string
+  providers?: readonly string[]
   now?: Date
 }
 
@@ -151,6 +151,7 @@ export async function readProviderUsageSummary(
   }
 
   const session = usageSessionFingerprint(sessionId)
+  const providers = options.providers === undefined ? undefined : new Set(options.providers)
   const weeklyCutoffMs = nowMs - 7 * 24 * 60 * 60 * 1000
   for (const entry of entries.toSorted((left, right) => left.name.localeCompare(right.name))) {
     if (!entry.isFile() || !entry.name.endsWith(".jsonl")) continue
@@ -161,7 +162,7 @@ export async function readProviderUsageSummary(
       if (index === lines.length - 1 && line === "") continue
       const location = `${path}:${index + 1}`
       const record = parseRecord(line, location)
-      if (options.provider !== undefined && record.provider !== options.provider) continue
+      if (providers !== undefined && !providers.has(record.provider)) continue
       addRecord(summary.allTime, record, location)
       const day = daily.get(record.date) ?? emptyTotals()
       if (!daily.has(record.date)) daily.set(record.date, day)

@@ -157,6 +157,7 @@ export interface Provider {
   id: string
   name: string
   aliases: string[]
+  usageGroup?: { id: string; name: string }
   capabilities: { imageInput: boolean }
   connect?(ctx: ConnectContext): Promise<Credential | undefined>
   listModels(profileId: string, refresh: boolean): Promise<ModelCatalog>

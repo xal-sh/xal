@@ -112,7 +112,7 @@ describe("provider usage summary", () => {
     )
 
     const summary = await readProviderUsageSummary(directory, "selected", {
-      provider: "selected-provider",
+      providers: ["selected-provider"],
       now: new Date("2026-08-22T12:34:56.000Z"),
     })
 
@@ -170,6 +170,56 @@ describe("provider usage summary", () => {
           outputTokens: 10,
         },
       ],
+    })
+  })
+
+  test("aggregates multiple selected providers", async () => {
+    directory = await mkdtemp(join(tmpdir(), "xal-usage-summary-"))
+    await writeFile(
+      join(directory, "usage.jsonl"),
+      [
+        record({
+          version: 2,
+          timestamp: "2026-08-22T12:34:56.000Z",
+          provider: "openai",
+          sessionId: "session",
+          totalInputTokens: 100,
+          cacheReadInputTokens: 40,
+          outputTokens: 10,
+        }),
+        record({
+          version: 2,
+          timestamp: "2026-08-22T12:34:56.000Z",
+          provider: "openai-chatgpt",
+          sessionId: "session",
+          totalInputTokens: 200,
+          cacheReadInputTokens: 20,
+          outputTokens: 20,
+        }),
+        record({
+          version: 2,
+          timestamp: "2026-08-22T12:34:56.000Z",
+          provider: "other-provider",
+          sessionId: "session",
+          totalInputTokens: 400,
+          outputTokens: 40,
+        }),
+        "",
+      ].join("\n"),
+    )
+
+    const summary = await readProviderUsageSummary(directory, "session", {
+      providers: ["openai", "openai-chatgpt"],
+      now: new Date("2026-08-22T12:34:56.000Z"),
+    })
+
+    expect(summary.allTime).toEqual({
+      requests: 2,
+      totalTokens: 330,
+      totalInputTokens: 300,
+      cacheReadInputTokens: 60,
+      cacheWriteInputTokens: 0,
+      outputTokens: 30,
     })
   })
 
