@@ -1,6 +1,7 @@
 import { readdir, readFile } from "node:fs/promises"
 import { join } from "node:path"
 import { asNumber, asString, isRecord } from "../lib/json"
+import { localDateKey } from "./calendar"
 import { usageSessionFingerprint } from "./recorder"
 
 export interface UsageTotals {
@@ -30,7 +31,6 @@ export interface ProviderUsageSummaryOptions {
 
 interface ParsedUsageRecord {
   session?: string
-  date: string
   timestampMs: number
   provider: string
   usage: Omit<UsageTotals, "requests" | "totalTokens">
@@ -95,12 +95,11 @@ function parseRecord(line: string, location: string): ParsedUsageRecord {
   }
 
   const usage = { totalInputTokens, cacheReadInputTokens, cacheWriteInputTokens, outputTokens }
-  const date = timestamp.slice(0, 10)
-  if (version === 1) return { date, timestampMs, provider, usage }
+  if (version === 1) return { timestampMs, provider, usage }
 
   const session = asString(value.session)
   if (!session || !/^[a-f0-9]{64}$/.test(session)) throw invalidRecord(location)
-  return { session, date, timestampMs, provider, usage }
+  return { session, timestampMs, provider, usage }
 }
 
 function addCount(total: number, value: number, location: string): number {
@@ -164,8 +163,9 @@ export async function readProviderUsageSummary(
       const record = parseRecord(line, location)
       if (providers !== undefined && !providers.has(record.provider)) continue
       addRecord(summary.allTime, record, location)
-      const day = daily.get(record.date) ?? emptyTotals()
-      if (!daily.has(record.date)) daily.set(record.date, day)
+      const date = localDateKey(new Date(record.timestampMs))
+      const day = daily.get(date) ?? emptyTotals()
+      if (!daily.has(date)) daily.set(date, day)
       addRecord(day, record, location)
       if (record.timestampMs >= weeklyCutoffMs && record.timestampMs <= nowMs) {
         addRecord(summary.weekly, record, location)

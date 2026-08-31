@@ -16,6 +16,13 @@ import {
   type UsageActivityMetric,
   type UsageActivityView,
 } from "../../../usage/activity"
+import {
+  calendarDayKey,
+  calendarDayMonth,
+  calendarDayOfMonth,
+  calendarDayOfWeek,
+  localCalendarDay,
+} from "../../../usage/calendar"
 import type { ProviderUsageSummary } from "../../../usage/summary"
 import { column, label, row } from "../lib/renderables"
 import { COLORS } from "../theme/colors"
@@ -23,7 +30,6 @@ import { background, border, muted, paint } from "../theme/styles"
 
 const WEEK_COUNT = 52
 const DAY_COUNT = 7
-const DAY_MS = 24 * 60 * 60 * 1000
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 const WEEKDAYS = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"]
 const EMPTY_GLYPH = "□"
@@ -37,20 +43,12 @@ interface ChartWindow {
   columnOffsets: number[]
 }
 
-function utcDay(date: Date): number {
-  return Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()) / DAY_MS
-}
-
-function dateKey(day: number): string {
-  return new Date(day * DAY_MS).toISOString().slice(0, 10)
-}
-
 function chartWindow(activity: UsageActivity, now: Date, width: number): ChartWindow {
-  const today = utcDay(now)
-  const start = today - now.getUTCDay() - (WEEK_COUNT - 1) * DAY_COUNT
+  const today = localCalendarDay(now)
+  const start = today - calendarDayOfWeek(today) - (WEEK_COUNT - 1) * DAY_COUNT
   const dates = Array.from({ length: WEEK_COUNT * DAY_COUNT }, (_, index) => start + index)
   const byDate = new Map(activity.days.map((day) => [day.date, day.tokens]))
-  const values = dates.map((day) => byDate.get(dateKey(day)) ?? 0)
+  const values = dates.map((day) => byDate.get(calendarDayKey(day)) ?? 0)
   const innerWidth = Math.max(1, width - 6)
   const shownColumns = Math.max(1, Math.min(WEEK_COUNT, innerWidth - 4))
   const gapCount = Math.max(0, Math.min(shownColumns - 1, innerWidth - 4 - shownColumns))
@@ -107,9 +105,9 @@ function monthLabels(window: ChartWindow): string {
   const cells = Array.from({ length: window.columnOffsets.at(-1)! + 1 }, () => " ")
   let lastEnd = 0
   for (let column = window.firstColumn; column < WEEK_COUNT; column++) {
-    const date = new Date(window.dates[column * DAY_COUNT]! * DAY_MS)
-    if (date.getUTCDate() > 7) continue
-    const month = MONTHS[date.getUTCMonth()]!
+    const day = window.dates[column * DAY_COUNT]!
+    if (calendarDayOfMonth(day) > 7) continue
+    const month = MONTHS[calendarDayMonth(day)]!
     const offset = window.columnOffsets[column - window.firstColumn]!
     if (offset < lastEnd || offset + month.length > cells.length) continue
     for (let index = 0; index < month.length; index++) cells[offset + index] = month[index]!
@@ -181,7 +179,7 @@ function chartRows(window: ChartWindow, view: UsageActivityView, now: Date): Sty
   if (view === "daily") {
     const levels = dailyLevels(window.values)
     const colors = activityColors()
-    const today = utcDay(now)
+    const today = localCalendarDay(now)
     for (let rowIndex = 0; rowIndex < DAY_COUNT; rowIndex++) {
       const chunks: TextChunk[] = [muted(` ${WEEKDAYS[rowIndex]} `)]
       for (let column = window.firstColumn; column < WEEK_COUNT; column++) {

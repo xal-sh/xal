@@ -54,7 +54,7 @@ test("renders activity views, toggles the metric, and closes with escape", async
   const setup = await createTestRenderer({ width: 110, height: 24 })
   let changes = 0
   let width = 110
-  let now = new Date("2026-08-22T12:00:00.000Z")
+  let now = new Date(2026, 7, 22, 12)
   const popover = new UsagePopover(
     setup.renderer,
     () => changes++,
@@ -99,7 +99,7 @@ test("renders activity views, toggles the metric, and closes with escape", async
     expect(frame).toContain("cache reads excluded")
 
     width = 100
-    now = new Date("2026-08-24T12:00:00.000Z")
+    now = new Date(2026, 7, 24, 12)
     setup.resize(100, 24)
     popover.fit()
     await setup.renderOnce()
