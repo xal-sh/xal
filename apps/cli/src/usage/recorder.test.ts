@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test"
 import { chmod, mkdtemp, readFile, readdir, rm, stat } from "node:fs/promises"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
-import { UsageRecorder } from "./recorder"
+import { UsageRecorder, usageSessionFingerprint } from "./recorder"
 
 let directory: string | undefined
 
@@ -23,6 +23,7 @@ describe("usage recorder", () => {
     )
 
     recorder.record({
+      sessionId: "session-id",
       provider: "openai-chatgpt",
       model: "gpt-5.6-sol",
       phase: "turn",
@@ -40,9 +41,10 @@ describe("usage recorder", () => {
     const path = join(directory, "run-id.jsonl")
     expect(JSON.parse((await readFile(path, "utf8")).trim())).toEqual({
       type: "provider_usage",
-      version: 1,
+      version: 2,
       id: "request-id",
       timestamp: "2026-08-22T12:34:56.000Z",
+      session: usageSessionFingerprint("session-id"),
       provider: "openai-chatgpt",
       model: "gpt-5.6-sol",
       phase: "turn",

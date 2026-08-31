@@ -168,6 +168,7 @@ type ToolConcurrency = "shared" | "exclusive"
 export interface ProviderRequestProfile {
   requestId: string
   startedAt: number
+  sessionId: string
   phase: ProviderPhase
   provider: string
   model: string
@@ -502,7 +503,7 @@ export function profileProviderRequestStarted(
   thinking: ThinkingEffort | undefined,
   attempt: number,
 ): ProviderRequestProfile {
-  const profile = { requestId: nextLabel("request"), startedAt: Date.now(), phase, provider, model }
+  const profile = { requestId: nextLabel("request"), startedAt: Date.now(), sessionId, phase, provider, model }
   record({
     type: "provider_request_started",
     request: profile.requestId,
@@ -542,6 +543,7 @@ export function profileProviderRequestFinished(
 ): void {
   if (usage) {
     recordProviderUsage({
+      sessionId: profile.sessionId,
       provider: profile.provider,
       model: profile.model,
       phase: profile.phase,

@@ -4,12 +4,18 @@ import { stopBackgroundWorker, takeOverBackgroundSession } from "../../bg/attach
 import type { DetachOutcome } from "../../bg/launch"
 import { clearBackgroundSessions, listBackgroundSessions, type BgView } from "../../bg/state"
 import type { Command, CommandContext } from "../../commands/types"
+import { usageDir } from "../../config/paths"
 import { formatRelative } from "../../lib/time"
+import { getProvider } from "../../providers/registry"
+import { parseUsageActivityView, type UsageActivityView } from "../../usage/activity"
+import { flushProviderUsage } from "../../usage/recorder"
+import { readProviderUsageSummary, type ProviderUsageSummary } from "../../usage/summary"
 import type { PluginContext } from "../types"
 
 interface TuiCommandActions {
   agents(): void
   config(): void
+  usage(summary: ProviderUsageSummary, view: UsageActivityView, provider?: string): void
   terminal(): string[]
   quit(): void
   detach(): Promise<DetachOutcome>
@@ -39,6 +45,50 @@ const configCommand: Command = {
   async run() {
     if (!actions) throw new Error("tui is not running")
     actions.config()
+  },
+}
+
+interface UsageCommandArguments {
+  view: UsageActivityView
+  provider?: string
+}
+
+export function parseUsageCommandArguments(args: string[]): UsageCommandArguments {
+  if (args.length > 2) throw new Error("usage: /usage [daily|weekly|cumulative] [provider]")
+
+  let view: UsageActivityView = "daily"
+  let viewSelected = false
+  let provider: string | undefined
+  for (const argument of args) {
+    const parsedView = parseUsageActivityView(argument)
+    if (parsedView) {
+      if (viewSelected) throw new Error("usage: /usage [daily|weekly|cumulative] [provider]")
+      view = parsedView
+      viewSelected = true
+      continue
+    }
+    if (provider) throw new Error("usage: /usage [daily|weekly|cumulative] [provider]")
+    provider = argument
+  }
+  return provider === undefined ? { view } : { view, provider }
+}
+
+const usageCommand: Command = {
+  name: "usage",
+  describe: "show daily, weekly, or cumulative token activity",
+  async run(args, ctx) {
+    if (!actions) throw new Error("tui is not running")
+    const parsed = parseUsageCommandArguments(args)
+    const provider = parsed.provider === undefined ? undefined : getProvider(parsed.provider)
+    if (parsed.provider !== undefined && !provider) throw new Error(`unknown provider: ${parsed.provider}`)
+
+    await flushProviderUsage()
+    const summary = await readProviderUsageSummary(
+      usageDir(),
+      ctx.session.id,
+      provider === undefined ? {} : { provider: provider.id },
+    )
+    actions.usage(summary, parsed.view, provider?.name)
   },
 }
 
@@ -163,5 +213,6 @@ export function registerTuiCommands(ctx: PluginContext): void {
   ctx.registerCommand(backgroundCommand)
   ctx.registerCommand(configCommand)
   ctx.registerCommand(terminalCommand)
+  ctx.registerCommand(usageCommand)
   ctx.registerCommand(quitCommand)
 }

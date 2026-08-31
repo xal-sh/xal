@@ -247,6 +247,10 @@ export function bindKeys(renderer: CliRenderer, deps: KeymapDeps): void {
 
   renderer.keyInput.on("keypress", (key) => {
     if (handleShortcut(key)) return
+    if (screen.usage.handleKey(key.name)) {
+      key.preventDefault()
+      return
+    }
     if (screen.config.handleKey(key.name)) {
       key.preventDefault()
       screen.syncFooter()

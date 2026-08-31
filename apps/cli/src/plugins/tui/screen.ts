@@ -13,6 +13,8 @@ import { compactPath } from "../../lib/path"
 import type { PermissionMode } from "../../permissions/types"
 import type { ThinkingEffort, UserInput } from "../../providers/types"
 import { protectSecretValue, redactText } from "../../secrets/redactor"
+import type { UsageActivityView } from "../../usage/activity"
+import type { ProviderUsageSummary } from "../../usage/summary"
 import type { ElicitationQuestion } from "../../tools/types"
 import { JobViewer } from "./components/job-viewer"
 import { BackgroundTasks } from "./components/background-tasks"
@@ -28,6 +30,7 @@ import { SecretInput } from "./components/secret-input"
 import { ShortcutHelp } from "./components/shortcut-help"
 import { StatusBar, STATUS_ROWS } from "./components/status-bar"
 import { TaskList } from "./components/task-list"
+import { UsagePopover } from "./components/usage-popover"
 import { saveTuiConfig, type TuiConfig } from "./config"
 import { ChildEventController } from "./controllers/child-events"
 import { column } from "./lib/renderables"
@@ -87,6 +90,7 @@ export class Screen {
   readonly secret: SecretInput
   readonly picker: Picker
   readonly config: ConfigPopover
+  readonly usage: UsagePopover
   readonly palette: CompletionPalette
   readonly composer: Composer
   readonly agentComposer: Composer
@@ -160,6 +164,11 @@ export class Screen {
         changed: () => this.syncFooter(),
         error: (message) => this.scrollback.append({ kind: "error", text: message }),
       },
+    )
+    this.usage = new UsagePopover(
+      renderer,
+      () => this.syncFooter(),
+      () => this.renderer.terminalWidth,
     )
     this.palette = new CompletionPalette(
       renderer,
@@ -256,6 +265,7 @@ export class Screen {
     this.view.add(this.secret.view)
     this.view.add(this.picker.view)
     this.view.add(this.config.view)
+    this.view.add(this.usage.view)
     this.view.add(this.jobViewer.view)
     this.view.add(this.composer.view)
     this.view.add(this.agentComposer.view)
@@ -272,7 +282,8 @@ export class Screen {
       this.elicitation.visible ||
       this.secret.visible ||
       this.picker.visible ||
-      this.config.visible
+      this.config.visible ||
+      this.usage.visible
     )
   }
 
@@ -310,6 +321,7 @@ export class Screen {
   requestApproval(suggestion: string | undefined): void {
     this.tasks.closeViewer()
     this.config.hide()
+    this.usage.hide()
     this.picker.hide()
     this.permission.show(suggestion)
     this.syncFooter()
@@ -323,6 +335,7 @@ export class Screen {
   requestElicitation(requestId: string, questions: ElicitationQuestion[]): void {
     this.tasks.closeViewer()
     this.config.hide()
+    this.usage.hide()
     this.picker.hide()
     this.elicitation.show(requestId, questions)
     this.syncFooter()
@@ -370,6 +383,7 @@ export class Screen {
   async select<T>(request: SelectRequest<T>): Promise<T | undefined> {
     this.tasks.closeViewer()
     this.config.hide()
+    this.usage.hide()
     const options = request.options.map((option) => ({
       ...option,
       label: redactText(option.label),
@@ -385,6 +399,7 @@ export class Screen {
   async ask(question: string): Promise<string | undefined> {
     this.tasks.closeViewer()
     this.config.hide()
+    this.usage.hide()
     this.picker.hide()
     return this.secret.show(redactText(question), false)
   }
@@ -392,6 +407,7 @@ export class Screen {
   async askSecret(question: string): Promise<string | undefined> {
     this.tasks.closeViewer()
     this.config.hide()
+    this.usage.hide()
     this.picker.hide()
     const value = await this.secret.show(redactText(question))
     if (value !== undefined) protectSecretValue(value)
@@ -406,8 +422,16 @@ export class Screen {
 
   openConfig(): void {
     this.picker.hide()
+    this.usage.hide()
     this.config.show()
     this.syncFooter()
+  }
+
+  openUsage(summary: ProviderUsageSummary, view: UsageActivityView, provider?: string): void {
+    this.tasks.closeViewer()
+    this.picker.hide()
+    this.config.hide()
+    this.usage.show(summary, view, provider === undefined ? undefined : redactText(provider))
   }
 
   openAgents(): void {
@@ -489,6 +513,7 @@ export class Screen {
     if (overlaid) this.palette.dismiss()
     this.activeStatusBar.setHint(this.palette.visible ? "↑↓ · Tab · Enter · Esc" : undefined)
     this.elicitation.fit()
+    this.usage.fit()
     const overlayRows = this.permission.visible
       ? this.permission.height
       : this.elicitation.visible
@@ -497,7 +522,9 @@ export class Screen {
           ? this.secret.height
           : this.picker.visible
             ? this.picker.height
-            : this.config.height
+            : this.config.visible
+              ? this.config.height
+              : this.usage.height
     const paletteRows = this.palette.visible ? this.palette.height : 0
     if (this.paletteBelow || overlaid) this.reserved = 0
     else this.reserved = Math.max(this.reserved, paletteRows)

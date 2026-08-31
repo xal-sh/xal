@@ -9,9 +9,10 @@ Xal writes one prompt-free usage record after each provider request that reports
 ```json
 {
   "type": "provider_usage",
-  "version": 1,
+  "version": 2,
   "id": "…",
   "timestamp": "2026-08-22T12:34:56.000Z",
+  "session": "4d2a…",
   "provider": "openai-chatgpt",
   "model": "gpt-5.6-sol",
   "phase": "turn",
@@ -20,11 +21,13 @@ Xal writes one prompt-free usage record after each provider request that reports
 }
 ```
 
-`totalInputTokens` includes cached input. The cache-read and cache-write fields identify the subsets that may be priced differently. `outputTokens` is the provider-reported output total. `phase` distinguishes normal turns from compaction and goal-evaluation requests, while `outcome` preserves requests that reported billable usage before failing or being interrupted.
+`totalInputTokens` includes cached input. The cache-read and cache-write fields identify the subsets that may be priced differently. `outputTokens` is the provider-reported output total. `phase` distinguishes normal turns from compaction and goal-evaluation requests, while `outcome` preserves requests that reported usage before failing or being interrupted. `session` is a one-way fingerprint used to group records without storing the real session ID. Version-1 records remain valid and contribute to rolling, lifetime, and chart totals, but they cannot be attributed to a session.
 
-The ledger contains no prompts, responses, working directories, profile names, credentials, or account identifiers. Files and directories are created with user-only permissions. Xal flushes pending records during shutdown and exits with an error if the ledger could not be written. Existing session transcripts are not backfilled, so collection starts with the first run of a Xal version that supports the ledger.
+The built-in `/usage` dashboard reads this ledger directly. Its default activity value is `totalInputTokens - cacheReadInputTokens + outputTokens`, clamped so input cannot become negative. The raw provider-reported input-plus-output total and cache-read share remain visible, and `M` switches the chart to that raw metric. Daily chart buckets use UTC dates, Last 7d is a rolling seven-day window, and Lifetime spans every local ledger file across all Xal projects. These are local processing records, not provider account quotas, invoices, or usage that occurred outside Xal.
 
-Usage dashboards should read this native ledger instead of treating Xal as Codex or asking Xal to write into another tool's home directory. The `provider` field lets a dashboard attribute ChatGPT usage to Codex, Anthropic usage to Claude, xAI usage to Grok, and other supported providers without coupling to Xal's full session format.
+The ledger contains no prompts, responses, working directories, real session IDs, profile names, credentials, or account identifiers. Files and directories are created with user-only permissions. Xal flushes pending records during shutdown and exits with an error if the ledger could not be written. Existing session transcripts are not backfilled, so collection starts with the first run of a Xal version that supports the ledger.
+
+Usage dashboards should read this native ledger instead of treating Xal as Codex or asking Xal to write into another tool's home directory. The `provider` field lets a dashboard attribute usage to each supported provider without coupling to Xal's full session format.
 
 ## Profiler records
 

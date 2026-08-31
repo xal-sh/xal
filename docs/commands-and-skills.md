@@ -54,6 +54,14 @@ Version-2 sessions remain compatible. Existing checkpoints without a strategy ke
 
 Compaction uses the conversation model's low-effort fast variant when available. Its complete semantic history projection removes opaque provider replay payloads while preserving assistant text, reasoning summaries, tool calls, and tool results. The summary request disables tools and omits their schemas because it cannot call them; its cache identity is recomputed from that exact prompt. This keeps the checkpoint provider-neutral without paying to resend unusable schemas or encrypted transport state.
 
+## Token usage
+
+`/usage [daily|weekly|cumulative] [provider]` opens an Escape-dismissable token activity dashboard. The view and provider arguments may appear in either order, `day` and `week` are accepted as view aliases, and omitting the view opens the daily heatmap. Omit the provider to include every provider, or pass a provider ID or alias to filter the complete dashboard. The chart covers 52 UTC calendar weeks whenever they fit; very narrow terminals label and show the most recent weeks that fit. Weekly bars group each calendar week and cumulative bars show the running total.
+
+The default activity metric is provider-reported input minus cache-read input, plus output. This matches the useful non-cached activity convention instead of promoting a raw input total dominated by cache hits. Press Left or Right to switch views, `D`, `W`, or `C` to select one directly, and `M` to toggle the chart and primary totals between uncached activity and raw provider-reported processing. The dashboard also shows the raw total, cache-read share, request count, peak day, and current and best activity streaks.
+
+Session totals include normal turns, compaction, and goal evaluation requests associated with the active session. Last 7d is the rolling previous seven 24-hour periods from now. Lifetime and chart totals cover usage recorded locally by Xal across all projects, not provider account quotas or billing history. Older version-1 ledger records contribute to Last 7d, Lifetime, and chart data but predate session grouping. See [Local usage dashboards](/docs/integrations#local-usage-dashboards) for the ledger format and storage location.
+
 ## Skills
 
 Xal discovers reusable skill packages from four directories, in increasing priority:

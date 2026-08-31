@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto"
 import { appendFile, mkdir } from "node:fs/promises"
 import { dirname, join } from "node:path"
 import { usageDir } from "../config/paths"
@@ -7,6 +8,7 @@ export type UsagePhase = "turn" | "compaction" | "goal_evaluation"
 export type UsageOutcome = "completed" | "failed" | "interrupted"
 
 export interface ProviderUsageInput {
+  sessionId: string
   provider: string
   model: string
   phase: UsagePhase
@@ -23,14 +25,19 @@ export interface ProviderUsageTokens {
 
 export interface ProviderUsageRecord {
   type: "provider_usage"
-  version: 1
+  version: 2
   id: string
   timestamp: string
+  session: string
   provider: string
   model: string
   phase: UsagePhase
   outcome: UsageOutcome
   usage: ProviderUsageTokens
+}
+
+export function usageSessionFingerprint(sessionId: string): string {
+  return createHash("sha256").update(`xal-usage-session-v1\0${sessionId}`).digest("hex")
 }
 
 export class UsageRecorder {
@@ -53,9 +60,10 @@ export class UsageRecorder {
     const cacheWriteInputTokens = input.usage.cacheWriteInputTokens ?? 0
     const record: ProviderUsageRecord = {
       type: "provider_usage",
-      version: 1,
+      version: 2,
       id: this.nextId(),
       timestamp: this.now().toISOString(),
+      session: usageSessionFingerprint(input.sessionId),
       provider: input.provider,
       model: input.model,
       phase: input.phase,
