@@ -124,7 +124,7 @@ function streakLabel(activity: UsageActivity): string {
 }
 
 function metricLabel(metric: UsageActivityMetric): string {
-  return metric === "uncached" ? "Uncached activity" : "Reported activity"
+  return metric === "total" ? "Total usage" : "Uncached usage"
 }
 
 interface SummaryField {
@@ -139,7 +139,9 @@ function summaryRows(activity: UsageActivity, width: number): StyledText[] {
     { label: "Last 7d", value: formatUsageNumber(activity.weeklyTokens) },
     { label: "Lifetime", value: formatUsageNumber(activity.lifetimeTokens) },
     { label: "Peak day", value: formatUsageNumber(activity.peakDailyTokens) },
-    { label: "Raw", value: formatUsageNumber(activity.reportedLifetimeTokens) },
+    activity.metric === "total"
+      ? { label: "Uncached", value: formatUsageNumber(activity.uncachedLifetimeTokens) }
+      : { label: "Total", value: formatUsageNumber(activity.totalLifetimeTokens) },
     {
       label: "Cache",
       value: formatUsageNumber(activity.cacheReadTokens),
@@ -259,7 +261,7 @@ export class UsagePopover {
   private readonly hint: TextRenderable
   private summary: ProviderUsageSummary | undefined
   private activityView: UsageActivityView = "daily"
-  private metric: UsageActivityMetric = "uncached"
+  private metric: UsageActivityMetric = "total"
   private providerName: string | undefined
   private summaryRowCount = 4
 
@@ -332,7 +334,7 @@ export class UsagePopover {
   show(summary: ProviderUsageSummary, view: UsageActivityView, provider?: string): void {
     this.summary = summary
     this.activityView = view
-    this.metric = "uncached"
+    this.metric = "total"
     this.providerName = provider
     this.render()
     this.view.visible = true
@@ -369,7 +371,7 @@ export class UsagePopover {
       return true
     }
     if (name === "m") {
-      this.metric = this.metric === "uncached" ? "reported" : "uncached"
+      this.metric = this.metric === "total" ? "uncached" : "total"
       this.render()
       this.onChange()
     }

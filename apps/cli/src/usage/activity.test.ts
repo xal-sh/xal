@@ -24,7 +24,7 @@ function day(date: string, input: number, cache: number, output: number): DatedU
 }
 
 describe("usage activity", () => {
-  test("distinguishes reported and uncached activity and derives reliable statistics", () => {
+  test("distinguishes total and uncached usage and derives reliable statistics", () => {
     const summary: ProviderUsageSummary = {
       session: totals(1_000, 800, 100, 2),
       weekly: totals(5_000, 4_000, 500, 5),
@@ -46,7 +46,8 @@ describe("usage activity", () => {
       sessionTokens: 300,
       weeklyTokens: 1_500,
       lifetimeTokens: 3_000,
-      reportedLifetimeTokens: 11_000,
+      totalLifetimeTokens: 11_000,
+      uncachedLifetimeTokens: 3_000,
       cacheReadTokens: 8_000,
       inputTokens: 10_000,
       peakDailyTokens: 150,
@@ -61,7 +62,7 @@ describe("usage activity", () => {
         { date: "2026-08-22", tokens: 150 },
       ],
     })
-    expect(usageMetricTokens(summary.allTime, "reported")).toBe(11_000)
+    expect(usageMetricTokens(summary.allTime, "total")).toBe(11_000)
     expect(usageMetricTokens(summary.allTime, "uncached")).toBe(3_000)
   })
 

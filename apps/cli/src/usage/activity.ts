@@ -1,7 +1,7 @@
 import type { ProviderUsageSummary, UsageTotals } from "./summary"
 
 export type UsageActivityView = "daily" | "weekly" | "cumulative"
-export type UsageActivityMetric = "uncached" | "reported"
+export type UsageActivityMetric = "total" | "uncached"
 
 export interface UsageActivityDay {
   date: string
@@ -13,7 +13,8 @@ export interface UsageActivity {
   sessionTokens: number
   weeklyTokens: number
   lifetimeTokens: number
-  reportedLifetimeTokens: number
+  totalLifetimeTokens: number
+  uncachedLifetimeTokens: number
   cacheReadTokens: number
   inputTokens: number
   peakDailyTokens: number
@@ -45,7 +46,7 @@ export function nextUsageActivityView(view: UsageActivityView, direction: -1 | 1
 }
 
 export function usageMetricTokens(totals: UsageTotals, metric: UsageActivityMetric): number {
-  if (metric === "reported") return totals.totalTokens
+  if (metric === "total") return totals.totalTokens
   return Math.max(0, totals.totalInputTokens - totals.cacheReadInputTokens) + totals.outputTokens
 }
 
@@ -116,7 +117,8 @@ export function buildUsageActivity(
     sessionTokens: usageMetricTokens(summary.session, metric),
     weeklyTokens: usageMetricTokens(summary.weekly, metric),
     lifetimeTokens: usageMetricTokens(summary.allTime, metric),
-    reportedLifetimeTokens: summary.allTime.totalTokens,
+    totalLifetimeTokens: usageMetricTokens(summary.allTime, "total"),
+    uncachedLifetimeTokens: usageMetricTokens(summary.allTime, "uncached"),
     cacheReadTokens: summary.allTime.cacheReadInputTokens,
     inputTokens: summary.allTime.totalInputTokens,
     peakDailyTokens: days.reduce((peak, day) => Math.max(peak, day.tokens), 0),
