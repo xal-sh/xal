@@ -43,6 +43,8 @@ describe("usage activity", () => {
 
     expect(activity).toEqual({
       metric: "uncached",
+      todayTokens: 150,
+      yesterdayTokens: 140,
       sessionTokens: 300,
       weeklyTokens: 1_500,
       lifetimeTokens: 3_000,

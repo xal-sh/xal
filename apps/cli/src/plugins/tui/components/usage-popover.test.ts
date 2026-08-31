@@ -53,11 +53,13 @@ const summary: ProviderUsageSummary = {
 test("renders activity views, toggles the metric, and closes with escape", async () => {
   const setup = await createTestRenderer({ width: 110, height: 24 })
   let changes = 0
+  let width = 110
+  let now = new Date("2026-08-22T12:00:00.000Z")
   const popover = new UsagePopover(
     setup.renderer,
     () => changes++,
-    () => 110,
-    () => new Date("2026-08-22T12:00:00.000Z"),
+    () => width,
+    () => now,
   )
   setup.renderer.root.add(popover.view)
 
@@ -69,6 +71,8 @@ test("renders activity views, toggles the metric, and closes with escape", async
     expect(frame).toContain("/usage daily")
     expect(frame).toContain("OpenAI ChatGPT")
     expect(frame).toContain("Total usage")
+    expect(frame).toContain("Today 36.8K")
+    expect(frame).toContain("Yesterday 20K")
     expect(frame).toContain("Lifetime 9.88M")
     expect(frame).toContain("Uncached 3.88M")
     expect(frame).toContain("Cache 6M (75%)")
@@ -88,9 +92,30 @@ test("renders activity views, toggles the metric, and closes with escape", async
     await setup.renderOnce()
     frame = setup.captureCharFrame()
     expect(frame).toContain("Uncached usage")
+    expect(frame).toContain("Today 16.8K")
+    expect(frame).toContain("Yesterday 10K")
     expect(frame).toContain("Lifetime 3.88M")
     expect(frame).toContain("Total 9.88M")
     expect(frame).toContain("cache reads excluded")
+
+    width = 100
+    now = new Date("2026-08-24T12:00:00.000Z")
+    setup.resize(100, 24)
+    popover.fit()
+    await setup.renderOnce()
+    frame = setup.captureCharFrame()
+    expect(frame).toContain("Today 0")
+    expect(frame).toContain("Yesterday 0")
+    expect(frame).toContain("Cache 6M (75%)")
+    expect(frame).toContain("Streak 0d (best 2d)")
+
+    width = 80
+    setup.resize(80, 24)
+    popover.fit()
+    await setup.renderOnce()
+    frame = setup.captureCharFrame()
+    expect(frame).toContain("Requests 320")
+    expect(frame).toContain("Streak 0d (best 2d)")
 
     expect(popover.handleKey("escape")).toBeTrue()
     expect(popover.visible).toBeFalse()

@@ -10,6 +10,8 @@ export interface UsageActivityDay {
 
 export interface UsageActivity {
   metric: UsageActivityMetric
+  todayTokens: number
+  yesterdayTokens: number
   sessionTokens: number
   weeklyTokens: number
   lifetimeTokens: number
@@ -112,8 +114,12 @@ export function buildUsageActivity(
     .filter((day) => day.date <= today)
     .map((day) => ({ date: day.date, tokens: usageMetricTokens(day, metric) }))
   const streak = streaks(days, now)
+  const byDate = new Map(days.map((day) => [day.date, day.tokens]))
+  const yesterday = new Date(now.getTime() - DAY_MS).toISOString().slice(0, 10)
   return {
     metric,
+    todayTokens: byDate.get(today) ?? 0,
+    yesterdayTokens: byDate.get(yesterday) ?? 0,
     sessionTokens: usageMetricTokens(summary.session, metric),
     weeklyTokens: usageMetricTokens(summary.weekly, metric),
     lifetimeTokens: usageMetricTokens(summary.allTime, metric),

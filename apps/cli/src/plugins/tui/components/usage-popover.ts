@@ -135,6 +135,8 @@ interface SummaryField {
 
 function summaryRows(activity: UsageActivity, width: number): StyledText[] {
   const fields: SummaryField[] = [
+    { label: "Today", value: formatUsageNumber(activity.todayTokens) },
+    { label: "Yesterday", value: formatUsageNumber(activity.yesterdayTokens) },
     { label: "Session", value: formatUsageNumber(activity.sessionTokens) },
     { label: "Last 7d", value: formatUsageNumber(activity.weeklyTokens) },
     { label: "Lifetime", value: formatUsageNumber(activity.lifetimeTokens) },
@@ -157,7 +159,8 @@ function summaryRows(activity: UsageActivity, width: number): StyledText[] {
   for (let offset = 0; offset < fields.length; offset += columns) {
     const chunks: TextChunk[] = [muted(" ")]
     for (let index = 0; index < columns; index++) {
-      const field = fields[offset + index]!
+      const field = fields[offset + index]
+      if (!field) break
       if (index > 0) chunks.push(muted("  "))
       chunks.push(muted(`${field.label} `), paint(COLORS.warning, field.value))
       if (field.suffix) chunks.push(muted(field.suffix))
@@ -310,7 +313,7 @@ export class UsagePopover {
     this.activityTitle = label(ctx, { content: "", attributes: TextAttributes.BOLD })
     this.months = label(ctx)
     this.view.add(this.activityTitle)
-    for (let index = 0; index < 4; index++) {
+    for (let index = 0; index < 5; index++) {
       const summary = label(ctx)
       this.summaries.push(summary)
       this.view.add(summary)
