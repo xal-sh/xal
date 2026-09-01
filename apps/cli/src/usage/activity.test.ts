@@ -39,10 +39,12 @@ describe("usage activity", () => {
       ],
     }
 
-    const activity = buildUsageActivity(summary, "uncached", new Date("2026-08-22T12:00:00.000Z"))
+    const activity = buildUsageActivity(summary, "uncached", new Date(2026, 7, 22, 12))
 
     expect(activity).toEqual({
       metric: "uncached",
+      todayTokens: 150,
+      yesterdayTokens: 140,
       sessionTokens: 300,
       weeklyTokens: 1_500,
       lifetimeTokens: 3_000,
@@ -64,6 +66,23 @@ describe("usage activity", () => {
     })
     expect(usageMetricTokens(summary.allTime, "total")).toBe(11_000)
     expect(usageMetricTokens(summary.allTime, "uncached")).toBe(3_000)
+  })
+
+  test("derives today and yesterday across a local year boundary", () => {
+    const empty = totals(0, 0, 0, 0)
+    const summary: ProviderUsageSummary = {
+      session: empty,
+      weekly: empty,
+      allTime: totals(600, 0, 60, 3),
+      daily: [day("2026-12-31", 100, 0, 10), day("2027-01-01", 200, 0, 20), day("2027-01-02", 300, 0, 30)],
+    }
+
+    const activity = buildUsageActivity(summary, "total", new Date(2027, 0, 1, 0, 5))
+
+    expect(activity.todayTokens).toBe(220)
+    expect(activity.yesterdayTokens).toBe(110)
+    expect(activity.currentStreakDays).toBe(2)
+    expect(activity.days.map((value) => value.date)).toEqual(["2026-12-31", "2027-01-01"])
   })
 
   test("parses views, cycles them, and formats compact values", () => {

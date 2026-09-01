@@ -55,12 +55,14 @@ const zeroTotals = {
 describe("provider usage summary", () => {
   test("filters one provider across session, rolling seven days, and all time", async () => {
     directory = await mkdtemp(join(tmpdir(), "xal-usage-summary-"))
+    const now = new Date(2026, 7, 22, 12, 34, 56)
+    const weeklyCutoffMs = now.getTime() - 7 * 24 * 60 * 60 * 1000
     await writeFile(
       join(directory, "first.jsonl"),
       [
         record({
           version: 2,
-          timestamp: "2026-08-22T12:34:56.000Z",
+          timestamp: now.toISOString(),
           provider: "selected-provider",
           sessionId: "selected",
           totalInputTokens: 100,
@@ -70,7 +72,7 @@ describe("provider usage summary", () => {
         }),
         record({
           version: 2,
-          timestamp: "2026-08-15T12:34:55.999Z",
+          timestamp: new Date(weeklyCutoffMs - 1).toISOString(),
           provider: "selected-provider",
           sessionId: "selected",
           totalInputTokens: 200,
@@ -78,7 +80,7 @@ describe("provider usage summary", () => {
         }),
         record({
           version: 1,
-          timestamp: "2026-08-15T12:34:56.000Z",
+          timestamp: new Date(weeklyCutoffMs).toISOString(),
           provider: "selected-provider",
           totalInputTokens: 300,
           cacheReadInputTokens: 10,
@@ -86,7 +88,7 @@ describe("provider usage summary", () => {
         }),
         record({
           version: 2,
-          timestamp: "2026-08-20T12:34:56.000Z",
+          timestamp: new Date(2026, 7, 20, 12, 34, 56).toISOString(),
           provider: "other-provider",
           sessionId: "selected",
           totalInputTokens: 500,
@@ -101,7 +103,7 @@ describe("provider usage summary", () => {
       join(directory, "second.jsonl"),
       `${record({
         version: 2,
-        timestamp: "2026-08-18T12:34:56.000Z",
+        timestamp: new Date(2026, 7, 18, 12, 34, 56).toISOString(),
         provider: "selected-provider",
         sessionId: "other",
         totalInputTokens: 400,
@@ -112,8 +114,8 @@ describe("provider usage summary", () => {
     )
 
     const summary = await readProviderUsageSummary(directory, "selected", {
-      provider: "selected-provider",
-      now: new Date("2026-08-22T12:34:56.000Z"),
+      providers: ["selected-provider"],
+      now,
     })
 
     expect(summary).toEqual({
@@ -171,6 +173,123 @@ describe("provider usage summary", () => {
         },
       ],
     })
+  })
+
+  test("aggregates multiple selected providers", async () => {
+    directory = await mkdtemp(join(tmpdir(), "xal-usage-summary-"))
+    const now = new Date(2026, 7, 22, 12, 34, 56)
+    await writeFile(
+      join(directory, "usage.jsonl"),
+      [
+        record({
+          version: 2,
+          timestamp: now.toISOString(),
+          provider: "openai",
+          sessionId: "session",
+          totalInputTokens: 100,
+          cacheReadInputTokens: 40,
+          outputTokens: 10,
+        }),
+        record({
+          version: 2,
+          timestamp: now.toISOString(),
+          provider: "openai-chatgpt",
+          sessionId: "session",
+          totalInputTokens: 200,
+          cacheReadInputTokens: 20,
+          outputTokens: 20,
+        }),
+        record({
+          version: 2,
+          timestamp: now.toISOString(),
+          provider: "other-provider",
+          sessionId: "session",
+          totalInputTokens: 400,
+          outputTokens: 40,
+        }),
+        "",
+      ].join("\n"),
+    )
+
+    const summary = await readProviderUsageSummary(directory, "session", {
+      providers: ["openai", "openai-chatgpt"],
+      now,
+    })
+
+    expect(summary.allTime).toEqual({
+      requests: 2,
+      totalTokens: 330,
+      totalInputTokens: 300,
+      cacheReadInputTokens: 60,
+      cacheWriteInputTokens: 0,
+      outputTokens: 30,
+    })
+  })
+
+  test("buckets records by local dates when UTC is still on the previous day", async () => {
+    directory = await mkdtemp(join(tmpdir(), "xal-usage-summary-"))
+    await writeFile(
+      join(directory, "usage.jsonl"),
+      [
+        record({
+          version: 2,
+          timestamp: "2026-08-31T20:00:00.000Z",
+          provider: "test-provider",
+          sessionId: "session",
+          totalInputTokens: 100,
+          outputTokens: 10,
+        }),
+        record({
+          version: 2,
+          timestamp: "2026-08-31T22:05:00.000Z",
+          provider: "test-provider",
+          sessionId: "session",
+          totalInputTokens: 200,
+          outputTokens: 20,
+        }),
+        "",
+      ].join("\n"),
+    )
+    const child = Bun.spawn(
+      [
+        process.execPath,
+        "-e",
+        `import { buildUsageActivity } from "./activity.ts"
+import { readProviderUsageSummary } from "./summary.ts"
+const now = new Date("2026-08-31T22:12:00.000Z")
+const summary = await readProviderUsageSummary(process.argv[1], "session", { now })
+const activity = buildUsageActivity(summary, "total", now)
+console.log(JSON.stringify({
+  daily: summary.daily.map((day) => ({ date: day.date, tokens: day.totalTokens })),
+  today: activity.todayTokens,
+  yesterday: activity.yesterdayTokens,
+}))`,
+        directory,
+      ],
+      {
+        cwd: import.meta.dir,
+        env: { ...process.env, TZ: "Europe/Berlin" },
+        stdout: "pipe",
+        stderr: "pipe",
+      },
+    )
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+      child.exited,
+    ])
+    if (exitCode !== 0) throw new Error(`timezone test failed: ${stderr}`)
+
+    expect(stdout.trim()).toBe(
+      JSON.stringify({
+        daily: [
+          { date: "2026-08-31", tokens: 110 },
+          { date: "2026-09-01", tokens: 220 },
+        ],
+        today: 220,
+        yesterday: 110,
+      }),
+    )
   })
 
   test("returns zero totals before the ledger exists", async () => {

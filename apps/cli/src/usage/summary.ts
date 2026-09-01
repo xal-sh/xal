@@ -1,6 +1,7 @@
 import { readdir, readFile } from "node:fs/promises"
 import { join } from "node:path"
 import { asNumber, asString, isRecord } from "../lib/json"
+import { localDateKey } from "./calendar"
 import { usageSessionFingerprint } from "./recorder"
 
 export interface UsageTotals {
@@ -24,13 +25,12 @@ export interface ProviderUsageSummary {
 }
 
 export interface ProviderUsageSummaryOptions {
-  provider?: string
+  providers?: readonly string[]
   now?: Date
 }
 
 interface ParsedUsageRecord {
   session?: string
-  date: string
   timestampMs: number
   provider: string
   usage: Omit<UsageTotals, "requests" | "totalTokens">
@@ -95,12 +95,11 @@ function parseRecord(line: string, location: string): ParsedUsageRecord {
   }
 
   const usage = { totalInputTokens, cacheReadInputTokens, cacheWriteInputTokens, outputTokens }
-  const date = timestamp.slice(0, 10)
-  if (version === 1) return { date, timestampMs, provider, usage }
+  if (version === 1) return { timestampMs, provider, usage }
 
   const session = asString(value.session)
   if (!session || !/^[a-f0-9]{64}$/.test(session)) throw invalidRecord(location)
-  return { session, date, timestampMs, provider, usage }
+  return { session, timestampMs, provider, usage }
 }
 
 function addCount(total: number, value: number, location: string): number {
@@ -151,6 +150,7 @@ export async function readProviderUsageSummary(
   }
 
   const session = usageSessionFingerprint(sessionId)
+  const providers = options.providers === undefined ? undefined : new Set(options.providers)
   const weeklyCutoffMs = nowMs - 7 * 24 * 60 * 60 * 1000
   for (const entry of entries.toSorted((left, right) => left.name.localeCompare(right.name))) {
     if (!entry.isFile() || !entry.name.endsWith(".jsonl")) continue
@@ -161,10 +161,11 @@ export async function readProviderUsageSummary(
       if (index === lines.length - 1 && line === "") continue
       const location = `${path}:${index + 1}`
       const record = parseRecord(line, location)
-      if (options.provider !== undefined && record.provider !== options.provider) continue
+      if (providers !== undefined && !providers.has(record.provider)) continue
       addRecord(summary.allTime, record, location)
-      const day = daily.get(record.date) ?? emptyTotals()
-      if (!daily.has(record.date)) daily.set(record.date, day)
+      const date = localDateKey(new Date(record.timestampMs))
+      const day = daily.get(date) ?? emptyTotals()
+      if (!daily.has(date)) daily.set(date, day)
       addRecord(day, record, location)
       if (record.timestampMs >= weeklyCutoffMs && record.timestampMs <= nowMs) {
         addRecord(summary.weekly, record, location)

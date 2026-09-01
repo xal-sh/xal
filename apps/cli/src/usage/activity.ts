@@ -1,3 +1,4 @@
+import { calendarDayKey, dateKeyCalendarDay, localCalendarDay } from "./calendar"
 import type { ProviderUsageSummary, UsageTotals } from "./summary"
 
 export type UsageActivityView = "daily" | "weekly" | "cumulative"
@@ -10,6 +11,8 @@ export interface UsageActivityDay {
 
 export interface UsageActivity {
   metric: UsageActivityMetric
+  todayTokens: number
+  yesterdayTokens: number
   sessionTokens: number
   weeklyTokens: number
   lifetimeTokens: number
@@ -24,7 +27,6 @@ export interface UsageActivity {
   days: UsageActivityDay[]
 }
 
-const DAY_MS = 24 * 60 * 60 * 1000
 const VIEWS: UsageActivityView[] = ["daily", "weekly", "cumulative"]
 
 export function parseUsageActivityView(value: string): UsageActivityView | undefined {
@@ -71,19 +73,10 @@ export function formatUsagePercent(numerator: number, denominator: number): stri
     .replace(/\.0$/, "")}%`
 }
 
-function dateDay(date: string): number {
-  return Date.parse(`${date}T00:00:00.000Z`) / DAY_MS
-}
-
-function todayKey(now: Date): string {
-  return now.toISOString().slice(0, 10)
-}
-
-function streaks(days: UsageActivityDay[], now: Date): { current: number; longest: number } {
-  const today = dateDay(todayKey(now))
+function streaks(days: UsageActivityDay[], today: number): { current: number; longest: number } {
   const active = days
-    .filter((day) => day.tokens > 0 && dateDay(day.date) <= today)
-    .map((day) => dateDay(day.date))
+    .filter((day) => day.tokens > 0 && dateKeyCalendarDay(day.date) <= today)
+    .map((day) => dateKeyCalendarDay(day.date))
     .toSorted((left, right) => left - right)
 
   let longest = 0
@@ -107,13 +100,17 @@ export function buildUsageActivity(
   now: Date = new Date(),
 ): UsageActivity {
   if (!Number.isFinite(now.getTime())) throw new Error("usage activity requires a valid current time")
-  const today = todayKey(now)
+  const today = localCalendarDay(now)
+  const todayDate = calendarDayKey(today)
   const days = summary.daily
-    .filter((day) => day.date <= today)
+    .filter((day) => day.date <= todayDate)
     .map((day) => ({ date: day.date, tokens: usageMetricTokens(day, metric) }))
-  const streak = streaks(days, now)
+  const streak = streaks(days, today)
+  const byDate = new Map(days.map((day) => [day.date, day.tokens]))
   return {
     metric,
+    todayTokens: byDate.get(todayDate) ?? 0,
+    yesterdayTokens: byDate.get(calendarDayKey(today - 1)) ?? 0,
     sessionTokens: usageMetricTokens(summary.session, metric),
     weeklyTokens: usageMetricTokens(summary.weekly, metric),
     lifetimeTokens: usageMetricTokens(summary.allTime, metric),
