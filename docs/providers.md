@@ -124,6 +124,8 @@ Run `xal connect chatgpt` and choose browser login, pasted callback, or headless
 
 `pluginConfig.opencode-go.clientName` is a non-empty string used in the provider request user agent. It defaults to the package application name. OpenCode Go currently has no other configuration options.
 
+All OpenCode Go model requests send `x-opencode-session` with Xal's conversation ID across Chat Completions, Responses, and Messages. The ID stays the same across turns, retries, and resumed sessions; new or forked conversations get a new ID. No configuration is required.
+
 OpenCode Go is opencode's low-cost subscription for popular open coding models, served from `https://opencode.ai/zen/go/v1`. Run `xal connect opencode-go`, then paste the API key from [opencode.ai/auth](https://opencode.ai/auth). Connection stores the key without making a billable model request; the first turn validates that the key and subscription cover the selected model.
 
 Each model streams over the protocol its family advertises: Grok 4.5, GPT-5.6 Luna, and Muse Spark use OpenAI Responses; MiniMax M3/M2.x and Qwen3.x use an Anthropic-compatible endpoint; GLM, Kimi, MiMo, Hy3, DeepSeek, and Ox Alpha Free use Chat Completions. GPT-5.6 Luna exposes the full `none` through `max` effort range and Grok 4.5 `low` through `xhigh`; MiniMax M3 offers a thinking on/off control that Xal maps onto adaptive or disabled thinking. Other models reason natively without a dial.

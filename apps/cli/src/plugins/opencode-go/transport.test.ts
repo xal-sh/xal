@@ -82,6 +82,18 @@ describe("endpoint routing", () => {
 })
 
 describe("request options", () => {
+  test.each(["kimi-k3", "grok-4.5", "qwen3.7-max", "brand-new-model"])(
+    "sends a stable conversation header for %s",
+    async (model) => {
+      for (const sessionId of ["session-a", "session-a", "session-b", "session-a"]) {
+        await routeFor({ model, sessionId })
+        expect(requests).toHaveLength(1)
+        expect(new Headers(requests[0]!.init.headers).get("x-opencode-session")).toBe(sessionId)
+        expect(new Headers(requests[0]!.init.headers).get("accept")).toBe("text/event-stream")
+      }
+    },
+  )
+
   test("requests reasoning with encrypted content on responses", async () => {
     await routeFor({ model: "gpt-5.6-luna", thinking: "high" })
     expect(body()).toMatchObject({

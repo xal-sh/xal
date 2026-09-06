@@ -7,7 +7,11 @@ import { goFetch, PROVIDER_ID, PROVIDER_NAME } from "./api"
 import { apiKey } from "./auth"
 import { resolveModel } from "./wire"
 
-function chatProvider(profileId: string): ChatCompletionProvider {
+function streamHeaders(sessionId: string): Record<string, string> {
+  return { accept: "text/event-stream", "x-opencode-session": sessionId }
+}
+
+function chatProvider(profileId: string, sessionId: string): ChatCompletionProvider {
   return {
     id: PROVIDER_ID,
     name: PROVIDER_NAME,
@@ -15,7 +19,7 @@ function chatProvider(profileId: string): ChatCompletionProvider {
     async fetch(body, signal) {
       return goFetch("/chat/completions", await apiKey(profileId), {
         method: "POST",
-        headers: { accept: "text/event-stream" },
+        headers: streamHeaders(sessionId),
         body,
         signal,
       })
@@ -69,7 +73,7 @@ function responsesBody(request: StreamRequest): string {
 async function* streamResponses(profileId: string, request: StreamRequest): AsyncGenerator<StreamEvent> {
   const response = await goFetch("/responses", await apiKey(profileId), {
     method: "POST",
-    headers: { accept: "text/event-stream" },
+    headers: streamHeaders(request.sessionId),
     body: responsesBody(request),
     signal: request.signal,
   })
@@ -86,7 +90,7 @@ function m3Thinking(request: StreamRequest): JsonObject {
   return { thinking: { type } }
 }
 
-function messagesProvider(profileId: string): AnthropicMessagesProvider {
+function messagesProvider(profileId: string, sessionId: string): AnthropicMessagesProvider {
   return {
     id: PROVIDER_ID,
     name: PROVIDER_NAME,
@@ -97,7 +101,7 @@ function messagesProvider(profileId: string): AnthropicMessagesProvider {
     async fetch(body, signal) {
       return goFetch("/messages", await apiKey(profileId), {
         method: "POST",
-        headers: { accept: "text/event-stream" },
+        headers: streamHeaders(sessionId),
         body,
         signal,
       })
@@ -108,13 +112,13 @@ function messagesProvider(profileId: string): AnthropicMessagesProvider {
 export async function* streamResponse(profileId: string, request: StreamRequest): AsyncGenerator<StreamEvent> {
   switch (resolveModel(request.model).endpoint) {
     case "/chat/completions":
-      yield* streamChatCompletions(request, chatProvider(profileId))
+      yield* streamChatCompletions(request, chatProvider(profileId, request.sessionId))
       return
     case "/responses":
       yield* streamResponses(profileId, request)
       return
     case "/messages":
-      yield* streamAnthropicMessages(request, messagesProvider(profileId))
+      yield* streamAnthropicMessages(request, messagesProvider(profileId, request.sessionId))
       return
   }
 }
