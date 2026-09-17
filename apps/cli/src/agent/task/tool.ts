@@ -209,6 +209,6 @@ export function registerTaskAgents(): void {
   })
   registerToolRenderer({
     tool: waitAgentTool.name,
-    summarize: (output) => (output.startsWith("Task-agent activity") ? "activity arrived" : "wait ended"),
+    summarize: (output) => (output.startsWith("Session activity") ? "activity arrived" : "wait ended"),
   })
 }

@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, expect, test } from "bun:test"
+import { afterAll, beforeAll, expect, jest, test } from "bun:test"
 import { readFile } from "node:fs/promises"
 import { createAgentJob, finishAgentJob, getJob, stopJob, suppressDelivery } from "../../background/jobs"
 import { registerJobTools } from "../../background/register"
@@ -19,7 +19,7 @@ import {
   type ProviderRound,
 } from "../session/test-support"
 import { registerTaskAgents } from "./tool"
-import { MAX_AGENT_WAIT_MS } from "./wait"
+import { MAX_AGENT_WAIT_MS, MIN_AGENT_WAIT_MS } from "./wait"
 
 let harness: AgentSessionTestHarness
 
@@ -105,6 +105,91 @@ test("wait_agent resumes on automatic agent delivery without collecting the resu
   } finally {
     unsubscribe()
     if (!job.done) finishAgentJob(job, { status: "interrupted" }, "test cleanup")
+    suppressDelivery(job)
+  }
+})
+
+test("wait_agent keeps blocking through a short timeout so silent agents are not polled", async () => {
+  const provider = new ScriptedProvider([
+    toolRound("short-wait-agent", "wait_agent", { timeout_ms: 1 }),
+    completedRound("The task agent is still working."),
+  ])
+  const session = harness.createSession(provider, { interactive: true })
+  const job = createWaitingAgent(session.id)
+  let output: string | undefined
+  let waiting = false
+  const unsubscribe = session.subscribe((event) => {
+    if (event.type === "tool_started" && event.tool === "wait_agent") {
+      jest.useFakeTimers()
+      waiting = true
+    }
+    if (event.type === "tool_finished" && event.tool === "wait_agent") output = event.output
+  })
+
+  try {
+    const turn = runSettledTurn(session, { text: "Wait for the running task agent.", images: [] })
+    while (!waiting) await Bun.sleep(1)
+    while (jest.getTimerCount() === 0) await new Promise((resolve) => setImmediate(resolve))
+    jest.advanceTimersByTime(MIN_AGENT_WAIT_MS - 1)
+    expect(jest.getTimerCount()).toBe(1)
+    jest.advanceTimersByTime(1)
+    expect(jest.getTimerCount()).toBe(0)
+    jest.useRealTimers()
+
+    expect((await turn).status).toBe("completed")
+    expect(output).toStartWith("Wait timed out")
+  } finally {
+    jest.useRealTimers()
+    unsubscribe()
+    finishAgentJob(job, { status: "interrupted" }, "test cleanup")
+    suppressDelivery(job)
+  }
+})
+
+test("pausing the session wakes a blocking wait_agent instead of waiting out its timeout", async () => {
+  const provider = new ScriptedProvider([toolRound("paused-wait-agent", "wait_agent", {})])
+  const session = harness.createSession(provider, { interactive: true })
+  const job = createWaitingAgent(session.id)
+  let output: string | undefined
+  let waiting = false
+  const unsubscribe = session.subscribe((event) => {
+    if (event.type === "tool_started" && event.tool === "wait_agent") waiting = true
+    if (event.type === "tool_finished" && event.tool === "wait_agent") output = event.output
+  })
+
+  try {
+    session.send({ text: "Wait for the running task agent.", images: [] })
+    while (!waiting) await Bun.sleep(1)
+
+    expect((await session.pause()).status).toBe("paused")
+    expect(output).toStartWith("Session activity arrived")
+    expect(provider.requests).toHaveLength(1)
+  } finally {
+    unsubscribe()
+    finishAgentJob(job, { status: "interrupted" }, "test cleanup")
+    suppressDelivery(job)
+  }
+})
+
+test("a pause requested while the model responds still wakes the wait_agent that follows", async () => {
+  let paused: ReturnType<typeof session.pause> | undefined
+  const provider = new ScriptedProvider([
+    async function* (request) {
+      paused = session.pause()
+      yield* toolRound("late-wait-agent", "wait_agent", {})(request)
+    },
+  ])
+  const session = harness.createSession(provider, { interactive: true })
+  const job = createWaitingAgent(session.id)
+
+  try {
+    session.send({ text: "Wait for the running task agent.", images: [] })
+    while (!paused) await Bun.sleep(1)
+
+    expect((await paused).status).toBe("paused")
+    expect(provider.requests).toHaveLength(1)
+  } finally {
+    finishAgentJob(job, { status: "interrupted" }, "test cleanup")
     suppressDelivery(job)
   }
 })

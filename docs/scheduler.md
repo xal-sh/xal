@@ -14,7 +14,7 @@ The tool is read-only. Each active wait is tracked as a `schedule-*` background 
 
 ## Activity and interruption
 
-Queued user input and completed background work end the wait early. The pending activity is then handled by the active turn.
+Queued user input and completed background work end the wait early. The pending activity is then handled by the active turn. Pausing the session, as `/bg` does, also ends the wait early so the handoff is not held up; the schedule is reported as cut short and the resumed session can start it again.
 
 Interrupting the turn also ends the wait.
 

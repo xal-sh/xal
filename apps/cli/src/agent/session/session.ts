@@ -255,10 +255,13 @@ export class AgentSession {
         this.pendingRestart = prompt
       },
       pendingActivity: () =>
-        this.queue.first !== undefined || this.asyncState.hasQueued() || this.hasPendingAgentQuestions(),
+        this.paused || this.queue.first !== undefined || this.asyncState.hasQueued() || this.hasPendingAgentQuestions(),
       activitySignal: () => this.activityController.signal,
       pendingAgentActivity: () =>
-        this.queue.first !== undefined || this.asyncState.hasQueuedAgentResult() || this.hasPendingAgentQuestions(),
+        this.paused ||
+        this.queue.first !== undefined ||
+        this.asyncState.hasQueuedAgentResult() ||
+        this.hasPendingAgentQuestions(),
       agentActivitySignal: () => this.agentActivityController.signal,
     }
   }
@@ -1389,6 +1392,7 @@ export class AgentSession {
       return { status: "blocked", reason: `the session is ${this.state.replaceAll("_", " ")}` }
     }
     this.paused = true
+    this.noteAgentActivity()
     await this.pauseSettled()
     return { status: "paused", pending: this.queue.drain() }
   }
