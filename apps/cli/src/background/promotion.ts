@@ -1,9 +1,12 @@
-const promotions = new Map<string, () => void>()
+const promotions = new Map<string, Set<() => void>>()
 
 export function armPromotion(sessionId: string, promote: () => void): () => void {
-  promotions.set(sessionId, promote)
+  const armed = promotions.get(sessionId) ?? new Set()
+  armed.add(promote)
+  promotions.set(sessionId, armed)
   return () => {
-    if (promotions.get(sessionId) === promote) promotions.delete(sessionId)
+    armed.delete(promote)
+    if (armed.size === 0 && promotions.get(sessionId) === armed) promotions.delete(sessionId)
   }
 }
 
@@ -12,9 +15,9 @@ export function hasPromotion(sessionId: string): boolean {
 }
 
 export function requestBackground(sessionId: string): boolean {
-  const promote = promotions.get(sessionId)
-  if (!promote) return false
+  const armed = promotions.get(sessionId)
+  if (!armed) return false
   promotions.delete(sessionId)
-  promote()
+  for (const promote of armed) promote()
   return true
 }

@@ -60,7 +60,7 @@ A finished agent's report is delivered into the parent conversation automaticall
 
 `bash` with `background:true` starts the command as a managed job and returns its id immediately. Output is captured into a bounded in-memory buffer (oldest middle dropped past ~400 KB, marked with `... N characters omitted ...`) and written completely to a `.log` file in the session directory. When the process exits, its result is delivered into the conversation automatically.
 
-A running foreground `bash` command can be promoted to a background job at any moment with the `jobs.background` shortcut (default `ctrl+b`). The command keeps running, its output keeps flowing into the job, and the result is delivered when it exits. Killing a promoted command that ran in the persistent shell tears the shell session down; the next command starts a fresh one.
+A running foreground `bash` command can be promoted to a background job at any moment with the `jobs.background` shortcut (default `ctrl+b`). Read-sandboxed commands requested together run concurrently, and the shortcut promotes every foreground command that is running. The command keeps running, its output keeps flowing into the job, and the result is delivered when it exits. Killing a promoted command that ran in the persistent shell tears the shell session down; the next command starts a fresh one.
 
 ## Job tools
 

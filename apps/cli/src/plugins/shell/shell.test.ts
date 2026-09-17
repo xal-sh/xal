@@ -7,6 +7,7 @@ import { getJob, stopJob, suppressDelivery, waitForProcessOutput } from "../../b
 import { createNativeProcess } from "../../native"
 import { REDACTION_MARKER, replaceSecretValues } from "../../secrets/redactor"
 import { spawnCommand } from "./process"
+import { sandboxAvailable } from "./sandbox"
 import { disposeShellSession, executeShellCommand } from "./shell"
 import { bashTool } from "./bash/tool"
 
@@ -52,6 +53,16 @@ test("keeps persistent shell state inside its owning session", async () => {
     disposeShellSession(second)
     await rm(workspace, { recursive: true, force: true })
   }
+})
+
+test("shares only read-sandboxed foreground commands", () => {
+  const ctx = { cwd: "/workspace" }
+  expect(bashTool.concurrency?.({ command: "ls", sandbox: "read" }, ctx)).toBe(
+    sandboxAvailable() ? "shared" : "exclusive",
+  )
+  expect(bashTool.concurrency?.({ command: "ls", sandbox: "read", background: true }, ctx)).toBe("exclusive")
+  expect(bashTool.concurrency?.({ command: "ls", sandbox: "workspace" }, ctx)).toBe("exclusive")
+  expect(bashTool.concurrency?.({ command: "ls" }, ctx)).toBe("exclusive")
 })
 
 test("uses isolated fallback for concurrency and restarts dead or disposed shells", async () => {

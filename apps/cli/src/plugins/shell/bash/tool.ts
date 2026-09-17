@@ -62,7 +62,11 @@ function parameters(): Record<string, unknown> {
 function description(): string {
   const base = `Execute a command with the user's shell in a persistent session: cd, exported variables, and aliases or functions defined by earlier commands stay in effect for later ones. Returns combined stdout and stderr followed by the exit code. Commands run without a TTY and are killed after ${DEFAULT_TIMEOUT_S} seconds unless timeout says otherwise. Managed background execution is selected with background:true; processes detached inside the shell are not tracked.`
   if (!sandboxAvailable()) return `${base} Commands follow the current permission mode.`
-  return `${base} Sandboxed commands use OS-enforced filesystem and network restrictions; other commands follow the current permission mode.`
+  return `${base} Sandboxed commands use OS-enforced filesystem and network restrictions; other commands follow the current permission mode. Commands with sandbox "read" requested in the same response run concurrently and may not share shell state, so request independent inspections together and never make one depend on another.`
+}
+
+function readOnlyCommand(args: Record<string, unknown>): boolean {
+  return !backgroundRequested(args) && sandboxAccessOf(args) === "read"
 }
 
 export const bashTool: Tool = {
@@ -73,7 +77,10 @@ export const bashTool: Tool = {
     return asString(args.command) ?? ""
   },
   readOnly(args) {
-    return !backgroundRequested(args) && sandboxAccessOf(args) === "read"
+    return readOnlyCommand(args)
+  },
+  concurrency(args) {
+    return readOnlyCommand(args) ? "shared" : "exclusive"
   },
   undo(args) {
     if (backgroundRequested(args)) return { type: "invalidate" }

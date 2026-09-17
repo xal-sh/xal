@@ -131,7 +131,7 @@ export function bindKeys(renderer: CliRenderer, deps: KeymapDeps): void {
         return
       case "jobs.background":
         screen.activeStatusBar.flashNotice(
-          requestBackground(session.id) ? "Moved the running command to background" : "No command to background",
+          requestBackground(session.id) ? "Moved running commands to background" : "No command to background",
           QUIT_WINDOW_MS,
         )
         return
