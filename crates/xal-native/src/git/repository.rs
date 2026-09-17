@@ -24,7 +24,20 @@ enum RepositoryOperation {
 
 pub struct RepositoryTask {
     workspace: String,
+    root: Arc<OnceLock<String>>,
     operation: Option<RepositoryOperation>,
+}
+
+impl RepositoryTask {
+    fn top(&self) -> napi::Result<String> {
+        if let Some(root) = self.root.get() {
+            return Ok(root.clone());
+        }
+        let root = repository_root(&self.workspace)?
+            .to_string_lossy()
+            .into_owned();
+        Ok(self.root.get_or_init(|| root).clone())
+    }
 }
 
 impl Task for RepositoryTask {
@@ -39,11 +52,11 @@ impl Task for RepositoryTask {
             )
         })?;
         match operation {
-            RepositoryOperation::Discover => match repository_root(&self.workspace) {
+            RepositoryOperation::Discover => match self.top() {
                 Ok(root) => Ok(NativeRepositoryOutput {
                     kind: "discovery".to_owned(),
                     ready: Some(true),
-                    root: Some(root.to_string_lossy().into_owned()),
+                    root: Some(root),
                     reason: None,
                     tree: None,
                     paths: None,
@@ -79,9 +92,9 @@ impl Task for RepositoryTask {
                 gitlinks: None,
             }),
             RepositoryOperation::ChangedPaths(request) => {
-                let top = repository_root(&self.workspace)?;
+                let top = self.top()?;
                 let output = checked_git(
-                    &top.to_string_lossy(),
+                    &top,
                     &[
                         "diff",
                         "--name-only",
@@ -109,7 +122,7 @@ impl Task for RepositoryTask {
                 })
             }
             RepositoryOperation::IndexState(paths) => {
-                let top = repository_root(&self.workspace)?;
+                let top = self.top()?;
                 Ok(NativeRepositoryOutput {
                     kind: "bytes".to_owned(),
                     ready: None,
@@ -117,13 +130,13 @@ impl Task for RepositoryTask {
                     reason: None,
                     tree: None,
                     paths: None,
-                    bytes: Some(index_state(&top.to_string_lossy(), &paths)?.into()),
+                    bytes: Some(index_state(&top, &paths)?.into()),
                     text: None,
                     gitlinks: None,
                 })
             }
             RepositoryOperation::HeadState => {
-                let top = repository_root(&self.workspace)?;
+                let top = self.top()?;
                 Ok(NativeRepositoryOutput {
                     kind: "text".to_owned(),
                     ready: None,
@@ -132,12 +145,12 @@ impl Task for RepositoryTask {
                     tree: None,
                     paths: None,
                     bytes: None,
-                    text: Some(head_state(&top.to_string_lossy())?),
+                    text: Some(head_state(&top)?),
                     gitlinks: None,
                 })
             }
             RepositoryOperation::Gitlinks(request) => {
-                let top = repository_root(&self.workspace)?;
+                let top = self.top()?;
                 Ok(NativeRepositoryOutput {
                     kind: "gitlinks".to_owned(),
                     ready: None,
@@ -147,7 +160,7 @@ impl Task for RepositoryTask {
                     paths: None,
                     bytes: None,
                     text: None,
-                    gitlinks: Some(gitlinks(&top.to_string_lossy(), &request)?),
+                    gitlinks: Some(gitlinks(&top, &request)?),
                 })
             }
             RepositoryOperation::Apply(request) => {
@@ -174,6 +187,7 @@ impl Task for RepositoryTask {
 #[napi]
 pub struct NativeGitRepository {
     cwd: String,
+    root: Arc<OnceLock<String>>,
 }
 
 #[napi]
@@ -186,7 +200,10 @@ impl NativeGitRepository {
                 "Git repository path is required".to_owned(),
             ));
         }
-        Ok(Self { cwd })
+        Ok(Self {
+            cwd,
+            root: Arc::new(OnceLock::new()),
+        })
     }
 
     #[napi(catch_unwind)]
@@ -206,6 +223,7 @@ impl NativeGitRepository {
     pub fn discover(&self) -> AsyncTask<RepositoryTask> {
         AsyncTask::new(RepositoryTask {
             workspace: self.cwd.clone(),
+            root: self.root.clone(),
             operation: Some(RepositoryOperation::Discover),
         })
     }
@@ -214,6 +232,7 @@ impl NativeGitRepository {
     pub fn capture(&self, request: NativeCaptureRequest) -> AsyncTask<RepositoryTask> {
         AsyncTask::new(RepositoryTask {
             workspace: self.cwd.clone(),
+            root: self.root.clone(),
             operation: Some(RepositoryOperation::Capture(request)),
         })
     }
@@ -222,6 +241,7 @@ impl NativeGitRepository {
     pub fn changed_paths(&self, request: NativeTreePairRequest) -> AsyncTask<RepositoryTask> {
         AsyncTask::new(RepositoryTask {
             workspace: self.cwd.clone(),
+            root: self.root.clone(),
             operation: Some(RepositoryOperation::ChangedPaths(request)),
         })
     }
@@ -230,6 +250,7 @@ impl NativeGitRepository {
     pub fn index_state(&self, paths: Vec<String>) -> AsyncTask<RepositoryTask> {
         AsyncTask::new(RepositoryTask {
             workspace: self.cwd.clone(),
+            root: self.root.clone(),
             operation: Some(RepositoryOperation::IndexState(paths)),
         })
     }
@@ -238,6 +259,7 @@ impl NativeGitRepository {
     pub fn head_state(&self) -> AsyncTask<RepositoryTask> {
         AsyncTask::new(RepositoryTask {
             workspace: self.cwd.clone(),
+            root: self.root.clone(),
             operation: Some(RepositoryOperation::HeadState),
         })
     }
@@ -246,6 +268,7 @@ impl NativeGitRepository {
     pub fn gitlinks(&self, request: NativeGitlinksRequest) -> AsyncTask<RepositoryTask> {
         AsyncTask::new(RepositoryTask {
             workspace: self.cwd.clone(),
+            root: self.root.clone(),
             operation: Some(RepositoryOperation::Gitlinks(request)),
         })
     }
@@ -254,6 +277,7 @@ impl NativeGitRepository {
     pub fn apply_snapshot(&self, request: NativeApplySnapshotRequest) -> AsyncTask<RepositoryTask> {
         AsyncTask::new(RepositoryTask {
             workspace: self.cwd.clone(),
+            root: self.root.clone(),
             operation: Some(RepositoryOperation::Apply(request)),
         })
     }

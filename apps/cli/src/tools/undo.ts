@@ -160,6 +160,22 @@ class Repository {
   }
 }
 
+interface Observation {
+  tree: string
+  index?: Uint8Array
+  head?: string
+}
+
+async function observe(
+  repository: Repository,
+  capture: () => Promise<string>,
+  watchIndex: boolean,
+): Promise<Observation> {
+  if (!watchIndex) return { tree: await capture() }
+  const [tree, index, head] = await Promise.all([capture(), repository.indexState([]), repository.headState()])
+  return { tree, index, head }
+}
+
 class UndoCore {
   private readonly repository: Promise<RepositoryDiscovery>
   private readonly snapshots: Snapshot[] = []
@@ -301,15 +317,9 @@ class UndoCore {
         throw new Error(`Git snapshot failed; ${tool} was not run: ${describeError(error)}`, { cause: error })
       }
       const epoch = this.epoch
-      let before: string
-      let beforeIndex: Uint8Array | undefined
-      let beforeHead: string | undefined
+      let before: Observation
       try {
-        before = await capture()
-        if (watchIndex) {
-          beforeIndex = await repository.indexState([])
-          beforeHead = await repository.headState()
-        }
+        before = await observe(repository, capture, watchIndex)
       } catch (error) {
         this.releaseBusy(token, "capture")
         throw new Error(`Git snapshot failed; ${tool} was not run: ${describeError(error)}`, { cause: error })
@@ -325,19 +335,19 @@ class UndoCore {
       let finishError: unknown
       try {
         if (this.epoch === epoch) {
-          const after = await capture()
-          const afterIndex = watchIndex ? await repository.indexState([]) : undefined
-          const afterHead = watchIndex ? await repository.headState() : undefined
-          if (beforeHead !== undefined && afterHead !== undefined && beforeHead !== afterHead) {
+          const after = await observe(repository, capture, watchIndex)
+          if (before.head !== undefined && after.head !== undefined && before.head !== after.head) {
             this.invalidateCode("Git HEAD changed during a shell command, so full undo is unavailable")
-          } else if (beforeIndex && afterIndex && !bytesEqual(beforeIndex, afterIndex)) {
+          } else if (before.index && after.index && !bytesEqual(before.index, after.index)) {
             this.invalidateCode("the Git index changed during a shell command, so full undo is unavailable")
-          } else {
-            const changed = await repository.changedPaths(before, after)
-            const index = await repository.indexState(changed)
-            const gitlinks = await repository.gitlinks(before, after, changed)
+          } else if (before.tree !== after.tree) {
+            const changed = await repository.changedPaths(before.tree, after.tree)
+            const [index, gitlinks] = await Promise.all([
+              repository.indexState(changed),
+              repository.gitlinks(before.tree, after.tree, changed),
+            ])
             if (this.epoch === epoch && changed.length > 0) {
-              this.snapshots.push({ before, after, paths: changed, index, gitlinks, forced })
+              this.snapshots.push({ before: before.tree, after: after.tree, paths: changed, index, gitlinks, forced })
               this.incrementBranch()
             }
           }

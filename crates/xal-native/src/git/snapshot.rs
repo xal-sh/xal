@@ -21,6 +21,44 @@ fn temporary_index_directory() -> napi::Result<PathBuf> {
     Ok(directory)
 }
 
+fn copy_stat_cache(workspace: &str, target: &Path) -> napi::Result<bool> {
+    let flagged = checked_git(workspace, &["ls-files", "-v", "-z"], None, None)?
+        .stdout
+        .split(|byte| *byte == 0)
+        .any(|entry| {
+            entry
+                .first()
+                .is_some_and(|tag| *tag == b'S' || tag.is_ascii_lowercase())
+        });
+    if flagged {
+        return Ok(false);
+    }
+    let located = checked_git(workspace, &["rev-parse", "--git-path", "index"], None, None)?;
+    let source = Path::new(workspace).join(output_text(
+        &located,
+        "git returned a non-UTF-8 index path",
+    )?);
+    let failure = |error: std::io::Error| {
+        Error::new(
+            Status::GenericFailure,
+            format!("could not copy the Git index: {error}"),
+        )
+    };
+    let mut reader = match fs::File::open(&source) {
+        Ok(reader) => reader,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(failure(error)),
+    };
+    let modified = reader
+        .metadata()
+        .and_then(|metadata| metadata.modified())
+        .map_err(failure)?;
+    let mut writer = fs::File::create(target).map_err(failure)?;
+    std::io::copy(&mut reader, &mut writer).map_err(failure)?;
+    writer.set_modified(modified).map_err(failure)?;
+    Ok(true)
+}
+
 pub(super) fn capture_tree(workspace: &str, forced: &[String], full: bool) -> napi::Result<String> {
     validate_targets(Path::new(workspace), forced)?;
     let directory = temporary_index_directory()?;
@@ -36,7 +74,16 @@ pub(super) fn capture_tree(workspace: &str, forced: &[String], full: bool) -> na
             .map_err(|message| Error::new(Status::GenericFailure, message))?;
         if base.exit_code == 0 {
             let tree = output_text(&base, "git returned a non-UTF-8 object ID")?;
-            checked_git(workspace, &["read-tree", &tree], Some(&index_text), None)?;
+            if full && copy_stat_cache(workspace, &index)? {
+                checked_git(
+                    workspace,
+                    &["read-tree", "--reset", &tree],
+                    Some(&index_text),
+                    None,
+                )?;
+            } else {
+                checked_git(workspace, &["read-tree", &tree], Some(&index_text), None)?;
+            }
         } else {
             checked_git(
                 workspace,

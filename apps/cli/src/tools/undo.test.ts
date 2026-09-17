@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, readFile, rm, utimes, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { appInfo } from "../app-info"
@@ -197,5 +197,42 @@ test("preserves a shell command's staged changes while invalidating workspace un
     ])
     expect(await readFile(tracked, "utf8")).toBe("staged by command\n")
     expect(await git(workspace, ["show", ":tracked.txt"])).toBe("staged by command\n")
+  })
+})
+
+test("captures a same-size shell edit that keeps the timestamp Git cached", async () => {
+  await withGitWorkspace(async (workspace) => {
+    const tracked = join(workspace, "tracked.txt")
+    const cached = new Date(Date.now() - 60_000)
+    await git(workspace, ["config", "core.trustctime", "false"])
+    await utimes(tracked, cached, cached)
+    await git(workspace, ["update-index", "--refresh"])
+    await utimes(join(workspace, ".git", "index"), cached, cached)
+    const undo = new WorkspaceUndo(workspace)
+    undo.markPrompt("message-1", "Run a shell command")
+
+    await undo.trackWorkspace("bash", async () => {
+      await writeFile(tracked, "racing\n")
+      await utimes(tracked, cached, cached)
+    })
+
+    expect((await undo.previews())[0]?.paths).toEqual(["tracked.txt"])
+    await undo.rewind("message-1")
+    expect(await readFile(tracked, "utf8")).toBe("before\n")
+  })
+})
+
+test("captures shell edits to files Git was told to assume unchanged", async () => {
+  await withGitWorkspace(async (workspace) => {
+    const tracked = join(workspace, "tracked.txt")
+    await git(workspace, ["update-index", "--assume-unchanged", "tracked.txt"])
+    const undo = new WorkspaceUndo(workspace)
+    undo.markPrompt("message-1", "Run a shell command")
+
+    await undo.trackWorkspace("bash", () => writeFile(tracked, "after\n"))
+
+    expect((await undo.previews())[0]?.paths).toEqual(["tracked.txt"])
+    await undo.rewind("message-1")
+    expect(await readFile(tracked, "utf8")).toBe("before\n")
   })
 })
