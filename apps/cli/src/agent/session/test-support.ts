@@ -83,6 +83,8 @@ export function toolRound(callId: string, name: string, args: JsonObject): Provi
 }
 
 export class ScriptedProvider implements Provider {
+  readonly kind = "text" as const
+
   readonly id = `test-${crypto.randomUUID()}`
   readonly name = "Scripted provider"
   readonly aliases: string[] = []
@@ -100,6 +102,7 @@ export class ScriptedProvider implements Provider {
     return {
       models: [
         {
+          kind: "text",
           id: "test-model",
           name: "Test model",
           contextWindow: this.contextWindow,

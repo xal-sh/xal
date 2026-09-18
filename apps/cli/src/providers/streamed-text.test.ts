@@ -4,6 +4,7 @@ import { collectStreamedText, StreamedTextAttemptError } from "./streamed-text"
 
 function provider(events: AsyncIterable<StreamEvent>): Provider {
   return {
+    kind: "text",
     id: "attempt-provider",
     name: "Attempt provider",
     aliases: [],

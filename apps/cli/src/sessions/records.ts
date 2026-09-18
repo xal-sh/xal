@@ -495,7 +495,7 @@ function parseCompaction(raw: Record<string, unknown>): CompactionItem | undefin
   const replaced = asNumber(raw.replaced)
   if (!summary || replaced === undefined || !Array.isArray(raw.retained)) return undefined
   const strategy = asString(raw.strategy)
-  if (raw.strategy !== undefined && strategy !== "user_messages_v1") return undefined
+  if (raw.strategy !== undefined && strategy !== "user_messages_v1" && strategy !== "jev_v1") return undefined
   const tokensBefore = asNumber(raw.tokensBefore)
   if (raw.tokensBefore !== undefined && tokensBefore === undefined) return undefined
   if (strategy === "user_messages_v1") {
@@ -515,6 +515,7 @@ function parseCompaction(raw: Record<string, unknown>): CompactionItem | undefin
     if (!item) return undefined
     retained.push(item)
   }
+  if (strategy === "jev_v1") return { type: "compaction", strategy, summary, replaced, tokensBefore, retained }
   return { type: "compaction", summary, replaced, tokensBefore, retained }
 }
 

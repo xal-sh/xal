@@ -3,7 +3,7 @@ import { cacheDir } from "../../config/paths"
 import { describeError } from "../../lib/error"
 import { readJsonFile, writeSecureJson } from "../../lib/fs"
 import { asNumber, asString, isRecord } from "../../lib/json"
-import type { ModelCatalog, ModelInfo, ThinkingOptions } from "../../providers/types"
+import type { ModelCatalog, TextModelInfo, ThinkingOptions } from "../../providers/types"
 import { apiKey } from "./api-auth"
 import { openAiFetch, raiseForStatus } from "./api-client"
 import { contextWindowCap } from "./context-window"
@@ -78,6 +78,7 @@ function configurableContextWindow(id: string): boolean {
 function modelInfo(id: string): ConfigurableContextModel {
   const thinking = reasoning(id)
   return {
+    kind: "text",
     id,
     name: id,
     contextWindow: contextWindow(id),
@@ -88,7 +89,7 @@ function modelInfo(id: string): ConfigurableContextModel {
   }
 }
 
-function modelInfos(ids: string[]): ModelInfo[] {
+function modelInfos(ids: string[]): TextModelInfo[] {
   return withContextWindowOptions(ids.map(modelInfo))
 }
 

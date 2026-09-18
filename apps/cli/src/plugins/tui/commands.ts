@@ -1,3 +1,4 @@
+import { compactionConfigAvailable, configureCompaction } from "../../config/compaction-command"
 import { appInfo } from "../../app-info"
 import { resumeSession } from "../../agent/session/compose"
 import { stopBackgroundWorker, takeOverBackgroundSession } from "../../bg/attach"
@@ -15,7 +16,7 @@ import type { PluginContext } from "../types"
 
 interface TuiCommandActions {
   agents(): void
-  config(): void
+  config(compactionAvailable: boolean): void
   usage(summary: ProviderUsageSummary, view: UsageActivityView, provider?: string): void
   terminal(): string[]
   quit(): void
@@ -42,10 +43,12 @@ const terminalCommand: Command = {
 
 const configCommand: Command = {
   name: "config",
-  describe: "configure persistent display preferences",
-  async run() {
+  describe: "configure display preferences and compaction",
+  async run(args, ctx) {
+    if (args.length === 1 && args[0] === "compaction") return configureCompaction(ctx)
+    if (args.length > 0) throw new Error("usage: /config [compaction]")
     if (!actions) throw new Error("tui is not running")
-    actions.config()
+    actions.config(await compactionConfigAvailable())
   },
 }
 

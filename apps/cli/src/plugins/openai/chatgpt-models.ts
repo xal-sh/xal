@@ -9,7 +9,7 @@ import { errorDetail, httpError } from "../../providers/transport"
 import {
   isThinkingEffort,
   type ModelCatalog,
-  type ModelInfo,
+  type TextModelInfo,
   type ModelInputModality,
   type ThinkingEffort,
   type ThinkingOptions,
@@ -28,6 +28,7 @@ interface ChatGptModel extends ConfigurableContextModel {
 
 const BUNDLED_MODELS: ChatGptModel[] = [
   {
+    kind: "text",
     id: "gpt-5.6-luna",
     name: "GPT-5.6-Luna",
     contextWindow: 272_000,
@@ -37,6 +38,7 @@ const BUNDLED_MODELS: ChatGptModel[] = [
     supportsFast: true,
   },
   {
+    kind: "text",
     id: "gpt-5.6-sol",
     name: "GPT-5.6-Sol",
     contextWindow: 272_000,
@@ -46,6 +48,7 @@ const BUNDLED_MODELS: ChatGptModel[] = [
     supportsFast: true,
   },
   {
+    kind: "text",
     id: "gpt-5.6-terra",
     name: "GPT-5.6-Terra",
     contextWindow: 272_000,
@@ -55,6 +58,7 @@ const BUNDLED_MODELS: ChatGptModel[] = [
     supportsFast: true,
   },
   {
+    kind: "text",
     id: "gpt-5.5",
     name: "GPT-5.5",
     contextWindow: 272_000,
@@ -63,6 +67,7 @@ const BUNDLED_MODELS: ChatGptModel[] = [
     supportsFast: true,
   },
   {
+    kind: "text",
     id: "gpt-5.4",
     name: "GPT-5.4",
     contextWindow: 272_000,
@@ -71,6 +76,7 @@ const BUNDLED_MODELS: ChatGptModel[] = [
     supportsFast: true,
   },
   {
+    kind: "text",
     id: "gpt-5.4-mini",
     name: "GPT-5.4-Mini",
     contextWindow: 272_000,
@@ -79,6 +85,7 @@ const BUNDLED_MODELS: ChatGptModel[] = [
     supportsFast: false,
   },
   {
+    kind: "text",
     id: "gpt-5.3-codex-spark",
     name: "GPT-5.3-Codex-Spark",
     contextWindow: 128_000,
@@ -135,6 +142,7 @@ function parseRuntimeModel(raw: unknown): { model: ChatGptModel; priority: numbe
   const autoCompactTokenLimit = positiveInteger(raw.auto_compact_token_limit)
   return {
     model: {
+      kind: "text",
       id,
       name,
       contextWindow: positiveInteger(raw.context_window) ?? positiveInteger(raw.max_context_window),
@@ -183,6 +191,7 @@ function parseCachedModel(raw: unknown): ChatGptModel | undefined {
   if (!id || !name || supportsFast === undefined) return undefined
   const autoCompactTokenLimit = positiveInteger(raw.autoCompactTokenLimit)
   return {
+    kind: "text",
     id,
     name,
     contextWindow: positiveInteger(raw.contextWindow),
@@ -223,7 +232,7 @@ function capped(models: ChatGptModel[]): ChatGptModel[] {
   })
 }
 
-function withVariants(models: ChatGptModel[]): ModelInfo[] {
+function withVariants(models: ChatGptModel[]): TextModelInfo[] {
   return models.flatMap(({ supportsFast, ...model }) => {
     const configured = withContextWindowOptions([model])[0]!
     return supportsFast

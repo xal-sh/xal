@@ -81,12 +81,16 @@ export function buildChatMessages(instructions: string, items: ConversationItem[
                 : omitUserMessageImages(item).text,
         })
         break
-      case "assistant_message":
-        currentAssistant().content = item.text
+      case "assistant_message": {
+        const message = currentAssistant()
+        message.content = [asString(message.content), item.text].filter(Boolean).join("\n\n")
         break
-      case "reasoning":
-        currentAssistant().reasoning_content = item.summary
+      }
+      case "reasoning": {
+        const message = currentAssistant()
+        message.reasoning_content = [asString(message.reasoning_content), item.summary].filter(Boolean).join("\n\n")
         break
+      }
       case "tool_call": {
         const message = currentAssistant()
         const calls = Array.isArray(message.tool_calls) ? message.tool_calls : []

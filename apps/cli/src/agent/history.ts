@@ -4,6 +4,14 @@ import type { DirectShellResult } from "./events"
 export type CompactionItem =
   | {
       type: "compaction"
+      strategy: "jev_v1"
+      summary: string
+      replaced: number
+      tokensBefore?: number
+      retained: ConversationItem[]
+    }
+  | {
+      type: "compaction"
       summary: string
       replaced: number
       tokensBefore?: number
@@ -93,7 +101,9 @@ export function activeHistory(items: HistoryItem[]): ConversationItem[] {
     }
     if (item.type === "compaction") {
       active.length = 0
-      if (item.strategy === "user_messages_v1") {
+      if (item.strategy === "jev_v1") {
+        active.push(...item.retained)
+      } else if (item.strategy === "user_messages_v1") {
         active.push(...item.retained, continuationSummaryMessage(item.summary))
       } else {
         active.push(summaryMessage(item.summary), ...item.retained)

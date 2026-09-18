@@ -19,35 +19,36 @@ Both files are optional and must contain a JSON object when present. Objects mer
 
 A project-root `.mcp.json` is a discovery source rather than a third configuration layer. On interactive launch, Xal can use its new MCP server names for the current process or copy them into either configuration file. Existing Xal server names are not overwritten. See [Project `.mcp.json` discovery](/docs/integrations#project-mcpjson-discovery) for the accepted schema and launch choices.
 
-Commands that save model, thinking, context-window, compaction-limit, or TUI display preferences write the user file. Xal then recomputes the effective configuration, and any project override remains active. Importing discovered MCP servers and deleting servers from `/mcp` are source-aware exceptions: project choices update the project file, global choices update the user file, and deletion updates the file that supplied the effective server.
+Commands that save model, thinking, context-window, compaction-limit, compaction strategy, or TUI display preferences write the user file. Xal then recomputes the effective configuration, and any project override remains active. Importing discovered MCP servers and deleting servers from `/mcp` are source-aware exceptions: project choices update the project file, global choices update the user file, and deletion updates the file that supplied the effective server.
 
 Global memory is stored at `<app-home>/MEMORY.md`. On Unix, Xal creates it with mode `0600` and rejects broader permissions. Windows does not expose an equivalent mode through the filesystem API, so Xal relies on the inherited ACL of `<app-home>`. If the app home is overridden on Windows, its directory must be private to the current user.
 
 ## Top-level options
 
-| Option             | Type       | Default                  | Details                                                                     |
-| ------------------ | ---------- | ------------------------ | --------------------------------------------------------------------------- |
-| `plugins`          | `string[]` | `[]`                     | Additional modules described in [Plugins and hooks](/docs/plugins).         |
-| `provider`         | `string`   | Last registered provider | Provider ID or alias used for new sessions.                                 |
-| `profile`          | `string`   | Selected connection      | Internal ID of the named provider profile used for new sessions.            |
-| `model`            | `string`   | Provider default         | Model ID used for new sessions.                                             |
-| `ui`               | `string`   | `"tui"`                  | UI ID started when Xal runs without a command.                              |
-| `mode`             | `string`   | `"normal"`               | Permission mode used for new TUI and headless sessions.                     |
-| `permissions`      | `object`   | `{}`                     | Global rules described in [Permissions and security](/docs/permissions).    |
-| `modes`            | `object`   | `{}`                     | [Custom permission modes](/docs/permissions#custom-modes) keyed by name.    |
-| `goal`             | `object`   | `{}`                     | Evaluator models described in [Goals](/docs/goals).                         |
-| `redaction`        | `object`   | `{}`                     | [Sensitive values](/docs/permissions#redaction) to redact.                  |
-| `agents`           | `object`   | `{}`                     | Limits described in [Background work](/docs/background-work#configuration). |
-| `pluginConfig`     | `object`   | `{}`                     | Configuration keyed by plugin name.                                         |
-| `thinking`         | `object`   | `{}`                     | Thinking effort keyed by provider ID and model ID.                          |
-| `contextWindows`   | `object`   | `{}`                     | Context-window choices keyed by provider ID and model ID.                   |
-| `compactionLimits` | `object`   | `{}`                     | Auto-compaction limits keyed by provider ID and model ID.                   |
+| Option             | Type       | Default                     | Details                                                                     |
+| ------------------ | ---------- | --------------------------- | --------------------------------------------------------------------------- |
+| `plugins`          | `string[]` | `[]`                        | Additional modules described in [Plugins and hooks](/docs/plugins).         |
+| `provider`         | `string`   | Last registered provider    | Provider ID or alias used for new sessions.                                 |
+| `profile`          | `string`   | Selected connection         | Internal ID of the named provider profile used for new sessions.            |
+| `model`            | `string`   | Provider default            | Model ID used for new sessions.                                             |
+| `ui`               | `string`   | `"tui"`                     | UI ID started when Xal runs without a command.                              |
+| `mode`             | `string`   | `"normal"`                  | Permission mode used for new TUI and headless sessions.                     |
+| `permissions`      | `object`   | `{}`                        | Global rules described in [Permissions and security](/docs/permissions).    |
+| `modes`            | `object`   | `{}`                        | [Custom permission modes](/docs/permissions#custom-modes) keyed by name.    |
+| `goal`             | `object`   | `{}`                        | Evaluator models described in [Goals](/docs/goals).                         |
+| `redaction`        | `object`   | `{}`                        | [Sensitive values](/docs/permissions#redaction) to redact.                  |
+| `agents`           | `object`   | `{}`                        | Limits described in [Background work](/docs/background-work#configuration). |
+| `pluginConfig`     | `object`   | `{}`                        | Configuration keyed by plugin name.                                         |
+| `thinking`         | `object`   | `{}`                        | Thinking effort keyed by provider ID and model ID.                          |
+| `contextWindows`   | `object`   | `{}`                        | Context-window choices keyed by provider ID and model ID.                   |
+| `compaction`       | `object`   | `{ "strategy": "summary" }` | Optional [Jev compaction](#jev-compaction).                                 |
+| `compactionLimits` | `object`   | `{}`                        | Auto-compaction limits keyed by provider ID and model ID.                   |
 
 The `profile` value is managed by `/connect` and `/model`. Profile names remain user-facing and may be renamed without changing this ID.
 
 `mode` accepts `normal`, `plan`, `yolo`, or a name defined under `modes`. A command-line `--mode` overrides the configured default for that session.
 
-Malformed `mode`, `permissions`, `modes`, `goal`, `redaction`, or `agents` configuration fails startup instead of silently running without those rules.
+Malformed `mode`, `permissions`, `modes`, `goal`, `redaction`, `compaction`, or `agents` configuration fails startup instead of silently running without those rules.
 
 Built-in configuration is documented with the feature that consumes it:
 
@@ -116,6 +117,29 @@ Automatic-compaction preferences use fixed token counts for each provider and ca
 Use `/compaction-limit` to choose a context-relative limit for the active model. The command offers fixed token values at 50%, 60%, 70%, and 80% of the active context window and saves the selected absolute value under the canonical model ID. It is available only when the model has a known context window.
 
 Provider entries must be objects, and each model value must be a positive integer. A saved value takes precedence over a provider-advertised limit, but every effective limit is capped at 80% of the active context window. This cap also keeps a stale value safe when `/context-window` changes the model's active window.
+
+## Jev compaction
+
+Jev pruning is disabled by default. After connecting TypeSafe, run `/config`, choose **Compaction**, and select **Jev · <profile>**. `/config compaction` opens that selector directly. Only connected TypeSafe profiles are offered. Choose **Summary compaction** to disable it. If the selected profile is later removed, the selector remains available so you can disable or replace it.
+
+```json
+{
+  "compaction": {
+    "strategy": "jev",
+    "profile": "<immutable TypeSafe profile ID>"
+  }
+}
+```
+
+`strategy` accepts `summary` (default) or `jev`. `jev` requires a non-empty `profile` ID, not the profile name or token. Unknown options or malformed strategy settings fail startup. UI changes write the user config; a trusted project override still takes precedence. The setting applies to manual `/compact` and automatic compaction, including task-agent sessions. It does not change the existing `compactionLimits` trigger.
+
+Enabling this sends structured state to TypeSafe's `jev-latest` with `context`, `goal`, and `history`. The context explains that pruning frees space for the assistant to continue its task while preserving requirements, decisions, and information needed for unfinished work. The goal is the explicit `/compact` focus when non-empty; otherwise it uses the last three non-empty user prompts in chronological order, each limited to 500 UTF-8 bytes with an omission marker when shortened. History contains an indexed text view of the active conversation, tool names and inputs. Tool results are represented by their lengths, images by omission notices, and opaque provider replay data is excluded. Long inputs and older text may be shortened in the decision view only. Xal conservatively targets 25,000 estimated state tokens and 30,000 estimated total tokens per request, batching questions as needed. Every batch receives the same context, goal, and fitted history. These are estimates, not a tokenizer guarantee.
+
+Jev scores whether older tool calls and their results should stay. A result probability of at least 0.5 keeps both; otherwise a call probability of at least 0.5 keeps the call and truncates long results to 300 characters plus a notice; otherwise both are removed. The first conversation item and the newest six items are protected, including either half of any tool pair touching those items. User and assistant text, images, and retained provider replay data remain unchanged in the saved history. The `jev_v1` checkpoint reloads that history without adding a synthetic summary.
+
+Pruning is accepted only when it reduces the estimated full harness request by more than 25% and leaves it below 90% of the active auto-compaction limit, when known. Unavailable credentials, API errors, invalid decisions, an oversized decision view, or insufficient reduction produce a visible fallback notice, then run ordinary summary compaction against the original history. No partial Jev edits are applied. User cancellation stops without fallback or history replacement. The whole Jev attempt is bounded to 60 seconds. Successful decision requests are included in TypeSafe's compaction token usage.
+
+This is inspired by [fast-jev-compaction](https://github.com/tamaratran/fast-jev-compaction), adapted to Xal's conversation and persistence contracts without importing its Claude-specific message format.
 
 ## Combined example
 

@@ -30,6 +30,7 @@ test("makes the current writable mode override stale plan-mode context", () => {
       },
     },
     goal: { evaluatorModels: {} },
+    compaction: { strategy: "summary" },
     redaction: { values: [], environment: [] },
     agents: { maxConcurrent: 4, timeoutMinutes: 0, maxTurns: 24 },
     pluginConfig: {},

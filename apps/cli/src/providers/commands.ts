@@ -77,6 +77,10 @@ const connectCommand: Command = {
     if (!credential) return
 
     const profile = await createProfile(target.provider.id, name, credential)
+    if (target.provider.kind === "decision") {
+      ctx.print(`connected · ${target.provider.name} · ${profile.name} · decision models only; harness model unchanged`)
+      return
+    }
     let saved = false
     try {
       const model = await target.provider.defaultModel(profile.id)
@@ -108,6 +112,7 @@ const connectCommand: Command = {
 
 const modelCommand: Command = {
   name: "model",
+  aliases: ["models"],
   describe: "choose the model for this and future sessions",
   async run(args, ctx) {
     if (args.length > 1 || (args[0] && args[0] !== "refresh")) throw new Error("usage: /model [refresh]")

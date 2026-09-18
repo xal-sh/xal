@@ -41,6 +41,7 @@ const { setContextWindowCap } = await import("./context-window")
 const { defaultModel, listModels } = await import("./api-models")
 
 const provider: Provider = {
+  kind: "text",
   id: "openai",
   name: "OpenAI",
   aliases: [],

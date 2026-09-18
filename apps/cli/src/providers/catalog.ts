@@ -8,16 +8,18 @@ import {
   type ModelCatalog,
   type ModelAlias,
   type ModelCatalogSource,
-  type ModelInfo,
+  type TextModelInfo,
   type ModelInputModality,
   type Provider,
+  type AnyProvider,
+  type ProviderConnection,
   type ThinkingOptions,
 } from "./types"
 
 export interface ModelChoice {
   provider: Provider
   profile: ProviderProfile
-  model: ModelInfo
+  model: TextModelInfo
   source: ModelCatalogSource
 }
 
@@ -41,11 +43,11 @@ export interface ModelChoices {
 }
 
 export interface ConnectTarget {
-  provider: Provider
+  provider: AnyProvider
   profiles: number
 }
 
-export function providerLabel(provider: Provider): string {
+export function providerLabel(provider: ProviderConnection): string {
   return provider.aliases[0] ?? provider.id
 }
 
@@ -171,8 +173,8 @@ function validateModelAliases(
   return aliases
 }
 
-function validateModel(provider: Provider, raw: unknown): ModelInfo {
-  if (!isRecord(raw)) throw new Error(`${provider.name} returned an invalid model`)
+function validateModel(provider: Provider, raw: unknown): TextModelInfo {
+  if (!isRecord(raw) || raw.kind !== "text") throw new Error(`${provider.name} returned an invalid text model`)
   const id = asString(raw.id)?.trim()
   const name = asString(raw.name)?.trim()
   if (!id) throw new Error(`${provider.name} returned a model with no ID`)
@@ -195,6 +197,7 @@ function validateModel(provider: Provider, raw: unknown): ModelInfo {
     throw new Error(`${provider.name} returned an invalid auto-compaction token limit for ${id}`)
   }
   return {
+    kind: "text",
     id,
     name,
     aliases: validateModelAliases(provider, id, contextWindows, raw.aliases),
@@ -272,14 +275,18 @@ export async function refreshModelCatalogs(): Promise<void> {
   await Promise.all(
     (await listProfiles()).map(async (profile) => {
       const provider = getProvider(profile.provider)
-      if (!provider) return
+      if (!provider || provider.kind !== "text") return
       await modelCatalog(provider, profile.id)
       await modelCatalog(provider, profile.id, true)
     }),
   )
 }
 
-function configuredModel(provider: Provider, model: ModelInfo, fallbackContextWindow = model.contextWindow): ModelInfo {
+function configuredModel(
+  provider: Provider,
+  model: TextModelInfo,
+  fallbackContextWindow = model.contextWindow,
+): TextModelInfo {
   const configuredContextWindow = settings().contextWindows[provider.id]?.[model.id]
   const contextWindow = model.contextWindows?.includes(configuredContextWindow ?? 0)
     ? configuredContextWindow
@@ -298,7 +305,7 @@ export async function findModel(
   profileId: string,
   model: string,
   refresh = false,
-): Promise<ModelInfo | undefined> {
+): Promise<TextModelInfo | undefined> {
   const catalog = await modelCatalog(provider, profileId, refresh)
   const found = catalog.models.find((info) => info.id === model)
   if (found) return configuredModel(provider, found)
@@ -309,7 +316,7 @@ export async function findModel(
   return undefined
 }
 
-export function modelSummary(model: ModelInfo, listReasoning = false): string {
+export function modelSummary(model: TextModelInfo, listReasoning = false): string {
   const details: string[] = []
   if (model.contextWindow) details.push(`${Math.round(model.contextWindow / 1_000)}k${listReasoning ? " ctx" : ""}`)
   if (model.inputModalities.includes("image")) details.push(listReasoning ? "image" : "img")
@@ -321,7 +328,7 @@ export async function listModelChoices(refresh = false): Promise<ModelChoices> {
   const grouped = await Promise.all(
     (await listProfiles()).map(async (profile): Promise<ModelChoices> => {
       const provider = getProvider(profile.provider)
-      if (!provider) return { choices: [], notices: [] }
+      if (!provider || provider.kind !== "text") return { choices: [], notices: [] }
       try {
         const catalog = await modelCatalog(provider, profile.id, refresh)
         return {

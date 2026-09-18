@@ -7,6 +7,8 @@ import type { ModelCatalog, Provider, StreamEvent, StreamRequest } from "./types
 import { registerProviderCommands } from "./commands"
 
 class BlockingProvider implements Provider {
+  readonly kind = "text" as const
+
   readonly id = `provider-command-${crypto.randomUUID()}`
   readonly name = "Provider command"
   readonly aliases: string[] = []
@@ -22,6 +24,7 @@ class BlockingProvider implements Provider {
     return {
       models: [
         {
+          kind: "text",
           id: "canonical-model",
           name: "Test model",
           aliases: [{ id: "test-model" }],

@@ -1,5 +1,5 @@
 import { asNumber, asString, asStringArray, isRecord } from "../../lib/json"
-import { isThinkingEffort, type ModelInfo, type ThinkingEffort } from "../../providers/types"
+import { isThinkingEffort, type TextModelInfo, type ThinkingEffort } from "../../providers/types"
 
 export interface DeviceAuthorization {
   deviceCode: string
@@ -17,7 +17,7 @@ export type DeviceTokenResult =
 
 export type CopilotEndpoint = "/chat/completions" | "/responses"
 
-export interface CopilotModel extends ModelInfo {
+export interface CopilotModel extends TextModelInfo {
   endpoint: CopilotEndpoint
 }
 
@@ -74,7 +74,7 @@ export function parseDeviceToken(raw: unknown): DeviceTokenResult {
   return { type: "failed", message: `GitHub device login failed: ${description ? `${error}: ${description}` : error}` }
 }
 
-function thinking(raw: unknown): ModelInfo["thinking"] {
+function thinking(raw: unknown): TextModelInfo["thinking"] {
   const options = asStringArray(raw).filter(
     (effort): effort is ThinkingEffort => effort !== "none" && isThinkingEffort(effort),
   )
@@ -86,7 +86,7 @@ function thinking(raw: unknown): ModelInfo["thinking"] {
 function inputModalities(
   supports: Record<string, unknown> | undefined,
   limits: Record<string, unknown> | undefined,
-): ModelInfo["inputModalities"] {
+): TextModelInfo["inputModalities"] {
   if (supports?.vision === true) return ["text", "image"]
   if (supports?.vision === false) return ["text"]
   const vision = limits && isRecord(limits.vision) ? limits.vision : undefined
@@ -123,6 +123,7 @@ function candidate(raw: unknown): ModelCandidate | undefined {
   const contextWindow = positiveNumber(limits?.max_context_window_tokens) ?? positiveNumber(limits?.max_prompt_tokens)
   return {
     model: {
+      kind: "text",
       id,
       name,
       ...(contextWindow === undefined ? {} : { contextWindow }),

@@ -36,7 +36,7 @@ afterAll(async () => {
 
 function modelCatalog(): ModelCatalog {
   return {
-    models: [{ id: "test-model", name: "Test model", inputModalities: ["text"] }],
+    models: [{ kind: "text", id: "test-model", name: "Test model", inputModalities: ["text"] }],
     source: "runtime",
   }
 }
@@ -228,6 +228,7 @@ test("lets a child ask its parent, consume the answer, and finish in the same se
   const questionObserved = Promise.withResolvers<void>()
   const secondWaitStarted = Promise.withResolvers<void>()
   const provider: Provider = {
+    kind: "text",
     id: `sub-agent-question-test-${crypto.randomUUID()}`,
     name: "Sub-agent question test provider",
     aliases: [],
@@ -391,6 +392,7 @@ test("inherits deny rules and durably delivers a bounded task report", async () 
   let deliveredInput = ""
 
   const provider: Provider = {
+    kind: "text",
     id: `sub-agent-test-${crypto.randomUUID()}`,
     name: "Sub-agent test provider",
     aliases: [],
@@ -498,6 +500,7 @@ test("holds the task open across nested background Bash and delivers only the fr
   let deliveredInput = ""
 
   const provider: Provider = {
+    kind: "text",
     id: `sub-agent-async-test-${crypto.randomUUID()}`,
     name: "Sub-agent nested async test provider",
     aliases: [],
@@ -599,6 +602,7 @@ test("releases a child cancelled while ask_parent is pending without restoring t
   let parentRound = 0
   let followupInput = ""
   const provider: Provider = {
+    kind: "text",
     id: `sub-agent-cancel-test-${crypto.randomUUID()}`,
     name: "Sub-agent cancellation test provider",
     aliases: [],

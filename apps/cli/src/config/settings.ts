@@ -1,3 +1,4 @@
+import { parseCompactionSettings, type CompactionSettings } from "./compaction"
 import { readJsonFile, writeSecureJson } from "../lib/fs"
 import { asString, asStringArray, isRecord } from "../lib/json"
 import { builtinPermissionModes } from "../permissions/modes"
@@ -50,6 +51,7 @@ export interface Settings {
   pluginConfig: Record<string, Record<string, unknown>>
   thinking: Record<string, Record<string, ThinkingEffort>>
   contextWindows: Record<string, Record<string, number>>
+  compaction: CompactionSettings
   compactionLimits: Record<string, Record<string, number>>
 }
 
@@ -66,6 +68,7 @@ let current: Settings = {
   pluginConfig: {},
   thinking: {},
   contextWindows: {},
+  compaction: { strategy: "summary" },
   compactionLimits: {},
 }
 
@@ -283,6 +286,7 @@ function parseSettings(raw: Record<string, unknown>): Settings {
     pluginConfig,
     thinking,
     contextWindows,
+    compaction: parseCompactionSettings(raw.compaction),
     compactionLimits,
   }
 }

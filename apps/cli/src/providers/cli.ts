@@ -21,7 +21,7 @@ import {
   providerLabel,
 } from "./catalog"
 import { getProvider } from "./registry"
-import type { Provider } from "./types"
+import type { AnyProvider } from "./types"
 
 async function chooseProfile(): Promise<ProviderProfile | undefined> {
   const profiles = await listProfiles()
@@ -45,6 +45,7 @@ async function namedProfile(name?: string): Promise<ProviderProfile | undefined>
 async function activateProfile(profile: ProviderProfile, ctx: CliContext): Promise<void> {
   const provider = getProvider(profile.provider)
   if (!provider) throw new Error(`provider ${profile.provider} for profile ${profile.name} is unavailable`)
+  if (provider.kind === "decision") return
   const model = await provider.defaultModel(profile.id)
   const catalog = await modelCatalog(provider, profile.id, true)
   if (catalog.warning) ctx.error(`warning: ${provider.name} · ${profile.name}: ${catalog.warning}`)
@@ -59,7 +60,7 @@ const connectCli: Cli = {
   async run(args, ctx) {
     if (args.length > 2) throw new Error("usage: connect <provider> [profile]")
 
-    let provider: Provider | undefined
+    let provider: AnyProvider | undefined
     const wanted = args[0]
     if (wanted) {
       provider = getProvider(wanted)

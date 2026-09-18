@@ -6,7 +6,7 @@ import { resolveThinking } from "../../config/thinking"
 import { pathExists } from "../../lib/fs"
 import type { PermissionMode } from "../../permissions/types"
 import { findModel } from "../../providers/catalog"
-import { getProvider, listProviders } from "../../providers/registry"
+import { getProvider, getTextProvider, listTextProviders } from "../../providers/registry"
 import type { Provider, ThinkingEffort } from "../../providers/types"
 import { loadSession } from "../../sessions/store"
 import type { LoadedSession, SessionSummary } from "../../sessions/types"
@@ -40,20 +40,20 @@ async function resolveTarget(options: SessionOptions): Promise<ProviderTarget> {
     : undefined
   if (options.connection && !named) throw new Error(`unknown connection: ${options.connection}`)
   if (named && options.provider) {
-    const requested = getProvider(options.provider)
+    const requested = getTextProvider(options.provider)
     if (!requested) throw new Error(`unknown provider: ${options.provider}`)
     if (requested.id !== named.provider) {
       throw new Error(`connection ${named.name} belongs to ${named.provider}, not ${requested.id}`)
     }
   }
   if (named) {
-    const provider = getProvider(named.provider)
+    const provider = getTextProvider(named.provider)
     if (!provider) throw new Error(`provider ${named.provider} for connection ${named.name} is not available`)
     return { provider, profile: named }
   }
 
   if (options.provider) {
-    const provider = getProvider(options.provider)
+    const provider = getTextProvider(options.provider)
     if (!provider) throw new Error(`unknown provider: ${options.provider}`)
     const available = profiles.filter((profile) => profile.provider === provider.id)
     const configured = available.find((profile) => profile.id === settings().profile)
@@ -65,24 +65,25 @@ async function resolveTarget(options: SessionOptions): Promise<ProviderTarget> {
 
   const configured = profiles.find((profile) => profile.id === settings().profile)
   if (configured) {
-    const provider = getProvider(configured.provider)
+    const provider = getTextProvider(configured.provider)
     if (provider) return { provider, profile: configured }
   }
 
   const wanted = settings().provider
   if (wanted) {
-    const provider = getProvider(wanted)
+    const provider = getTextProvider(wanted)
     if (!provider) throw new Error(`unknown provider: ${wanted}`)
     return { provider, profile: profiles.find((profile) => profile.provider === provider.id) }
   }
 
   for (const profile of profiles) {
-    const provider = getProvider(profile.provider)
+    const provider = getTextProvider(profile.provider)
     if (provider) return { provider, profile }
   }
-  if (profiles.length > 0) throw new Error("no connected profile has an available provider")
+  if (profiles.some((profile) => getProvider(profile.provider)?.kind !== "decision"))
+    throw new Error("no connected profile has an available text provider")
 
-  const provider = listProviders().at(-1)
+  const provider = listTextProviders().at(-1)
   if (!provider) throw new Error("no provider registered")
   return { provider }
 }
@@ -212,7 +213,7 @@ export async function resumeSession(
   const profile = await getProfile(last.profile)
   if (!profile) throw new Error(`provider profile ${last.profile} used by this session no longer exists`)
   if (profile.provider !== last.provider) throw new Error("session provider profile does not match its provider")
-  const provider = getProvider(last.provider)
+  const provider = getTextProvider(last.provider)
   if (!provider) throw new Error(`provider ${last.provider} used by this session is not available`)
   const model = last.model
   const thinking = await resolveThinking(provider, profile.id, model, last.thinking)

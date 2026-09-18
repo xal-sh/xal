@@ -2,6 +2,7 @@ import { beforeEach, expect, mock, test } from "bun:test"
 import { isRecord } from "../../lib/json"
 
 const cachedModel = {
+  kind: "text",
   id: "gpt-5.6-sol",
   name: "GPT-5.6-Sol",
   contextWindow: 272_000,

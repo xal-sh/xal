@@ -1,12 +1,12 @@
 import { describeError } from "../../lib/error"
 import { asString, isRecord } from "../../lib/json"
-import type { ModelCatalog, ModelInfo } from "../../providers/types"
+import type { ModelCatalog, TextModelInfo } from "../../providers/types"
 import { anthropicFetch, PROVIDER_NAME } from "./api"
 import { apiKey } from "./auth"
 
 export type ThinkingMode = "adaptive" | "budget"
 
-export interface AnthropicModel extends ModelInfo {
+export interface AnthropicModel extends TextModelInfo {
   maxOutputTokens: number
   thinkingMode: ThinkingMode
 }
@@ -22,6 +22,7 @@ export function thinkingModeFor(id: string): ThinkingMode {
 
 const BUNDLED_MODELS: AnthropicModel[] = [
   {
+    kind: "text",
     id: "claude-opus-5",
     thinkingMode: "adaptive",
     name: "Claude Opus 5",
@@ -31,6 +32,7 @@ const BUNDLED_MODELS: AnthropicModel[] = [
     thinking: { options: [...REASONING.options], default: REASONING.default },
   },
   {
+    kind: "text",
     id: "claude-sonnet-5",
     thinkingMode: "adaptive",
     name: "Claude Sonnet 5",
@@ -40,6 +42,7 @@ const BUNDLED_MODELS: AnthropicModel[] = [
     thinking: { options: [...REASONING.options], default: REASONING.default },
   },
   {
+    kind: "text",
     id: "claude-fable-5",
     thinkingMode: "adaptive",
     name: "Claude Fable 5",
@@ -49,6 +52,7 @@ const BUNDLED_MODELS: AnthropicModel[] = [
     thinking: { options: [...ALWAYS_THINKING.options], default: ALWAYS_THINKING.default },
   },
   {
+    kind: "text",
     id: "claude-opus-4-8",
     thinkingMode: "adaptive",
     name: "Claude Opus 4.8",
@@ -58,6 +62,7 @@ const BUNDLED_MODELS: AnthropicModel[] = [
     thinking: { options: [...REASONING.options], default: REASONING.default },
   },
   {
+    kind: "text",
     id: "claude-haiku-4-5",
     thinkingMode: "budget",
     name: "Claude Haiku 4.5",
@@ -74,6 +79,7 @@ function modelInfo(id: string, name: string | undefined): AnthropicModel {
   const bundled = BUNDLED_MODELS.find((model) => model.id === id)
   if (bundled) return { ...bundled }
   return {
+    kind: "text",
     id,
     name: name ?? id,
     maxOutputTokens: FALLBACK_MAX_OUTPUT_TOKENS,

@@ -1,13 +1,14 @@
 import { describeError } from "../../lib/error"
 import { asString, asStringArray, isRecord } from "../../lib/json"
-import type { ModelCatalog, ModelInfo } from "../../providers/types"
+import type { ModelCatalog, TextModelInfo } from "../../providers/types"
 import { googleFetch, PROVIDER_NAME } from "./api"
 import { apiKey } from "./auth"
 
 const THINKING = { options: ["none", "low", "medium", "high", "xhigh", "max"], default: "high" } as const
 
-const BUNDLED_MODELS: ModelInfo[] = [
+const BUNDLED_MODELS: TextModelInfo[] = [
   {
+    kind: "text",
     id: "gemini-3.1-pro-preview",
     name: "Gemini 3.1 Pro",
     contextWindow: 1_048_576,
@@ -15,6 +16,7 @@ const BUNDLED_MODELS: ModelInfo[] = [
     thinking: { options: [...THINKING.options], default: THINKING.default },
   },
   {
+    kind: "text",
     id: "gemini-3.6-flash",
     name: "Gemini 3.6 Flash",
     contextWindow: 1_048_576,
@@ -22,6 +24,7 @@ const BUNDLED_MODELS: ModelInfo[] = [
     thinking: { options: [...THINKING.options], default: THINKING.default },
   },
   {
+    kind: "text",
     id: "gemini-3.5-flash",
     name: "Gemini 3.5 Flash",
     contextWindow: 1_048_576,
@@ -29,6 +32,7 @@ const BUNDLED_MODELS: ModelInfo[] = [
     thinking: { options: [...THINKING.options], default: THINKING.default },
   },
   {
+    kind: "text",
     id: "gemini-3-pro-preview",
     name: "Gemini 3 Pro",
     contextWindow: 1_048_576,
@@ -37,10 +41,11 @@ const BUNDLED_MODELS: ModelInfo[] = [
   },
 ]
 
-function modelInfo(id: string, name: string | undefined, contextWindow: number | undefined): ModelInfo {
+function modelInfo(id: string, name: string | undefined, contextWindow: number | undefined): TextModelInfo {
   const bundled = BUNDLED_MODELS.find((model) => model.id === id)
   if (bundled) return { ...bundled }
   return {
+    kind: "text",
     id,
     name: name ?? id,
     ...(contextWindow ? { contextWindow } : {}),
@@ -54,13 +59,13 @@ function supportsGeneration(entry: Record<string, unknown>): boolean {
   return methods.length === 0 || methods.includes("generateContent")
 }
 
-async function discoverModels(profileId: string): Promise<ModelInfo[]> {
+async function discoverModels(profileId: string): Promise<TextModelInfo[]> {
   const response = await googleFetch("/models?pageSize=200", await apiKey(profileId), {
     signal: AbortSignal.timeout(15_000),
   })
   const raw: unknown = await response.json()
   if (!isRecord(raw) || !Array.isArray(raw.models)) throw new Error(`${PROVIDER_NAME} models response was invalid`)
-  const models: ModelInfo[] = []
+  const models: TextModelInfo[] = []
   for (const entry of raw.models) {
     if (!isRecord(entry)) throw new Error(`${PROVIDER_NAME} models response contained an invalid model`)
     const name = asString(entry.name)

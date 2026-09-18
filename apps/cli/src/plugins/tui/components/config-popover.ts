@@ -17,11 +17,13 @@ const SETTINGS = [
     label: "Show thinking",
     description: "Include model reasoning in the transcript",
   },
+  { key: "compaction", label: "Compaction", description: "Choose Jev pruning or harness-model summary" },
 ] as const
 
-export type TuiToggleKey = (typeof SETTINGS)[number]["key"]
+export type TuiToggleKey = Exclude<(typeof SETTINGS)[number]["key"], "compaction">
 
 interface SettingRow {
+  view: BoxRenderable
   cursor: TextRenderable
   name: TextRenderable
   value: TextRenderable
@@ -30,6 +32,7 @@ interface SettingRow {
 
 interface ConfigPopoverActions {
   change(config: TuiPreferences, key: TuiToggleKey): Promise<void>
+  configureCompaction(): void
   changed(): void
   error(message: string): void
 }
@@ -40,13 +43,14 @@ export class ConfigPopover {
   private readonly rows: SettingRow[] = []
   private selected = 0
   private saving = false
+  private compactionAvailable = false
 
   get visible(): boolean {
     return this.view.visible
   }
 
   get height(): number {
-    return 7
+    return 7 + (this.compactionAvailable ? 1 : 0)
   }
 
   constructor(
@@ -71,7 +75,7 @@ export class ConfigPopover {
     const header = row(ctx, { height: 1 })
     header.add(
       label(ctx, {
-        content: "/config · Display",
+        content: "/config · Preferences",
         flexGrow: 1,
         flexShrink: 1,
         minWidth: 1,
@@ -99,7 +103,7 @@ export class ConfigPopover {
       settingRow.add(name)
       settingRow.add(value)
       settingRow.add(description)
-      this.rows.push({ cursor, name, value, description })
+      this.rows.push({ view: settingRow, cursor, name, value, description })
       this.view.add(settingRow)
     }
 
@@ -111,7 +115,9 @@ export class ConfigPopover {
     )
   }
 
-  show(): void {
+  show(compactionAvailable = false): void {
+    this.compactionAvailable = compactionAvailable
+    this.view.height = this.height - 1
     this.selected = 0
     this.status.content = ""
     this.renderRows()
@@ -131,7 +137,8 @@ export class ConfigPopover {
       return true
     }
     if (name === "up" || name === "down") {
-      this.selected = (this.selected + (name === "up" ? -1 : 1) + SETTINGS.length) % SETTINGS.length
+      const count = SETTINGS.length - (this.compactionAvailable ? 0 : 1)
+      this.selected = (this.selected + (name === "up" ? -1 : 1) + count) % count
       this.renderRows()
       return true
     }
@@ -142,6 +149,11 @@ export class ConfigPopover {
   private toggle(): void {
     const setting = SETTINGS[this.selected]
     if (!setting) return
+    if (setting.key === "compaction") {
+      this.hide()
+      this.actions.configureCompaction()
+      return
+    }
     const previous = this.config
     const next = { ...previous, [setting.key]: !previous[setting.key] }
     this.config = next
@@ -168,10 +180,13 @@ export class ConfigPopover {
     this.rows.forEach((entry, index) => {
       const setting = SETTINGS[index]!
       const selected = index === this.selected
-      const enabled = this.config[setting.key]
+      entry.view.visible = setting.key !== "compaction" || this.compactionAvailable
+      const enabled = setting.key === "compaction" ? undefined : this.config[setting.key]
       entry.cursor.content = selected ? terminalGlyph("❯", ">") : ""
       entry.name.content = new StyledText([selected ? paint(COLORS.accent, setting.label) : muted(setting.label)])
-      entry.value.content = new StyledText([enabled ? paint(COLORS.success, "[on]") : muted("[off]")])
+      entry.value.content = new StyledText([
+        enabled === undefined ? muted("[edit]") : enabled ? paint(COLORS.success, "[on]") : muted("[off]"),
+      ])
       entry.description.content = new StyledText([muted(setting.description)])
     })
   }

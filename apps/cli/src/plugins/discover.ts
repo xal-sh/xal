@@ -10,6 +10,7 @@ import { describeError } from "../lib/error"
 import { clearHooks, registerHook, removeHooks } from "../hooks/registry"
 import { contributeRules } from "../permissions/rules"
 import { registerPolicyRule } from "../permissions/service"
+import { decisions } from "../providers/decisions"
 import { registerProvider } from "../providers/registry"
 import { prepareSecretValues, protectSecretValue } from "../secrets/redactor"
 import { registerTool, unregisterTool } from "../tools/registry"
@@ -67,6 +68,7 @@ function contextFor(plugin: Plugin, settings: Settings, pluginOrder: number, sig
       paths: { home: agentHome(), cache: cacheDir() },
       credentials: { load: loadCredential, save: saveCredential, replace: replaceCredential },
       protectSecret: protectSecretValue,
+      decisions,
     },
     signal,
     registerTool: (tool) => apply(() => registerTool(tool)),

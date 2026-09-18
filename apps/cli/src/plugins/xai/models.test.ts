@@ -66,6 +66,7 @@ describe("xAI model catalog", () => {
 
     expect(byId.get("grok-4.3")).toMatchObject({ name: "Grok 4.3", contextWindow: 1_000_000 })
     expect(byId.get("grok-9-preview")).toEqual({
+      kind: "text",
       id: "grok-9-preview",
       name: "grok-9-preview",
       inputModalities: ["text"],

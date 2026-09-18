@@ -13,6 +13,7 @@ function model(
   } = {},
 ): Record<string, unknown> {
   return {
+    kind: "text",
     id,
     name: id.toUpperCase(),
     model_picker_enabled: options.picker ?? false,
@@ -84,6 +85,7 @@ describe("GitHub Copilot wire parsing", () => {
     )
     expect(models).toEqual([
       {
+        kind: "text",
         id: "chat-model",
         name: "CHAT-MODEL",
         contextWindow: 128_000,
@@ -92,6 +94,7 @@ describe("GitHub Copilot wire parsing", () => {
         endpoint: "/chat/completions",
       },
       {
+        kind: "text",
         id: "responses-model",
         name: "RESPONSES-MODEL",
         contextWindow: 128_000,
@@ -164,6 +167,7 @@ describe("GitHub Copilot wire parsing", () => {
 
   test("accepts Personal Copilot catalogs that omit endpoint, picker, and policy metadata", () => {
     const data = Array.from({ length: 8 }, (_, index) => ({
+      kind: "text",
       id: `legacy-${index + 1}`,
       name: `Legacy ${index + 1}`,
       capabilities: { supports: {} },
@@ -174,6 +178,7 @@ describe("GitHub Copilot wire parsing", () => {
         {
           data: [
             {
+              kind: "text",
               id: "empty-endpoints",
               name: "Empty endpoints",
               supported_endpoints: [],

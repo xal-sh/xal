@@ -94,3 +94,35 @@ A custom plugin receives the object under `pluginConfig` whose key matches its e
 ```
 
 Built-in plugin options are documented with their features in [TUI](/docs/tui), [Integrations](/docs/integrations), and [Providers and models](/docs/providers).
+
+## Decision models
+
+Providers and models have explicit kinds. `Provider` and `TextModelInfo` have `kind: "text"`; `DecisionProvider` and `DecisionModelInfo` have `kind: "decision"`. `AnyProvider` and `ModelInfo` are their respective unions. Existing text-provider plugins must add `kind: "text"` to their provider and model metadata. `ModelCatalog` defaults to text models; decision providers return `ModelCatalog<DecisionModelInfo>`.
+
+Both provider kinds register through `ctx.registerProvider` and may implement `connect` to return a credential. A decision provider implements `listModels(profileId, refresh)` and `evaluate(profileId, request)` instead of `defaultModel` and `stream`. The harness accepts only text providers. Decision models are discovered separately and are never selectable as the harness model.
+
+Consumers use `ctx.runtime.decisions`, so plugins never depend on or import one another:
+
+```ts
+const connections = await ctx.runtime.decisions.connections()
+const connection = connections.find((entry) => entry.provider.id === "typesafe")
+if (!connection) throw new Error("Connect TypeSafe first")
+const catalog = await ctx.runtime.decisions.models(connection.profile.id)
+const model = catalog.models.find((entry) => entry.id === "jev-latest")
+if (!model) throw new Error("Jev is unavailable")
+const result = await ctx.runtime.decisions.evaluate(connection.profile.id, {
+  model: model.id,
+  state: { task: "Decide whether this old file read is still needed" },
+  questions: {
+    keep: { type: "noul", instructions: "Is this file content still needed for the current task?" },
+  },
+  signal: ctx.signal,
+})
+const keep = result.answers.keep
+if (keep?.type !== "noul") throw new Error("Expected a Noul answer")
+console.log({ retainOriginal: keep.noul >= 0.5 })
+```
+
+The service resolves the immutable profile and checks its provider kind on every operation. It exposes connection metadata but not credentials. Outbound state and question descriptions pass through Xal's secret redactor; model, question, or choice identifiers containing protected secrets are rejected rather than renamed. State is a string, JSON object, or array. Questions are a discriminated `DecisionQuestion` union: `noul`, `choice` (named criteria), or `score` (ordered levels). Instructions and rubric descriptions accept strings, objects, arrays, or null. `DecisionResponse` returns the resolved model ID, a map of discriminated answers under the original question IDs, and normalized token usage. Choice and Score include probability distributions and confidence. Consumers narrow `answer.type` and apply their own thresholds; probabilities do not guarantee correctness.
+
+TypeSafe validates answer types, probabilities, choice membership, score ranges and legends, question coverage, and usage at the wire boundary. Failures reject the operation. A consumer must surface any fallback rather than silently ignoring errors. Abort signals propagate to the transport. Decision requests do not use the chat streaming contract.

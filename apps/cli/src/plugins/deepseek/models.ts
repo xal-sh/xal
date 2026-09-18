@@ -1,11 +1,12 @@
 import { describeError } from "../../lib/error"
 import { asString, isRecord } from "../../lib/json"
-import type { ModelCatalog, ModelInfo } from "../../providers/types"
+import type { ModelCatalog, TextModelInfo } from "../../providers/types"
 import { deepSeekFetch } from "./api"
 import { apiKey } from "./auth"
 
-const BUNDLED_MODELS: ModelInfo[] = [
+const BUNDLED_MODELS: TextModelInfo[] = [
   {
+    kind: "text",
     id: "deepseek-v4-flash",
     name: "DeepSeek V4 Flash",
     contextWindow: 1_000_000,
@@ -13,6 +14,7 @@ const BUNDLED_MODELS: ModelInfo[] = [
     thinking: { options: ["none", "low", "high", "max"], default: "high" },
   },
   {
+    kind: "text",
     id: "deepseek-v4-pro",
     name: "DeepSeek V4 Pro",
     contextWindow: 1_000_000,
@@ -21,16 +23,16 @@ const BUNDLED_MODELS: ModelInfo[] = [
   },
 ]
 
-function modelInfo(id: string): ModelInfo {
+function modelInfo(id: string): TextModelInfo {
   const bundled = BUNDLED_MODELS.find((model) => model.id === id)
-  return bundled ? { ...bundled } : { id, name: id, inputModalities: ["text"] }
+  return bundled ? { ...bundled } : { kind: "text", id, name: id, inputModalities: ["text"] }
 }
 
-async function discoverModels(profileId: string): Promise<ModelInfo[]> {
+async function discoverModels(profileId: string): Promise<TextModelInfo[]> {
   const response = await deepSeekFetch("/models", await apiKey(profileId), { signal: AbortSignal.timeout(15_000) })
   const raw: unknown = await response.json()
   if (!isRecord(raw) || !Array.isArray(raw.data)) throw new Error("DeepSeek models response was invalid")
-  const models: ModelInfo[] = []
+  const models: TextModelInfo[] = []
   for (const entry of raw.data) {
     if (!isRecord(entry)) throw new Error("DeepSeek models response contained an invalid model")
     const id = asString(entry.id)

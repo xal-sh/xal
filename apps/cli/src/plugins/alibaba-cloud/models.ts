@@ -1,7 +1,8 @@
-import type { ModelCatalog, ModelInfo } from "../../providers/types"
+import type { ModelCatalog, TextModelInfo } from "../../providers/types"
 
-const BUNDLED_MODELS: ModelInfo[] = [
+const BUNDLED_MODELS: TextModelInfo[] = [
   {
+    kind: "text",
     id: "qwen3.7-plus",
     name: "Qwen 3.7 Plus",
     contextWindow: 1_000_000,
@@ -9,6 +10,7 @@ const BUNDLED_MODELS: ModelInfo[] = [
     thinking: { options: ["none", "high"], default: "high" },
   },
   {
+    kind: "text",
     id: "qwen3.6-plus",
     name: "Qwen 3.6 Plus",
     contextWindow: 1_000_000,
@@ -16,6 +18,7 @@ const BUNDLED_MODELS: ModelInfo[] = [
     thinking: { options: ["none", "high"], default: "high" },
   },
   {
+    kind: "text",
     id: "qwen3.5-plus",
     name: "Qwen 3.5 Plus",
     contextWindow: 1_000_000,
@@ -23,6 +26,7 @@ const BUNDLED_MODELS: ModelInfo[] = [
     thinking: { options: ["none", "high"], default: "high" },
   },
   {
+    kind: "text",
     id: "qwen3-coder-plus",
     name: "Qwen 3 Coder Plus",
     contextWindow: 1_000_000,

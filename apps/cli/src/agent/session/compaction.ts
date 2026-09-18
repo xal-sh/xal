@@ -1,3 +1,6 @@
+import { settings } from "../../config/settings"
+import { decisions } from "../../providers/decisions"
+import { pruneWithJev } from "./jev-compaction"
 import { resolveThinking } from "../../config/thinking"
 import { describeError } from "../../lib/error"
 import { truncateUtf8Middle } from "../../lib/text"
@@ -29,7 +32,7 @@ export type CompactionTrigger = "auto" | "manual"
 
 export interface CompactionObservation {
   trigger: CompactionTrigger
-  strategy: "legacy" | "user_messages_v1"
+  strategy: "legacy" | "user_messages_v1" | "jev_v1"
   outcome: "completed" | "nothing" | "failed" | "interrupted"
   tokensBefore?: number
   before: ConversationItem[]
@@ -255,6 +258,84 @@ export async function runCompaction(
 
   try {
     host.setState("compacting")
+    const compaction = settings().compaction
+    if (compaction.strategy === "jev") {
+      let checkpoint: CompactionItem | undefined
+      try {
+        if (
+          !(await decisions.connections()).some(
+            (entry) => entry.provider.id === "typesafe" && entry.profile.id === compaction.profile,
+          )
+        ) {
+          throw new Error("configured TypeSafe profile is not connected")
+        }
+        const retained = await pruneWithJev(before, {
+          service: decisions,
+          profile: compaction.profile,
+          sessionId: host.sessionId(),
+          signal: AbortSignal.any([signal, AbortSignal.timeout(60_000)]),
+          focus: instructions,
+          onRequest: () => host.onRequestStarted(),
+        })
+        const candidate: CompactionItem = {
+          type: "compaction",
+          strategy: "jev_v1",
+          summary: "Jev pruned stale tool history; retained conversation text is unchanged.",
+          replaced: before.length - retained.length,
+          tokensBefore,
+          retained,
+        }
+        const previousEstimate = estimateRequestTokens(
+          host.buildRequestWithHistory(history, provider, model, undefined, signal),
+        )
+        const replacementEstimate = estimateRequestTokens(
+          host.buildRequestWithHistory([candidate], provider, model, undefined, signal),
+        )
+        const info = await findModel(provider, profileId, model)
+        const limit = effectiveAutoCompactTokenLimit(info?.contextWindow, info?.autoCompactTokenLimit)
+        if (
+          replacementEstimate >= previousEstimate * 0.75 ||
+          (limit !== undefined && replacementEstimate >= limit * 0.9)
+        ) {
+          throw new Error("Jev did not free enough context")
+        }
+        signal.throwIfAborted()
+        checkpoint = candidate
+      } catch (error) {
+        host.observeCompaction({
+          trigger,
+          strategy: "jev_v1",
+          outcome: signal.aborted ? "interrupted" : "failed",
+          tokensBefore,
+          before,
+          after: before,
+          retained: [],
+          removedTypes: [],
+        })
+        if (signal.aborted) throw error
+        host.emit({
+          type: "error",
+          message: `Jev compaction: ${describeError(error)}; falling back to summary compaction. No Jev edits were applied.`,
+        })
+      }
+      if (checkpoint) {
+        const kept = new Set(checkpoint.retained)
+        host.observeCompaction({
+          trigger,
+          strategy: "jev_v1",
+          outcome: "completed",
+          tokensBefore,
+          before,
+          after: checkpoint.retained,
+          retained: checkpoint.retained,
+          removedTypes: before.filter((item) => !kept.has(item)).map((item) => item.type),
+        })
+        host.replaceHistory(checkpoint)
+        host.emit({ type: "compacted", summary: checkpoint.summary, replaced: checkpoint.replaced, tokensBefore })
+        return true
+      }
+    }
+    signal.throwIfAborted()
     const target = await resolveCompactionTarget(provider, profileId, model)
     let summary: string | undefined
     let attempt = 1

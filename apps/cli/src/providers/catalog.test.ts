@@ -4,11 +4,12 @@ import { clearModelCatalog, findModel, modelCatalog } from "./catalog"
 import type { ModelCatalog, Provider } from "./types"
 
 function catalog(model: string, source: ModelCatalog["source"]): ModelCatalog {
-  return { models: [{ id: model, name: model, inputModalities: ["text"] }], source }
+  return { models: [{ kind: "text", id: model, name: model, inputModalities: ["text"] }], source }
 }
 
 function fakeProvider(id: string, listModels: Provider["listModels"]): Provider {
   return {
+    kind: "text",
     id,
     name: id,
     aliases: [],
@@ -62,6 +63,7 @@ test("accepts ordered context-window options beginning at the model default", as
   const provider = fakeProvider("context-options", async () => ({
     models: [
       {
+        kind: "text",
         id: "model-a",
         name: "model-a",
         aliases: [{ id: "model-a-large", contextWindow: 600_000 }],
@@ -83,6 +85,7 @@ test("applies configured compaction limits after canonical alias resolution", as
   const provider = fakeProvider("configured-compaction", async () => ({
     models: [
       {
+        kind: "text",
         id: "model-a",
         name: "model-a",
         aliases: [{ id: "model-a-alias" }],
@@ -109,6 +112,7 @@ test("rejects invalid internal auto-compaction limits", async () => {
   const provider = fakeProvider("invalid-auto-compaction", async () => ({
     models: [
       {
+        kind: "text",
         id: "model-a",
         name: "model-a",
         contextWindow: 100_000,

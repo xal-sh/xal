@@ -1,8 +1,8 @@
-import type { ModelInfo } from "../../providers/types"
+import type { TextModelInfo } from "../../providers/types"
 
 const LEGACY_LARGE_CONTEXT_SUFFIX = "-1m"
 
-export interface ConfigurableContextModel extends ModelInfo {
+export interface ConfigurableContextModel extends TextModelInfo {
   maxContextWindow?: number
   legacyLargeContextWindow?: number
 }
@@ -17,7 +17,7 @@ function contextWindows(contextWindow: number | undefined, maxContextWindow: num
   return options.length > 1 ? options : undefined
 }
 
-export function withContextWindowOptions(models: ConfigurableContextModel[]): ModelInfo[] {
+export function withContextWindowOptions(models: ConfigurableContextModel[]): TextModelInfo[] {
   return models.map(({ maxContextWindow, legacyLargeContextWindow, ...model }) => {
     const options = contextWindows(model.contextWindow, maxContextWindow)
     const legacyContextWindow = legacyLargeContextWindow ?? (options ? maxContextWindow : undefined)

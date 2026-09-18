@@ -188,7 +188,7 @@ export async function startTui(events: EventService, config: TuiConfig, options:
   })
   const resetCommands = setTuiCommandActions({
     agents: () => screen.openAgents(),
-    config: () => screen.openConfig(),
+    config: (compactionAvailable) => screen.openConfig(compactionAvailable),
     usage: (summary, view, provider) => screen.openUsage(summary, view, provider),
     terminal: () => describeTerminal(renderer.capabilities),
     quit,

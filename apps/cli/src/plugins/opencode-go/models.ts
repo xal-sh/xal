@@ -1,5 +1,5 @@
 import { describeError } from "../../lib/error"
-import type { ModelCatalog, ModelInfo } from "../../providers/types"
+import type { ModelCatalog, TextModelInfo } from "../../providers/types"
 import { goFetch } from "./api"
 import { apiKey } from "./auth"
 import { modelInfo, parseModelIds } from "./wire"
@@ -30,9 +30,9 @@ const BUNDLED_IDS = [
   "ox-alpha-free",
 ]
 
-const BUNDLED_MODELS: ModelInfo[] = BUNDLED_IDS.map((id) => modelInfo(id))
+const BUNDLED_MODELS: TextModelInfo[] = BUNDLED_IDS.map((id) => modelInfo(id))
 
-async function discoverModels(profileId: string): Promise<ModelInfo[]> {
+async function discoverModels(profileId: string): Promise<TextModelInfo[]> {
   const response = await goFetch("/models", await apiKey(profileId), { signal: AbortSignal.timeout(20_000) })
   return parseModelIds(await response.json()).map(modelInfo)
 }

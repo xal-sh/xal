@@ -21,6 +21,7 @@ import shell from "./shell/plugin"
 import tui from "./tui/plugin"
 import web from "./web/plugin"
 import xai from "./xai/plugin"
+import typesafe from "./typesafe/plugin"
 
 export const builtinPlugins: Plugin[] = [
   codeReview,
@@ -43,6 +44,7 @@ export const builtinPlugins: Plugin[] = [
   openrouter,
   opencodeGo,
   xai,
+  typesafe,
   ask,
   tui,
 ]

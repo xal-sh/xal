@@ -1,3 +1,4 @@
+import { decisions } from "../../providers/decisions"
 import { describe, expect, test } from "bun:test"
 import { events } from "../../events"
 import type { PluginContext } from "../types"
@@ -8,6 +9,7 @@ function context(config: Record<string, unknown>): PluginContext {
     config,
     events,
     runtime: {
+      decisions,
       app: { name: "xal", version: "test" },
       paths: { home: "/tmp/xal", cache: "/tmp/xal/cache" },
       credentials: { load: async () => undefined, save: async () => {}, replace: async () => {} },

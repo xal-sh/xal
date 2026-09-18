@@ -1,10 +1,10 @@
 import { asString, isRecord } from "../../lib/json"
-import type { ModelInfo } from "../../providers/types"
+import type { TextModelInfo } from "../../providers/types"
 import { PROVIDER_NAME } from "./api"
 
 export type GoEndpoint = "/chat/completions" | "/responses" | "/messages"
 
-export interface GoModel extends ModelInfo {
+export interface GoModel extends TextModelInfo {
   endpoint: GoEndpoint
   maxTokens: number
 }
@@ -12,8 +12,8 @@ export interface GoModel extends ModelInfo {
 interface ModelMetadata {
   name: string
   contextWindow?: number
-  inputModalities: ModelInfo["inputModalities"]
-  thinking?: ModelInfo["thinking"]
+  inputModalities: TextModelInfo["inputModalities"]
+  thinking?: TextModelInfo["thinking"]
   endpoint: GoEndpoint
   maxTokens: number
 }
@@ -230,10 +230,11 @@ const METADATA: Record<string, ModelMetadata> = {
   },
 }
 
-export function modelInfo(id: string): ModelInfo {
+export function modelInfo(id: string): TextModelInfo {
   const metadata = METADATA[id]
-  if (!metadata) return { id, name: id, inputModalities: ["text"] }
+  if (!metadata) return { kind: "text", id, name: id, inputModalities: ["text"] }
   return {
+    kind: "text",
     id,
     name: metadata.name,
     ...(metadata.contextWindow === undefined ? {} : { contextWindow: metadata.contextWindow }),

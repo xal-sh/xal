@@ -29,6 +29,7 @@ async function withHome(run: () => Promise<void>): Promise<void> {
 
 function responseModel(id: string): Record<string, unknown> {
   return {
+    kind: "text",
     id,
     name: id,
     model_picker_enabled: true,
@@ -49,6 +50,7 @@ test("Copilot model caches are bound to the credential that discovered them", as
   await withHome(async () => {
     const cached: CopilotModel[] = [
       {
+        kind: "text",
         id: "account-a-model",
         name: "Account A Model",
         contextWindow: 128_000,
@@ -76,6 +78,7 @@ test("Copilot model caches are bound to the credential that discovered them", as
       expect(await listModels(profileId, false)).toEqual({
         models: [
           {
+            kind: "text",
             id: "account-b-model",
             name: "account-b-model",
             contextWindow: 128_000,

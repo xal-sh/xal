@@ -5,7 +5,8 @@ import type { Credential } from "../config/credentials"
 import type { EventService } from "../events"
 import type { Hook } from "../hooks/types"
 import type { PermissionRules, PolicyRule } from "../permissions/types"
-import type { Provider } from "../providers/types"
+import type { DecisionService } from "../providers/decision-types"
+import type { AnyProvider } from "../providers/types"
 import type { ToolSessionDisposer } from "../tools/session"
 import type { RegisteredTool } from "../tools/types"
 import type { ToolRenderer } from "../ui/extension"
@@ -26,6 +27,7 @@ export interface PluginRuntime {
     save(providerId: string, profileId: string, credential: Credential): Promise<void>
     replace(providerId: string, profileId: string, expected: Credential, credential: Credential): Promise<void>
   }
+  decisions: DecisionService
   protectSecret(value: string): void
 }
 
@@ -37,7 +39,7 @@ export interface PluginContext {
   registerTool(tool: RegisteredTool): void
   unregisterTool(tool: RegisteredTool): void
   registerToolSessionDisposer(disposer: ToolSessionDisposer): void
-  registerProvider(provider: Provider): void
+  registerProvider(provider: AnyProvider): void
   registerCli(cli: Cli, parent?: string): void
   registerCommand(command: Command): void
   registerHook(hook: Hook): void

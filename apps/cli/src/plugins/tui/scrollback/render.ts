@@ -195,7 +195,7 @@ function compaction(
   const hint = expanded || !detailsShortcut ? "" : ` · ${detailsShortcut} to read it`
   box.add(
     paragraph(ctx, {
-      content: `context compacted · ${block.replaced} items summarized${before}${hint}`,
+      content: `context compacted · ${block.replaced} items removed${before}${hint}`,
       color: COLORS.warning,
     }),
   )

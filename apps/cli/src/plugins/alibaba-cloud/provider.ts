@@ -5,6 +5,7 @@ import { defaultModel, listModels } from "./models"
 import { streamResponse } from "./transport"
 
 export const alibabaCloudProvider: Provider = {
+  kind: "text",
   id: PROVIDER_ID,
   name: "Alibaba Cloud Model Studio",
   aliases: ["dashscope"],

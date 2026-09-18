@@ -5,6 +5,7 @@ import { defaultModel, listModels } from "./models"
 import { streamResponse } from "./transport"
 
 export const githubCopilotProvider: Provider = {
+  kind: "text",
   id: PROVIDER_ID,
   name: "GitHub Copilot",
   aliases: ["copilot"],

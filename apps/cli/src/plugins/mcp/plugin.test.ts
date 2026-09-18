@@ -1,3 +1,4 @@
+import { decisions } from "../../providers/decisions"
 import { expect, test } from "bun:test"
 import type { PromptSection } from "../../agent/prompt/registry"
 import { events } from "../../events"
@@ -10,6 +11,7 @@ function context(permissionRules: PermissionRules[], prompts: PromptSection[]): 
     config: {},
     events,
     runtime: {
+      decisions,
       app: { name: "xal", version: "test" },
       paths: { home: "/tmp/xal", cache: "/tmp/xal/cache" },
       credentials: { load: async () => undefined, save: async () => {}, replace: async () => {} },

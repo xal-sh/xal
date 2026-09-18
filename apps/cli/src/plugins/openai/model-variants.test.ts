@@ -2,6 +2,7 @@ import { expect, test } from "bun:test"
 import { type ConfigurableContextModel, resolveLargeContextModel, withContextWindowOptions } from "./model-variants"
 
 const terra: ConfigurableContextModel & { maxContextWindow: number } = {
+  kind: "text",
   id: "gpt-5.6-terra",
   name: "GPT-5.6-Terra",
   contextWindow: 260_000,

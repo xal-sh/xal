@@ -150,6 +150,7 @@ export class Screen {
         scrollbackRows: preferences.scrollbackRows,
       },
       {
+        configureCompaction: () => this.executeCommand("/config compaction"),
         change: async (config, key) => {
           await saveTuiConfig(config)
           switch (key) {
@@ -420,10 +421,10 @@ export class Screen {
     this.syncFooter()
   }
 
-  openConfig(): void {
+  openConfig(compactionAvailable = false): void {
     this.picker.hide()
     this.usage.hide()
-    this.config.show()
+    this.config.show(compactionAvailable)
     this.syncFooter()
   }
 

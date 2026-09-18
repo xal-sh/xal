@@ -1,6 +1,6 @@
 import { describeError } from "../../lib/error"
 import { asString, isRecord } from "../../lib/json"
-import type { ModelCatalog, ModelInfo, ThinkingOptions } from "../../providers/types"
+import type { ModelCatalog, TextModelInfo, ThinkingOptions } from "../../providers/types"
 import { authorizedFetch } from "./auth"
 
 const DISCOVERY_TIMEOUT_MS = 15_000
@@ -36,8 +36,9 @@ const BUNDLED: BundledModel[] = [
   { id: "grok-3-mini", name: "Grok 3 Mini", contextWindow: 131_072 },
 ]
 
-function bundledInfo(model: BundledModel): ModelInfo {
+function bundledInfo(model: BundledModel): TextModelInfo {
   return {
+    kind: "text",
     id: model.id,
     name: model.name,
     contextWindow: model.contextWindow,
@@ -46,19 +47,25 @@ function bundledInfo(model: BundledModel): ModelInfo {
   }
 }
 
-const BUNDLED_MODELS: ModelInfo[] = BUNDLED.map(bundledInfo)
+const BUNDLED_MODELS: TextModelInfo[] = BUNDLED.map(bundledInfo)
 
-function modelInfo(id: string): ModelInfo {
+function modelInfo(id: string): TextModelInfo {
   const bundled = BUNDLED_MODELS.find((model) => model.id === id)
   if (bundled) return { ...bundled }
-  return { id, name: id, inputModalities: ["text"], ...(hasEffortDial(id) ? { thinking: EFFORT_DIAL } : {}) }
+  return {
+    kind: "text",
+    id,
+    name: id,
+    inputModalities: ["text"],
+    ...(hasEffortDial(id) ? { thinking: EFFORT_DIAL } : {}),
+  }
 }
 
-async function discoverModels(profileId: string): Promise<ModelInfo[]> {
+async function discoverModels(profileId: string): Promise<TextModelInfo[]> {
   const response = await authorizedFetch(profileId, "/models", { signal: AbortSignal.timeout(DISCOVERY_TIMEOUT_MS) })
   const raw: unknown = await response.json()
   if (!isRecord(raw) || !Array.isArray(raw.data)) throw new Error("xAI models response was invalid")
-  const models: ModelInfo[] = []
+  const models: TextModelInfo[] = []
   for (const entry of raw.data) {
     if (!isRecord(entry)) throw new Error("xAI models response contained an invalid model")
     const id = asString(entry.id)

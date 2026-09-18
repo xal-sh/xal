@@ -1,3 +1,4 @@
+import { decisions } from "../providers/decisions"
 import { describe, expect, test } from "bun:test"
 import type { PluginContext } from "./types"
 import { lifecycleState, resetLifecycleState } from "./test-fixtures/valid/plugin"
@@ -13,6 +14,7 @@ function context(): PluginContext {
       },
     },
     runtime: {
+      decisions,
       app: { name: "xal", version: "test" },
       paths: { home: "/tmp/xal", cache: "/tmp/xal/cache" },
       credentials: { load: async () => undefined, save: async () => {}, replace: async () => {} },

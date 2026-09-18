@@ -59,6 +59,7 @@ function cachedModel(raw: unknown): CopilotModel | undefined {
   const inputModalities = cachedInputModalities(raw.inputModalities)
   if (!inputModalities) return undefined
   return {
+    kind: "text",
     id,
     name,
     contextWindow: positiveInteger(raw.contextWindow),

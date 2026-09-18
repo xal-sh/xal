@@ -1,3 +1,4 @@
+import type { DecisionModelInfo, DecisionProvider } from "./decision-types"
 import type { Credential } from "../config/credentials"
 import type { JsonObject } from "../lib/json"
 
@@ -58,7 +59,8 @@ export interface ModelAlias {
   contextWindow?: number
 }
 
-export interface ModelInfo {
+export interface TextModelInfo {
+  kind: "text"
   id: string
   name: string
   aliases?: ModelAlias[]
@@ -73,8 +75,10 @@ export type ModelInputModality = "text" | "image"
 
 export type ModelCatalogSource = "runtime" | "cache" | "bundled"
 
-export interface ModelCatalog {
-  models: ModelInfo[]
+export type ModelInfo = TextModelInfo | DecisionModelInfo
+
+export interface ModelCatalog<M extends ModelInfo = TextModelInfo> {
+  models: M[]
   source: ModelCatalogSource
   warning?: string
 }
@@ -153,13 +157,19 @@ export interface ConnectContext {
   askSecret?(question: string): Promise<string | undefined>
 }
 
-export interface Provider {
+export interface ProviderConnection {
   id: string
   name: string
   aliases: string[]
   usageGroup?: { id: string; name: string }
-  capabilities: { imageInput: boolean }
   connect?(ctx: ConnectContext): Promise<Credential | undefined>
+}
+
+export type AnyProvider = Provider | DecisionProvider
+
+export interface Provider extends ProviderConnection {
+  kind: "text"
+  capabilities: { imageInput: boolean }
   listModels(profileId: string, refresh: boolean): Promise<ModelCatalog>
   defaultModel(profileId: string): Promise<string>
   stream(profileId: string, request: StreamRequest): AsyncIterable<StreamEvent>

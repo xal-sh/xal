@@ -8,6 +8,7 @@ import { login, PROVIDER_ID as CHATGPT_PROVIDER_ID } from "./chatgpt-oauth"
 import { streamResponse as streamChatgptResponse } from "./chatgpt-transport"
 
 export const openaiProvider: Provider = {
+  kind: "text",
   id: PROVIDER_ID,
   name: PROVIDER_NAME,
   aliases: ["openai-api"],
@@ -20,6 +21,7 @@ export const openaiProvider: Provider = {
 }
 
 export const chatgptProvider: Provider = {
+  kind: "text",
   id: CHATGPT_PROVIDER_ID,
   name: "OpenAI ChatGPT",
   aliases: ["chatgpt"],

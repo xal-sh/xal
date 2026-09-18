@@ -111,6 +111,7 @@ test("trusted project settings override user settings with recursive object merg
       },
       modes: {},
       goal: { evaluatorModels: {} },
+      compaction: { strategy: "summary" },
       agents: { maxConcurrent: 4, timeoutMinutes: 0, maxTurns: 24 },
       redaction: {
         values: [],
@@ -153,6 +154,7 @@ test("does not read malformed project settings until the project is trusted", as
       permissions: { allow: [], ask: [], deny: [] },
       modes: {},
       goal: { evaluatorModels: {} },
+      compaction: { strategy: "summary" },
       agents: { maxConcurrent: 4, timeoutMinutes: 0, maxTurns: 24 },
       redaction: { values: [], environment: [] },
       pluginConfig: {},
@@ -215,6 +217,7 @@ test("saves only user settings securely while retaining project overrides in mem
       permissions: { allow: [], ask: [], deny: [] },
       modes: {},
       goal: { evaluatorModels: {} },
+      compaction: { strategy: "summary" },
       agents: { maxConcurrent: 4, timeoutMinutes: 0, maxTurns: 24 },
       redaction: { values: [], environment: [] },
       pluginConfig: { userPlugin: { enabled: true } },
@@ -290,6 +293,7 @@ test("saves canonical model limits without copying project-only values into user
     })
     await loadSettings()
     const provider: Provider = {
+      kind: "text",
       id: "provider-a",
       name: "Provider A",
       aliases: [],
@@ -298,6 +302,7 @@ test("saves canonical model limits without copying project-only values into user
         return {
           models: [
             {
+              kind: "text",
               id: "model-a",
               name: "Model A",
               aliases: [{ id: "model-a-large", contextWindow: 600_000 }],
@@ -340,5 +345,18 @@ test("saves canonical model limits without copying project-only values into user
       autoCompactTokenLimit: 200_000,
     })
     clearModelCatalog("profile-a")
+  })
+})
+
+test("Jev compaction settings round-trip, default off, and honor project overrides", async () => {
+  await withSettingsEnvironment(async ({ home, project }) => {
+    expect((await loadSettings()).compaction).toEqual({ strategy: "summary" })
+    await saveSettings({ compaction: { strategy: "jev", profile: "typesafe-profile" } })
+    expect((await loadSettings()).compaction).toEqual({ strategy: "jev", profile: "typesafe-profile" })
+    await writeJson(join(home, "trust.json"), [project])
+    await writeJson(projectConfigPath(project), { compaction: { strategy: "summary" } })
+    expect((await loadSettings()).compaction).toEqual({ strategy: "summary" })
+    await writeJson(projectConfigPath(project), { compaction: { strategy: "other" } })
+    await expect(loadSettings()).rejects.toThrow("compaction requires strategy")
   })
 })

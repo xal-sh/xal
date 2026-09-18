@@ -6,6 +6,7 @@ import { streamResponse } from "./transport"
 
 function provider(id: MiniMaxProviderId): Provider {
   return {
+    kind: "text",
     id,
     name: providerName(id),
     aliases: [],

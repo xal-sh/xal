@@ -4,22 +4,22 @@ Connect a built-in or plugin-provided model service, select a model, and configu
 
 ## Built-in providers
 
-Built-in provider IDs are `anthropic`, `google`, `openai`, `openai-chatgpt`, `openrouter`, `github-copilot`, `xai`, `deepseek`, `alibaba-cloud`, `minimax`, `minimax-coding-plan`, and `opencode-go`. `claude` is an alias for `anthropic`, `gemini` is an alias for `google`, `openai-api` is an alias for `openai`, `chatgpt` is an alias for `openai-chatgpt`, `copilot` is an alias for `github-copilot`, `grok` is an alias for `xai`, and `dashscope` is an alias for `alibaba-cloud`.
+Built-in provider IDs are `anthropic`, `google`, `openai`, `openai-chatgpt`, `openrouter`, `github-copilot`, `xai`, `deepseek`, `alibaba-cloud`, `minimax`, `minimax-coding-plan`, `opencode-go`, and `typesafe`. `claude` is an alias for `anthropic`, `gemini` is an alias for `google`, `openai-api` is an alias for `openai`, `chatgpt` is an alias for `openai-chatgpt`, `copilot` is an alias for `github-copilot`, `grok` is an alias for `xai`, and `dashscope` is an alias for `alibaba-cloud`.
 
 The only built-in UI ID is `tui`. Plugins may register more providers, aliases, and UIs.
 
 Each provider connection is stored as a named profile. Profile names are globally unique and case-insensitive, while an internal immutable ID keeps sessions, background workers, token refreshes, and caches bound to the same account after a rename.
 
-- Run `/connect`, or `xal connect <provider> [profile]`, to authenticate and name a new profile. A successful connection becomes the default for new sessions.
+- Run `/connect`, or `xal connect <provider> [profile]`, to authenticate and name a new profile. A successful text-generation connection becomes the default for new sessions. Decision-provider connections leave the harness model unchanged.
 - Run `/profiles` to rename a profile. The CLI equivalents are `xal profiles` and `xal profiles rename <name> <new-name>`.
 - Run `/logout`, or `xal logout [profile]`, to select and remove one connection without affecting other profiles for that provider.
-- Run `/model` to choose from the cached model catalogs. Run `/model refresh` or `xal models [provider]` to refresh account-visible models first. Every model belongs to one profile, so choosing a model also chooses the profile and credentials the turn uses. Every model choice shows both its provider and profile name.
+- Run `/model` (or `/models`) to choose from the cached model catalogs. Run `/model refresh` or `xal models [provider]` to refresh account-visible models first. Every model belongs to one profile, so choosing a model also chooses the profile and credentials the turn uses. Every model choice shows both its provider and profile name.
 
 The profile behind the selected model is stored as `profile` alongside `provider` and `model` in [Configuration](/docs/configs). For a one-off headless run, use `xal run --connection <profile>`. If `--provider` identifies a provider with multiple profiles and no selected profile resolves the ambiguity, Xal requires `--connection`.
 
 ## Model discovery
 
-The active profile's catalog is loaded into the process cache when a session starts. When the interactive UI launches, Xal also refreshes every connected profile's catalog in the background: each profile's stored catalog is served immediately, live discovery runs asynchronously, and nothing waits on the network — while a refresh is pending, readers get the last resolved catalog. `/model` reuses the process cache and requests each other connected profile's non-refresh catalog at most once, so reopening the picker does not reload successful or failed catalogs. A provider may perform initial live discovery when it has no persistent or bundled catalog. `/model refresh` and `xal models` explicitly refresh every connected profile. A provider that fails or returns an invalid catalog is reported without hiding models from the other providers or preventing the session from starting. If a refresh fails after that profile supplied a valid catalog, Xal keeps the previous in-process catalog available. Catalogs supply the model picker, context-window tracking, input modalities, and the choices shown by `/thinking`.
+The active profile's catalog is loaded into the process cache when a session starts. When the interactive UI launches, Xal also refreshes every connected text-generation profile's catalog in the background: each profile's stored catalog is served immediately, live discovery runs asynchronously, and nothing waits on the network — while a refresh is pending, readers get the last resolved catalog. `/model` reuses the process cache and requests each other connected profile's non-refresh catalog at most once, so reopening the picker does not reload successful or failed catalogs. A provider may perform initial live discovery when it has no persistent or bundled catalog. `/model refresh` and `xal models` explicitly refresh every connected text-generation profile. A provider that fails or returns an invalid catalog is reported without hiding models from the other providers or preventing the session from starting. If a refresh fails after that profile supplied a valid catalog, Xal keeps the previous in-process catalog available. Catalogs supply the model picker, context-window tracking, input modalities, and the choices shown by `/thinking`.
 
 Automatic context compaction starts at 80% of the model's active context window by default. A limit saved with `/compaction-limit` for the canonical provider/model takes precedence over provider metadata. Without a saved value, Xal honors a lower provider-advertised limit. Saved, stale, and provider-advertised values are all capped at the 80% safety ceiling. The command is available only when the active model has a known context window. The full request is checked again after compaction, and Xal never samples a normal request at or beyond the model's hard context window.
 
@@ -129,3 +129,15 @@ All OpenCode Go model requests send `x-opencode-session` with Xal's conversation
 OpenCode Go is opencode's low-cost subscription for popular open coding models, served from `https://opencode.ai/zen/go/v1`. Run `xal connect opencode-go`, then paste the API key from [opencode.ai/auth](https://opencode.ai/auth). Connection stores the key without making a billable model request; the first turn validates that the key and subscription cover the selected model.
 
 Each model streams over the protocol its family advertises: Grok 4.5, GPT-5.6 Luna, and Muse Spark use OpenAI Responses; MiniMax M3/M2.x and Qwen3.x use an Anthropic-compatible endpoint; GLM, Kimi, MiMo, Hy3, DeepSeek, and Ox Alpha Free use Chat Completions. GPT-5.6 Luna exposes the full `none` through `max` effort range and Grok 4.5 `low` through `xhigh`; MiniMax M3 offers a thinking on/off control that Xal maps onto adaptive or disabled thinking. Other models reason natively without a dial.
+
+## TypeSafe AI
+
+TypeSafe's Jev is a **decision model**, not a text generator. It evaluates shared state against typed Noul (yes/no probability), Choice, and Score questions using `POST https://api.typesafe.ai/v1/systemone`. It cannot run the coding harness and never appears in `/model`, `/models`, or `xal models`.
+
+Get an API key from [TypeSafe settings](https://console.typesafe.ai/settings/keys), then run `/connect` and choose TypeSafe AI, or run `xal connect typesafe <profile>`. Xal validates the bearer token with `GET /v1/models` before storing it in the existing protected credentials file. Connecting does not select Jev or replace your harness profile. `/profiles` and `/logout` manage TypeSafe profiles normally. Xal does not automatically connect using an environment variable.
+
+Decision requests have a 60-second timeout, support cancellation, and retry transient HTTP/network failures up to twice with backoff and `Retry-After`. Authentication and malformed responses fail without retry. Model discovery has a 15-second timeout. Plugins use the shared [decision service](/docs/plugins#decision-models), not another plugin's implementation or credentials.
+
+To enable Jev compaction, open `/config`, choose **Compaction**, then choose a connected TypeSafe profile. It is off by default. See [Jev compaction configuration](/docs/configs#jev-compaction) for persistence, privacy, and fallback behavior.
+
+API contract: [TypeSafe API reference](https://docs.typesafe.ai/api), [models](https://docs.typesafe.ai/models), and [structured question descriptions](https://docs.typesafe.ai/primitives/advanced).
