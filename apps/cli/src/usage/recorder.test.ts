@@ -30,6 +30,23 @@ describe("usage recorder", () => {
     expect(summary.session.totalTokens).toBe(130)
   })
 
+  test("reasoning-routing usage round-trips through the dashboard reader", async () => {
+    directory = await mkdtemp(join(tmpdir(), "xal-reasoning-routing-usage-"))
+    const recorder = new UsageRecorder(directory)
+    recorder.record({
+      sessionId: "routing",
+      provider: "typesafe",
+      model: "jev-test",
+      phase: "reasoning_routing",
+      outcome: "completed",
+      usage: { totalInputTokens: 120, outputTokens: 10 },
+    })
+    await recorder.flush()
+    const summary = await readProviderUsageSummary(directory, "routing", { providers: ["typesafe"] })
+    expect(summary.session.requests).toBe(1)
+    expect(summary.session.totalTokens).toBe(130)
+  })
+
   test("writes prompt-free provider request usage as secure JSONL", async () => {
     directory = await mkdtemp(join(tmpdir(), "xal-usage-"))
     await chmod(directory, 0o700)

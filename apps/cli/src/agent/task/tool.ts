@@ -119,7 +119,8 @@ export const taskTool: SessionTool = {
             thinking: {
               type: "string",
               enum: ["none", "low", "medium", "high", "xhigh", "max"],
-              description: "Reasoning effort for this agent; defaults to the parent's effort",
+              description:
+                "Explicit reasoning effort for this agent; bypasses automatic routing. When omitted, inherits the parent's effort, or may use low effort for routine read-only lookups if Jev reasoning routing is enabled.",
             },
           },
           required: ["task", "access"],

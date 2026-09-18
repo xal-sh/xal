@@ -19,9 +19,14 @@ const SETTINGS = [
   },
   { key: "compaction", label: "Compaction", description: "Choose Jev pruning or harness-model summary" },
   { key: "codeSearch", label: "Code search", description: "Send source excerpts to Jev for relevance ranking" },
+  {
+    key: "reasoningRouting",
+    label: "Reasoning routing",
+    description: "Use Jev to lower effort for routine read-agent lookups",
+  },
 ] as const
 
-export type TuiToggleKey = Exclude<(typeof SETTINGS)[number]["key"], "compaction" | "codeSearch">
+export type TuiToggleKey = Exclude<(typeof SETTINGS)[number]["key"], "compaction" | "codeSearch" | "reasoningRouting">
 
 interface SettingRow {
   view: BoxRenderable
@@ -35,6 +40,7 @@ interface ConfigPopoverActions {
   change(config: TuiPreferences, key: TuiToggleKey): Promise<void>
   configureCompaction(): void
   configureCodeSearch(): void
+  configureReasoningRouting(): void
   changed(): void
   error(message: string): void
 }
@@ -45,11 +51,13 @@ export class ConfigPopover {
   private readonly rows: SettingRow[] = []
   private selected = 0
   private saving = false
-  private available = { compaction: false, codeSearch: false }
+  private available = { compaction: false, codeSearch: false, reasoningRouting: false }
 
   private get settings() {
     return SETTINGS.filter((setting) =>
-      setting.key === "compaction" || setting.key === "codeSearch" ? this.available[setting.key] : true,
+      setting.key === "compaction" || setting.key === "codeSearch" || setting.key === "reasoningRouting"
+        ? this.available[setting.key]
+        : true,
     )
   }
 
@@ -123,7 +131,7 @@ export class ConfigPopover {
     )
   }
 
-  show(available = { compaction: false, codeSearch: false }): void {
+  show(available = { compaction: false, codeSearch: false, reasoningRouting: false }): void {
     this.available = available
     this.view.height = this.height - 1
     this.selected = 0
@@ -167,6 +175,11 @@ export class ConfigPopover {
       this.actions.configureCodeSearch()
       return
     }
+    if (setting.key === "reasoningRouting") {
+      this.hide()
+      this.actions.configureReasoningRouting()
+      return
+    }
     const previous = this.config
     const next = { ...previous, [setting.key]: !previous[setting.key] }
     this.config = next
@@ -195,7 +208,9 @@ export class ConfigPopover {
       const selected = setting.key === this.settings[this.selected]?.key
       entry.view.visible = this.settings.some((visible) => visible.key === setting.key)
       const enabled =
-        setting.key === "compaction" || setting.key === "codeSearch" ? undefined : this.config[setting.key]
+        setting.key === "compaction" || setting.key === "codeSearch" || setting.key === "reasoningRouting"
+          ? undefined
+          : this.config[setting.key]
       entry.cursor.content = selected ? terminalGlyph("❯", ">") : ""
       entry.name.content = new StyledText([selected ? paint(COLORS.accent, setting.label) : muted(setting.label)])
       entry.value.content = new StyledText([

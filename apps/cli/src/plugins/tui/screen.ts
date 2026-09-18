@@ -152,6 +152,7 @@ export class Screen {
       {
         configureCompaction: () => this.executeCommand("/config compaction"),
         configureCodeSearch: () => this.executeCommand("/config code-search"),
+        configureReasoningRouting: () => this.executeCommand("/config reasoning-routing"),
         change: async (config, key) => {
           await saveTuiConfig(config)
           switch (key) {
@@ -422,7 +423,7 @@ export class Screen {
     this.syncFooter()
   }
 
-  openConfig(available = { compaction: false, codeSearch: false }): void {
+  openConfig(available = { compaction: false, codeSearch: false, reasoningRouting: false }): void {
     this.picker.hide()
     this.usage.hide()
     this.config.show(available)

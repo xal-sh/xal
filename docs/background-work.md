@@ -104,6 +104,18 @@ Opening a task agent instead clears the terminal scrollback and prints the agent
 
 `agents.stop-all` (default `ctrl+x ctrl+k`) stops every running agent at once.
 
+## Reasoning routing
+
+Optional [Jev reasoning routing](/docs/configs#jev-reasoning-routing) can reduce reasoning effort for narrow factual lookups delegated to read-only task agents. It is off by default. It never changes the main agent's effort, routes write agents, changes models, or changes an agent's effort after startup.
+
+A task is eligible only when it has `access: "read"`, omits the explicit `thinking` option, inherits an effort above `low`, and its model advertises support for `low`. Ineligible tasks do not call Jev. To allow routing, omit `thinking`; supplying it bypasses routing and keeps the existing model-supported effort resolution.
+
+Eligible tasks make one redacted classification request containing the complete assignment and shared context. A routine-lookup score of at least `0.95` selects `low`; other scores retain the inherited effort. The classifier is instructed to retain effort for reviews, audits, debugging, architectural judgments, multi-step investigations, or uncertainty. This is a conservative model judgment, not a guarantee against misclassification.
+
+Requests exceeding 90,000 serialized UTF-8 bytes are skipped without truncation. Jev evaluation has a two-second deadline, including provider retries. Disconnection, malformed responses, failures, and timeouts retain inherited effort with a visible fallback reason. Caller cancellation stops startup instead of falling back and starting a child.
+
+While routing is enabled, the plain-text task transcript records the selected effort and routing, bypass, or fallback reason. Inspect it with `job_output` or the task's saved transcript. TypeSafe usage is recorded under `reasoning_routing` and attributed to the dispatching session. Delegation still requires explicit authorization. This can accelerate delegated lookups, not work performed entirely by the main agent; end-to-end gains depend on the workload and have not been benchmarked.
+
 ## Configuration
 
 Every field in the top-level `agents` object must be an integer and is validated strictly.

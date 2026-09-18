@@ -25,31 +25,32 @@ Global memory is stored at `<app-home>/MEMORY.md`. On Unix, Xal creates it with 
 
 ## Top-level options
 
-| Option             | Type       | Default                     | Details                                                                     |
-| ------------------ | ---------- | --------------------------- | --------------------------------------------------------------------------- |
-| `plugins`          | `string[]` | `[]`                        | Additional modules described in [Plugins and hooks](/docs/plugins).         |
-| `provider`         | `string`   | Last registered provider    | Provider ID or alias used for new sessions.                                 |
-| `profile`          | `string`   | Selected connection         | Internal ID of the named provider profile used for new sessions.            |
-| `model`            | `string`   | Provider default            | Model ID used for new sessions.                                             |
-| `ui`               | `string`   | `"tui"`                     | UI ID started when Xal runs without a command.                              |
-| `mode`             | `string`   | `"normal"`                  | Permission mode used for new TUI and headless sessions.                     |
-| `permissions`      | `object`   | `{}`                        | Global rules described in [Permissions and security](/docs/permissions).    |
-| `modes`            | `object`   | `{}`                        | [Custom permission modes](/docs/permissions#custom-modes) keyed by name.    |
-| `goal`             | `object`   | `{}`                        | Evaluator models described in [Goals](/docs/goals).                         |
-| `redaction`        | `object`   | `{}`                        | [Sensitive values](/docs/permissions#redaction) to redact.                  |
-| `agents`           | `object`   | `{}`                        | Limits described in [Background work](/docs/background-work#configuration). |
-| `pluginConfig`     | `object`   | `{}`                        | Configuration keyed by plugin name.                                         |
-| `thinking`         | `object`   | `{}`                        | Thinking effort keyed by provider ID and model ID.                          |
-| `contextWindows`   | `object`   | `{}`                        | Context-window choices keyed by provider ID and model ID.                   |
-| `compaction`       | `object`   | `{ "strategy": "summary" }` | Optional [Jev compaction](#jev-compaction).                                 |
-| `compactionLimits` | `object`   | `{}`                        | Auto-compaction limits keyed by provider ID and model ID.                   |
-| `codeSearch`       | `object`   | `{ "strategy": "off" }`     | Optional [Jev code search](#jev-code-search).                               |
+| Option             | Type       | Default                     | Details                                                                             |
+| ------------------ | ---------- | --------------------------- | ----------------------------------------------------------------------------------- |
+| `plugins`          | `string[]` | `[]`                        | Additional modules described in [Plugins and hooks](/docs/plugins).                 |
+| `provider`         | `string`   | Last registered provider    | Provider ID or alias used for new sessions.                                         |
+| `profile`          | `string`   | Selected connection         | Internal ID of the named provider profile used for new sessions.                    |
+| `model`            | `string`   | Provider default            | Model ID used for new sessions.                                                     |
+| `ui`               | `string`   | `"tui"`                     | UI ID started when Xal runs without a command.                                      |
+| `mode`             | `string`   | `"normal"`                  | Permission mode used for new TUI and headless sessions.                             |
+| `permissions`      | `object`   | `{}`                        | Global rules described in [Permissions and security](/docs/permissions).            |
+| `modes`            | `object`   | `{}`                        | [Custom permission modes](/docs/permissions#custom-modes) keyed by name.            |
+| `goal`             | `object`   | `{}`                        | Evaluator models described in [Goals](/docs/goals).                                 |
+| `redaction`        | `object`   | `{}`                        | [Sensitive values](/docs/permissions#redaction) to redact.                          |
+| `agents`           | `object`   | `{}`                        | Limits described in [Background work](/docs/background-work#configuration).         |
+| `pluginConfig`     | `object`   | `{}`                        | Configuration keyed by plugin name.                                                 |
+| `thinking`         | `object`   | `{}`                        | Thinking effort keyed by provider ID and model ID.                                  |
+| `contextWindows`   | `object`   | `{}`                        | Context-window choices keyed by provider ID and model ID.                           |
+| `compaction`       | `object`   | `{ "strategy": "summary" }` | Optional [Jev compaction](#jev-compaction).                                         |
+| `compactionLimits` | `object`   | `{}`                        | Auto-compaction limits keyed by provider ID and model ID.                           |
+| `codeSearch`       | `object`   | `{ "strategy": "off" }`     | Optional [Jev code search](#jev-code-search).                                       |
+| `reasoningRouting` | `object`   | `{ "strategy": "off" }`     | Optional [Jev reasoning routing](#jev-reasoning-routing) for read-only task agents. |
 
 The `profile` value is managed by `/connect` and `/model`. Profile names remain user-facing and may be renamed without changing this ID.
 
 `mode` accepts `normal`, `plan`, `yolo`, or a name defined under `modes`. A command-line `--mode` overrides the configured default for that session.
 
-Malformed `mode`, `permissions`, `modes`, `goal`, `redaction`, `compaction`, or `agents` configuration fails startup instead of silently running without those rules.
+Malformed `mode`, `permissions`, `modes`, `goal`, `redaction`, `compaction`, `codeSearch`, `reasoningRouting`, or `agents` configuration fails startup instead of silently running without those rules.
 
 Built-in configuration is documented with the feature that consumes it:
 
@@ -141,6 +142,25 @@ Jev scores whether older tool calls and their results should stay. A result prob
 Pruning is accepted only when it reduces the estimated full harness request by more than 25% and leaves it below 90% of the active auto-compaction limit, when known. Unavailable credentials, API errors, invalid decisions, an oversized decision view, or insufficient reduction produce a visible fallback notice, then run ordinary summary compaction against the original history. No partial Jev edits are applied. User cancellation stops without fallback or history replacement. The whole Jev attempt is bounded to 60 seconds. Successful decision requests are included in TypeSafe's compaction token usage.
 
 This is inspired by [fast-jev-compaction](https://github.com/tamaratran/fast-jev-compaction), adapted to Xal's conversation and persistence contracts without importing its Claude-specific message format.
+
+## Jev reasoning routing
+
+Reasoning routing is disabled by default and is independent of compaction and code search. Connect TypeSafe, then choose **Reasoning routing → Jev · <profile>** in `/config`, or run `/config reasoning-routing`. Choose **Reasoning routing off** to disable it. The selector remains available after an enabled profile disconnects.
+
+```json
+{
+  "reasoningRouting": {
+    "strategy": "jev",
+    "profile": "your-connected-typesafe-profile-id"
+  }
+}
+```
+
+`strategy` accepts `off` (default) or `jev`. `jev` requires a non-empty profile ID. Unknown fields and invalid settings fail startup. UI changes save to user configuration; trusted project configuration takes precedence. Settings apply when task agents start, including previously queued tasks, not midway through a running task.
+
+**Privacy:** enabling this permits the complete task assignment and batch shared context to be sent to TypeSafe. Existing redaction protects known sensitive values, not every possible secret. Oversized requests are skipped rather than truncated. Enable this only for task descriptions and context you may send to TypeSafe.
+
+Only eligible read-only task agents can have their inherited effort reduced to `low`. The main agent, write agents, and explicit task `thinking` values are unchanged. See [task reasoning routing](/docs/background-work#reasoning-routing) for eligibility, timeouts, and visibility. This does not authorize additional delegation or guarantee a speedup.
 
 ## Jev code search
 

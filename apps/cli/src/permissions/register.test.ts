@@ -30,6 +30,7 @@ test("makes the current writable mode override stale plan-mode context", () => {
       },
     },
     goal: { evaluatorModels: {} },
+    reasoningRouting: { strategy: "off" },
     codeSearch: { strategy: "off" },
     compaction: { strategy: "summary" },
     redaction: { values: [], environment: [] },

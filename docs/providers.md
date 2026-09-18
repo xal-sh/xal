@@ -138,6 +138,8 @@ Get an API key from [TypeSafe settings](https://console.typesafe.ai/settings/key
 
 Decision requests have a 60-second timeout, support cancellation, and retry transient HTTP/network failures up to twice with backoff and `Retry-After`. Authentication and malformed responses fail without retry. Model discovery has a 15-second timeout. Plugins use the shared [decision service](/docs/plugins#decision-models), not another plugin's implementation or credentials.
 
+To enable conservative task-agent reasoning routing, open `/config`, choose **Reasoning routing**, and select a connected TypeSafe profile. This independently opts into sending task descriptions and shared context to TypeSafe; see [reasoning routing configuration](/docs/configs#jev-reasoning-routing).
+
 To enable semantic code search, open `/config`, choose **Code search**, and select a connected TypeSafe profile. This independently opts into sending search queries and source excerpts to TypeSafe; see [code search configuration](/docs/configs#jev-code-search).
 
 To enable Jev compaction, open `/config`, choose **Compaction**, then choose a connected TypeSafe profile. It is off by default. See [Jev compaction configuration](/docs/configs#jev-compaction) for persistence, privacy, and fallback behavior.

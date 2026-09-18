@@ -111,6 +111,7 @@ test("trusted project settings override user settings with recursive object merg
       },
       modes: {},
       goal: { evaluatorModels: {} },
+      reasoningRouting: { strategy: "off" },
       codeSearch: { strategy: "off" },
       compaction: { strategy: "summary" },
       agents: { maxConcurrent: 4, timeoutMinutes: 0, maxTurns: 24 },
@@ -155,6 +156,7 @@ test("does not read malformed project settings until the project is trusted", as
       permissions: { allow: [], ask: [], deny: [] },
       modes: {},
       goal: { evaluatorModels: {} },
+      reasoningRouting: { strategy: "off" },
       codeSearch: { strategy: "off" },
       compaction: { strategy: "summary" },
       agents: { maxConcurrent: 4, timeoutMinutes: 0, maxTurns: 24 },
@@ -219,6 +221,7 @@ test("saves only user settings securely while retaining project overrides in mem
       permissions: { allow: [], ask: [], deny: [] },
       modes: {},
       goal: { evaluatorModels: {} },
+      reasoningRouting: { strategy: "off" },
       codeSearch: { strategy: "off" },
       compaction: { strategy: "summary" },
       agents: { maxConcurrent: 4, timeoutMinutes: 0, maxTurns: 24 },
@@ -372,6 +375,30 @@ test("code search settings default off, round-trip, reject malformed values, and
     expect((await loadSettings()).codeSearch.strategy).toBe("jev")
     await writeJson(join(home, "trust.json"), [project])
     expect((await loadSettings()).codeSearch).toEqual({ strategy: "off" })
+  })
+})
+
+test("reasoning routing defaults off, round-trips, validates settings, and honors trusted overrides", async () => {
+  await withSettingsEnvironment(async ({ home, project }) => {
+    expect((await loadSettings()).reasoningRouting).toEqual({ strategy: "off" })
+    for (const reasoningRouting of [
+      null,
+      true,
+      { strategy: "other" },
+      { strategy: "jev" },
+      { strategy: "jev", profile: " " },
+      { strategy: "off", unknown: true },
+    ]) {
+      await writeJson(join(home, "config.json"), { reasoningRouting })
+      await expect(loadSettings()).rejects.toThrow()
+    }
+    await writeJson(join(home, "config.json"), {})
+    await saveSettings({ reasoningRouting: { strategy: "jev", profile: "routing-profile" } })
+    expect((await loadSettings()).reasoningRouting).toEqual({ strategy: "jev", profile: "routing-profile" })
+    await writeJson(projectConfigPath(project), { reasoningRouting: { strategy: "off" } })
+    expect((await loadSettings()).reasoningRouting.strategy).toBe("jev")
+    await writeJson(join(home, "trust.json"), [project])
+    expect((await loadSettings()).reasoningRouting).toEqual({ strategy: "off" })
   })
 })
 

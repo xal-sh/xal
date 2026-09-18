@@ -27,6 +27,7 @@ function settings(plugins: string[] = [], pluginConfig: Settings["pluginConfig"]
     permissions: { allow: [], ask: [], deny: [] },
     modes: {},
     goal: { evaluatorModels: {} },
+    reasoningRouting: { strategy: "off" },
     codeSearch: { strategy: "off" },
     compaction: { strategy: "summary" },
     redaction: { values: [], environment: [] },

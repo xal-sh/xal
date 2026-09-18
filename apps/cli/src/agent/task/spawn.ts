@@ -25,6 +25,7 @@ import { AgentSession } from "../session/session"
 import { activity, type ActivityState } from "./activity"
 import { driveTaskToQuiescence, type TaskDriveOutcome } from "./drive"
 import type { TaskAccess, TaskItem } from "./parse"
+import { routeTaskThinking } from "./reasoning"
 import { createParentQuestionChannel, type ParentQuestionChannel } from "./questions"
 import { finishTask, taskOutput, type TaskTerminal } from "./record"
 
@@ -239,6 +240,20 @@ async function runTask(
       ctx.session.model,
       item.thinking ?? ctx.session.thinking,
     )
+    const routing = await routeTaskThinking({
+      item,
+      context,
+      inherited: thinking,
+      provider: ctx.session.provider,
+      profileId: ctx.session.profileId,
+      model: ctx.session.model,
+      sessionId: ctx.session.id,
+      signal: controller.signal,
+    })
+    controller.signal.throwIfAborted()
+    if (routing.kind !== "disabled") {
+      record(`Reasoning routing: ${routing.thinking ?? "provider default"} · ${routing.reason}\n\n`)
+    }
     const taskSession = new AgentSession({
       kind: "subagent",
       cwd: worktree?.cwd ?? ctx.session.cwd,
@@ -246,7 +261,7 @@ async function runTask(
       profileId: ctx.session.profileId,
       model: ctx.session.model,
       modelInputModalities: ctx.session.modelInputModalities,
-      thinking,
+      thinking: routing.thinking,
       interactive: false,
       persist: false,
       inheritedDenyMode: ctx.session.mode,

@@ -1,5 +1,6 @@
 import { parseCompactionSettings, type CompactionSettings } from "./compaction"
 import { parseCodeSearchSettings, type CodeSearchSettings } from "./code-search"
+import { parseReasoningRoutingSettings, type ReasoningRoutingSettings } from "./reasoning-routing"
 import { readJsonFile, writeSecureJson } from "../lib/fs"
 import { asString, asStringArray, isRecord } from "../lib/json"
 import { builtinPermissionModes } from "../permissions/modes"
@@ -52,6 +53,7 @@ export interface Settings {
   pluginConfig: Record<string, Record<string, unknown>>
   thinking: Record<string, Record<string, ThinkingEffort>>
   contextWindows: Record<string, Record<string, number>>
+  reasoningRouting: ReasoningRoutingSettings
   codeSearch: CodeSearchSettings
   compaction: CompactionSettings
   compactionLimits: Record<string, Record<string, number>>
@@ -70,6 +72,7 @@ let current: Settings = {
   pluginConfig: {},
   thinking: {},
   contextWindows: {},
+  reasoningRouting: { strategy: "off" },
   codeSearch: { strategy: "off" },
   compaction: { strategy: "summary" },
   compactionLimits: {},
@@ -289,6 +292,7 @@ function parseSettings(raw: Record<string, unknown>): Settings {
     pluginConfig,
     thinking,
     contextWindows,
+    reasoningRouting: parseReasoningRoutingSettings(raw.reasoningRouting),
     codeSearch: parseCodeSearchSettings(raw.codeSearch),
     compaction: parseCompactionSettings(raw.compaction),
     compactionLimits,
