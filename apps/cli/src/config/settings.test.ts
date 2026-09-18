@@ -111,6 +111,7 @@ test("trusted project settings override user settings with recursive object merg
       },
       modes: {},
       goal: { evaluatorModels: {} },
+      codeSearch: { strategy: "off" },
       compaction: { strategy: "summary" },
       agents: { maxConcurrent: 4, timeoutMinutes: 0, maxTurns: 24 },
       redaction: {
@@ -154,6 +155,7 @@ test("does not read malformed project settings until the project is trusted", as
       permissions: { allow: [], ask: [], deny: [] },
       modes: {},
       goal: { evaluatorModels: {} },
+      codeSearch: { strategy: "off" },
       compaction: { strategy: "summary" },
       agents: { maxConcurrent: 4, timeoutMinutes: 0, maxTurns: 24 },
       redaction: { values: [], environment: [] },
@@ -217,6 +219,7 @@ test("saves only user settings securely while retaining project overrides in mem
       permissions: { allow: [], ask: [], deny: [] },
       modes: {},
       goal: { evaluatorModels: {} },
+      codeSearch: { strategy: "off" },
       compaction: { strategy: "summary" },
       agents: { maxConcurrent: 4, timeoutMinutes: 0, maxTurns: 24 },
       redaction: { values: [], environment: [] },
@@ -345,6 +348,30 @@ test("saves canonical model limits without copying project-only values into user
       autoCompactTokenLimit: 200_000,
     })
     clearModelCatalog("profile-a")
+  })
+})
+
+test("code search settings default off, round-trip, reject malformed values, and honor trusted overrides", async () => {
+  await withSettingsEnvironment(async ({ home, project }) => {
+    expect((await loadSettings()).codeSearch).toEqual({ strategy: "off" })
+    for (const codeSearch of [
+      null,
+      true,
+      { strategy: "other" },
+      { strategy: "jev" },
+      { strategy: "jev", profile: " " },
+      { strategy: "off", unknown: true },
+    ]) {
+      await writeJson(join(home, "config.json"), { codeSearch })
+      await expect(loadSettings()).rejects.toThrow()
+    }
+    await writeJson(join(home, "config.json"), {})
+    await saveSettings({ codeSearch: { strategy: "jev", profile: "typesafe-profile" } })
+    expect((await loadSettings()).codeSearch).toEqual({ strategy: "jev", profile: "typesafe-profile" })
+    await writeJson(projectConfigPath(project), { codeSearch: { strategy: "off" } })
+    expect((await loadSettings()).codeSearch.strategy).toBe("jev")
+    await writeJson(join(home, "trust.json"), [project])
+    expect((await loadSettings()).codeSearch).toEqual({ strategy: "off" })
   })
 })
 

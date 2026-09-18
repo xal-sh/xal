@@ -17,6 +17,9 @@ import {
   parseWorktreeToolPreparation,
   parsePathRanker,
   parseSearchOutcome,
+  parseCodeSearchResult,
+  type NativeCodeSearchOptions,
+  type NativeCodeSearchResult,
   parseToolOutput,
   parseWorkspaceIndex,
   type NativeDiff,
@@ -48,6 +51,9 @@ import { NATIVE_API_VERSION, readNativeManifest } from "./manifest"
 import { hostNativeTarget } from "./targets"
 
 export type {
+  NativeCodePassage,
+  NativeCodeSearchOptions,
+  NativeCodeSearchResult,
   NativeDiff,
   NativeEditRequest,
   NativeFuzzyCandidate,
@@ -106,6 +112,7 @@ interface NativeBinding {
     marker: string,
     signal?: AbortSignal,
   ): Promise<NativeWorkspaceIndex>
+  codeSearch(options: NativeCodeSearchOptions, signal?: AbortSignal): Promise<NativeCodeSearchResult>
   grep(options: NativeGrepOptions, signal?: AbortSignal): Promise<NativeSearchOutcome>
   glob(options: NativeGlobOptions, signal?: AbortSignal): Promise<NativeSearchOutcome>
   createManagedWorktree(request: NativeWorktreeRequest, signal?: AbortSignal): Promise<NativeManagedWorktree>
@@ -252,6 +259,7 @@ function createBinding(value: unknown): NativeBinding {
   const PathRanker = value.NativePathRanker
   if (typeof PathRanker !== "function") throw new Error("native addon NativePathRanker export is invalid")
   const createWorkspaceIndex = requiredFunction(value, "createWorkspaceIndex")
+  const nativeCodeSearch = requiredFunction(value, "nativeCodeSearch")
   const nativeGrep = requiredFunction(value, "nativeGrep")
   const nativeGlob = requiredFunction(value, "nativeGlob")
   const nativeCreateManagedWorktree = requiredFunction(value, "nativeCreateManagedWorktree")
@@ -325,6 +333,9 @@ function createBinding(value: unknown): NativeBinding {
       return parseWorkspaceIndex(
         await Promise.resolve(Reflect.apply(createWorkspaceIndex, value, [cwd, values, marker, signal])),
       )
+    },
+    async codeSearch(options, signal) {
+      return parseCodeSearchResult(await Promise.resolve(Reflect.apply(nativeCodeSearch, value, [options, signal])))
     },
     async grep(options, signal) {
       return parseSearchOutcome(await Promise.resolve(Reflect.apply(nativeGrep, value, [options, signal])))
@@ -473,6 +484,14 @@ export function createNativeWorkspaceIndex(
   signal?: AbortSignal,
 ): Promise<NativeWorkspaceIndex> {
   return nativeBinding().createWorkspaceIndex(cwd, values, marker, signal)
+}
+
+export function nativeCodeSearch(
+  options: NativeCodeSearchOptions,
+  signal?: AbortSignal,
+): Promise<NativeCodeSearchResult> {
+  signal?.throwIfAborted()
+  return nativeBinding().codeSearch(options, signal)
 }
 
 export function nativeGrep(options: NativeGrepOptions, signal?: AbortSignal): Promise<NativeSearchOutcome> {

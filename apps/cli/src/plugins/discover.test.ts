@@ -27,6 +27,7 @@ function settings(plugins: string[] = [], pluginConfig: Settings["pluginConfig"]
     permissions: { allow: [], ask: [], deny: [] },
     modes: {},
     goal: { evaluatorModels: {} },
+    codeSearch: { strategy: "off" },
     compaction: { strategy: "summary" },
     redaction: { values: [], environment: [] },
     agents: { maxConcurrent: 4, timeoutMinutes: 0, maxTurns: 24 },

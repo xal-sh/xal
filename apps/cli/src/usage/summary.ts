@@ -73,7 +73,12 @@ function parseRecord(line: string, location: string): ParsedUsageRecord {
   if (!id || !timestamp || !provider || !model) throw invalidRecord(location)
   const timestampMs = Date.parse(timestamp)
   if (!Number.isFinite(timestampMs) || new Date(timestampMs).toISOString() !== timestamp) throw invalidRecord(location)
-  if (value.phase !== "turn" && value.phase !== "compaction" && value.phase !== "goal_evaluation") {
+  if (
+    value.phase !== "turn" &&
+    value.phase !== "compaction" &&
+    value.phase !== "goal_evaluation" &&
+    value.phase !== "code_search"
+  ) {
     throw invalidRecord(location)
   }
   if (value.outcome !== "completed" && value.outcome !== "failed" && value.outcome !== "interrupted") {

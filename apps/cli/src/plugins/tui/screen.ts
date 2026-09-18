@@ -151,6 +151,7 @@ export class Screen {
       },
       {
         configureCompaction: () => this.executeCommand("/config compaction"),
+        configureCodeSearch: () => this.executeCommand("/config code-search"),
         change: async (config, key) => {
           await saveTuiConfig(config)
           switch (key) {
@@ -421,10 +422,10 @@ export class Screen {
     this.syncFooter()
   }
 
-  openConfig(compactionAvailable = false): void {
+  openConfig(available = { compaction: false, codeSearch: false }): void {
     this.picker.hide()
     this.usage.hide()
-    this.config.show(compactionAvailable)
+    this.config.show(available)
     this.syncFooter()
   }
 

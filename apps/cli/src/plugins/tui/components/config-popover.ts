@@ -18,9 +18,10 @@ const SETTINGS = [
     description: "Include model reasoning in the transcript",
   },
   { key: "compaction", label: "Compaction", description: "Choose Jev pruning or harness-model summary" },
+  { key: "codeSearch", label: "Code search", description: "Send source excerpts to Jev for relevance ranking" },
 ] as const
 
-export type TuiToggleKey = Exclude<(typeof SETTINGS)[number]["key"], "compaction">
+export type TuiToggleKey = Exclude<(typeof SETTINGS)[number]["key"], "compaction" | "codeSearch">
 
 interface SettingRow {
   view: BoxRenderable
@@ -33,6 +34,7 @@ interface SettingRow {
 interface ConfigPopoverActions {
   change(config: TuiPreferences, key: TuiToggleKey): Promise<void>
   configureCompaction(): void
+  configureCodeSearch(): void
   changed(): void
   error(message: string): void
 }
@@ -43,14 +45,20 @@ export class ConfigPopover {
   private readonly rows: SettingRow[] = []
   private selected = 0
   private saving = false
-  private compactionAvailable = false
+  private available = { compaction: false, codeSearch: false }
+
+  private get settings() {
+    return SETTINGS.filter((setting) =>
+      setting.key === "compaction" || setting.key === "codeSearch" ? this.available[setting.key] : true,
+    )
+  }
 
   get visible(): boolean {
     return this.view.visible
   }
 
   get height(): number {
-    return 7 + (this.compactionAvailable ? 1 : 0)
+    return 5 + this.settings.length
   }
 
   constructor(
@@ -115,8 +123,8 @@ export class ConfigPopover {
     )
   }
 
-  show(compactionAvailable = false): void {
-    this.compactionAvailable = compactionAvailable
+  show(available = { compaction: false, codeSearch: false }): void {
+    this.available = available
     this.view.height = this.height - 1
     this.selected = 0
     this.status.content = ""
@@ -137,7 +145,7 @@ export class ConfigPopover {
       return true
     }
     if (name === "up" || name === "down") {
-      const count = SETTINGS.length - (this.compactionAvailable ? 0 : 1)
+      const count = this.settings.length
       this.selected = (this.selected + (name === "up" ? -1 : 1) + count) % count
       this.renderRows()
       return true
@@ -147,11 +155,16 @@ export class ConfigPopover {
   }
 
   private toggle(): void {
-    const setting = SETTINGS[this.selected]
+    const setting = this.settings[this.selected]
     if (!setting) return
     if (setting.key === "compaction") {
       this.hide()
       this.actions.configureCompaction()
+      return
+    }
+    if (setting.key === "codeSearch") {
+      this.hide()
+      this.actions.configureCodeSearch()
       return
     }
     const previous = this.config
@@ -179,9 +192,10 @@ export class ConfigPopover {
   private renderRows(): void {
     this.rows.forEach((entry, index) => {
       const setting = SETTINGS[index]!
-      const selected = index === this.selected
-      entry.view.visible = setting.key !== "compaction" || this.compactionAvailable
-      const enabled = setting.key === "compaction" ? undefined : this.config[setting.key]
+      const selected = setting.key === this.settings[this.selected]?.key
+      entry.view.visible = this.settings.some((visible) => visible.key === setting.key)
+      const enabled =
+        setting.key === "compaction" || setting.key === "codeSearch" ? undefined : this.config[setting.key]
       entry.cursor.content = selected ? terminalGlyph("❯", ">") : ""
       entry.name.content = new StyledText([selected ? paint(COLORS.accent, setting.label) : muted(setting.label)])
       entry.value.content = new StyledText([

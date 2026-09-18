@@ -4,7 +4,7 @@ Customize Xal's terminal interface, keyboard shortcuts, transcript details, and 
 
 ## Display preferences
 
-Run `/config` in the TUI to change display preferences. Changes save immediately to the user configuration and apply to the current transcript. When TypeSafe is connected, `/config` also offers **Compaction** to select optional Jev pruning; see [Jev compaction](/docs/configs#jev-compaction). This entry remains available if an enabled Jev profile is later disconnected. `scrollbackRows` is edited in the configuration file rather than through `/config`.
+Run `/config` in the TUI to change display preferences. Changes save immediately to the user configuration and apply to the current transcript. When TypeSafe is connected, `/config` also offers **Compaction** to select optional Jev pruning; see [Jev compaction](/docs/configs#jev-compaction). This entry remains available if an enabled Jev profile is later disconnected. **Code search** independently enables optional [Jev-ranked source search](/docs/configs#jev-code-search); `/config code-search` opens its selector directly, with an explicit source-sharing notice. `scrollbackRows` is edited in the configuration file rather than through `/config`.
 
 | Option           | Type      | Default | Description                                                                                             |
 | ---------------- | --------- | ------- | ------------------------------------------------------------------------------------------------------- |

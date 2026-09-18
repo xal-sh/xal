@@ -3,6 +3,7 @@ import { chmod, mkdtemp, readFile, readdir, rm, stat } from "node:fs/promises"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 import { UsageRecorder, usageSessionFingerprint } from "./recorder"
+import { readProviderUsageSummary } from "./summary"
 
 let directory: string | undefined
 
@@ -12,6 +13,23 @@ afterEach(async () => {
 })
 
 describe("usage recorder", () => {
+  test("code-search usage round-trips through the dashboard reader", async () => {
+    directory = await mkdtemp(join(tmpdir(), "xal-code-search-usage-"))
+    const recorder = new UsageRecorder(directory)
+    recorder.record({
+      sessionId: "search",
+      provider: "typesafe",
+      model: "jev-test",
+      phase: "code_search",
+      outcome: "completed",
+      usage: { totalInputTokens: 120, outputTokens: 10 },
+    })
+    await recorder.flush()
+    const summary = await readProviderUsageSummary(directory, "search", { providers: ["typesafe"] })
+    expect(summary.session.requests).toBe(1)
+    expect(summary.session.totalTokens).toBe(130)
+  })
+
   test("writes prompt-free provider request usage as secure JSONL", async () => {
     directory = await mkdtemp(join(tmpdir(), "xal-usage-"))
     await chmod(directory, 0o700)

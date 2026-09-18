@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import {
   parseDiff,
+  parseCodeSearchResult,
   parseGitCommandOutput,
   parseGitRepository,
   parseManagedWorktree,
@@ -15,6 +16,30 @@ import {
 } from "./contracts"
 
 describe("native contract parsing", () => {
+  test("validates structured code-search bounds and source ranges", () => {
+    const passage = { path: "src/main.ts", startLine: 1, endLine: 2, text: "first\nsecond\n", score: 2 }
+    const result = {
+      kind: "completed" as const,
+      passages: [passage],
+      scannedFiles: 1,
+      skippedFiles: 0,
+      skippedLines: 0,
+      matchedPassages: 1,
+      limited: false,
+    }
+    expect(parseCodeSearchResult(result)).toEqual(result)
+    for (const patch of [
+      { path: "../outside" },
+      { startLine: 0 },
+      { endLine: 3 },
+      { score: NaN },
+      { text: "x".repeat(1801) },
+    ]) {
+      expect(() => parseCodeSearchResult({ ...result, passages: [{ ...passage, ...patch }] })).toThrow()
+    }
+    expect(() => parseCodeSearchResult({ ...result, kind: "interrupted" })).toThrow()
+  })
+
   test("accepts completed search output and preserves native outcomes", () => {
     expect(parseSearchOutcome({ kind: "completed", total: 1, lines: ["one"], output: "Found 1 file\none" })).toEqual({
       output: "Found 1 file\none",

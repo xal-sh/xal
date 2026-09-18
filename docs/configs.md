@@ -43,6 +43,7 @@ Global memory is stored at `<app-home>/MEMORY.md`. On Unix, Xal creates it with 
 | `contextWindows`   | `object`   | `{}`                        | Context-window choices keyed by provider ID and model ID.                   |
 | `compaction`       | `object`   | `{ "strategy": "summary" }` | Optional [Jev compaction](#jev-compaction).                                 |
 | `compactionLimits` | `object`   | `{}`                        | Auto-compaction limits keyed by provider ID and model ID.                   |
+| `codeSearch`       | `object`   | `{ "strategy": "off" }`     | Optional [Jev code search](#jev-code-search).                               |
 
 The `profile` value is managed by `/connect` and `/model`. Profile names remain user-facing and may be renamed without changing this ID.
 
@@ -140,6 +141,25 @@ Jev scores whether older tool calls and their results should stay. A result prob
 Pruning is accepted only when it reduces the estimated full harness request by more than 25% and leaves it below 90% of the active auto-compaction limit, when known. Unavailable credentials, API errors, invalid decisions, an oversized decision view, or insufficient reduction produce a visible fallback notice, then run ordinary summary compaction against the original history. No partial Jev edits are applied. User cancellation stops without fallback or history replacement. The whole Jev attempt is bounded to 60 seconds. Successful decision requests are included in TypeSafe's compaction token usage.
 
 This is inspired by [fast-jev-compaction](https://github.com/tamaratran/fast-jev-compaction), adapted to Xal's conversation and persistence contracts without importing its Claude-specific message format.
+
+## Jev code search
+
+Code search is disabled by default and is independent of compaction. Connect TypeSafe, then run `/config`, choose **Code search**, and select **Jev · <profile>**. `/config code-search` opens the selector directly. Choose **Code search off** to disable it. The selector remains available if an enabled profile is disconnected.
+
+```json
+{
+  "codeSearch": {
+    "strategy": "jev",
+    "profile": "<immutable TypeSafe profile ID>"
+  }
+}
+```
+
+`strategy` accepts `off` (default) or `jev`. `jev` requires a non-empty profile ID, not a profile name or API key. Unknown fields or invalid settings fail startup. UI changes save to user configuration; a trusted project override still takes precedence. This enables the read-only `code_search` tool in primary and task-agent sessions without changing the harness model.
+
+**Privacy:** enabling this allows search queries, relative file paths, and shortlisted source excerpts to be sent to TypeSafe. It does not upload an index or the entire workspace. Requests use the existing secret redactor, which protects known values, not every possible secret. File exclusions are defense in depth, not a guarantee that source files contain no secrets. Only enable it for code you can send to TypeSafe. Use `code_search` permission rules to control tool access.
+
+See [semantic code search](/docs/integrations#semantic-code-search) for retrieval limits, ranking, fallback behavior, and examples.
 
 ## Combined example
 

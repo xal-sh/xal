@@ -1,5 +1,6 @@
 import type { Plugin } from "../types"
 import { globTool } from "./glob"
+import { codeSearchTool } from "./code-search"
 import { grepTool } from "./grep"
 
 function summarizeSearch(output: string): string {
@@ -17,6 +18,8 @@ const plugin: Plugin = {
   register(ctx) {
     ctx.registerTool(grepTool)
     ctx.registerTool(globTool)
+    ctx.registerTool(codeSearchTool(ctx.runtime.decisions))
+    ctx.registerToolRenderer({ tool: "code_search", summarize: summarizeSearch })
     ctx.registerToolRenderer({ tool: "grep", summarize: summarizeSearch })
     ctx.registerToolRenderer({ tool: "glob", summarize: summarizeSearch })
   },

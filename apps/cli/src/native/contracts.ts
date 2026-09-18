@@ -24,6 +24,32 @@ export interface NativeGrepOptions {
   aborted?: boolean
 }
 
+export interface NativeCodeSearchOptions {
+  cwd: string
+  query: string
+  target?: string
+  glob?: string
+  redaction?: { values: string[]; marker: string }
+}
+
+export interface NativeCodePassage {
+  path: string
+  startLine: number
+  endLine: number
+  text: string
+  score: number
+}
+
+export interface NativeCodeSearchResult {
+  kind: "completed" | "interrupted"
+  passages: NativeCodePassage[]
+  scannedFiles: number
+  skippedFiles: number
+  skippedLines: number
+  matchedPassages: number
+  limited: boolean
+}
+
 export interface NativeGlobOptions {
   cwd: string
   target?: string
@@ -293,6 +319,50 @@ export function parseSearchOutcome(value: unknown): NativeSearchOutcome {
   const output = asString(value.output)
   if (output === undefined) throw new Error("native search returned an invalid value")
   return { output }
+}
+
+export function parseCodeSearchResult(value: unknown): NativeCodeSearchResult {
+  if (!isRecord(value)) throw new Error("native code search returned an invalid value")
+  if (value.kind !== "completed" && value.kind !== "interrupted")
+    throw new Error("native code search returned an invalid outcome")
+  if (!Array.isArray(value.passages) || value.passages.length > 40 || typeof value.limited !== "boolean")
+    throw new Error("native code search returned invalid passages")
+  const passages = value.passages.map((passage): NativeCodePassage => {
+    if (!isRecord(passage)) throw new Error("native code search returned an invalid passage")
+    const path = asString(passage.path)
+    const text = asString(passage.text)
+    const startLine = count(passage.startLine, "native code search returned an invalid start line")
+    const endLine = count(passage.endLine, "native code search returned an invalid end line")
+    const score = asNumber(passage.score)
+    if (
+      !path ||
+      isAbsolute(path) ||
+      path.split(/[/\\]/).includes("..") ||
+      !text ||
+      Buffer.byteLength(text, "utf8") > 1800 ||
+      startLine < 1 ||
+      endLine < startLine ||
+      endLine - startLine >= 40 ||
+      (text.endsWith("\n") ? text.slice(0, -1) : text).split("\n").length !== endLine - startLine + 1 ||
+      score === undefined ||
+      !Number.isFinite(score) ||
+      score <= 0
+    )
+      throw new Error("native code search returned an invalid passage")
+    return { path, text, startLine, endLine, score }
+  })
+  const matchedPassages = count(value.matchedPassages, "native code search returned an invalid passage count")
+  if (matchedPassages < passages.length || (value.kind === "interrupted" && passages.length > 0))
+    throw new Error("native code search returned inconsistent passages")
+  return {
+    kind: value.kind,
+    passages,
+    scannedFiles: count(value.scannedFiles, "native code search returned an invalid file count"),
+    skippedFiles: count(value.skippedFiles, "native code search returned an invalid skipped file count"),
+    skippedLines: count(value.skippedLines, "native code search returned an invalid skipped line count"),
+    matchedPassages,
+    limited: value.limited,
+  }
 }
 
 export function parsePathRanker(value: unknown): NativePathRanker {
