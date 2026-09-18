@@ -17,6 +17,7 @@ interface RecordOptions {
   timestamp: string
   provider: string
   sessionId?: string
+  phase?: "turn" | "code_search" | "reasoning_routing"
   totalInputTokens: number
   cacheReadInputTokens?: number
   cacheWriteInputTokens?: number
@@ -32,7 +33,7 @@ function record(options: RecordOptions): string {
     ...(options.version === 2 && options.sessionId ? { session: usageSessionFingerprint(options.sessionId) } : {}),
     provider: options.provider,
     model: "test-model",
-    phase: "turn",
+    phase: options.phase ?? "turn",
     outcome: "completed",
     usage: {
       totalInputTokens: options.totalInputTokens,
@@ -53,6 +54,25 @@ const zeroTotals = {
 }
 
 describe("provider usage summary", () => {
+  test("historical search and routing usage remains readable after removing their producers", async () => {
+    directory = await mkdtemp(join(tmpdir(), "xal-archived-usage-"))
+    const records = ["code_search", "reasoning_routing"].map((phase): string =>
+      record({
+        version: 2,
+        timestamp: new Date().toISOString(),
+        provider: "typesafe",
+        sessionId: "historical-session",
+        phase: phase === "code_search" ? "code_search" : "reasoning_routing",
+        totalInputTokens: 120,
+        outputTokens: 10,
+      }),
+    )
+    await writeFile(join(directory, "history.jsonl"), `${records.join("\n")}\n`)
+    const summary = await readProviderUsageSummary(directory, "historical-session", { providers: ["typesafe"] })
+    expect(summary.session.requests).toBe(2)
+    expect(summary.session.totalTokens).toBe(260)
+  })
+
   test("filters one provider across session, rolling seven days, and all time", async () => {
     directory = await mkdtemp(join(tmpdir(), "xal-usage-summary-"))
     const now = new Date(2026, 7, 22, 12, 34, 56)

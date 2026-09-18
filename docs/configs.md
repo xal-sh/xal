@@ -19,38 +19,36 @@ Both files are optional and must contain a JSON object when present. Objects mer
 
 A project-root `.mcp.json` is a discovery source rather than a third configuration layer. On interactive launch, Xal can use its new MCP server names for the current process or copy them into either configuration file. Existing Xal server names are not overwritten. See [Project `.mcp.json` discovery](/docs/integrations#project-mcpjson-discovery) for the accepted schema and launch choices.
 
-Commands that save model, thinking, context-window, compaction-limit, compaction strategy, or TUI display preferences write the user file. Xal then recomputes the effective configuration, and any project override remains active. Importing discovered MCP servers and deleting servers from `/mcp` are source-aware exceptions: project choices update the project file, global choices update the user file, and deletion updates the file that supplied the effective server.
+Commands that save model, thinking, context-window, compaction-limit, TypeSafe AI, or TUI display preferences write the user file. Xal then recomputes the effective configuration, and any project override remains active. Importing discovered MCP servers and deleting servers from `/mcp` are source-aware exceptions: project choices update the project file, global choices update the user file, and deletion updates the file that supplied the effective server.
 
 Global memory is stored at `<app-home>/MEMORY.md`. On Unix, Xal creates it with mode `0600` and rejects broader permissions. Windows does not expose an equivalent mode through the filesystem API, so Xal relies on the inherited ACL of `<app-home>`. If the app home is overridden on Windows, its directory must be private to the current user.
 
 ## Top-level options
 
-| Option             | Type       | Default                     | Details                                                                             |
-| ------------------ | ---------- | --------------------------- | ----------------------------------------------------------------------------------- |
-| `plugins`          | `string[]` | `[]`                        | Additional modules described in [Plugins and hooks](/docs/plugins).                 |
-| `provider`         | `string`   | Last registered provider    | Provider ID or alias used for new sessions.                                         |
-| `profile`          | `string`   | Selected connection         | Internal ID of the named provider profile used for new sessions.                    |
-| `model`            | `string`   | Provider default            | Model ID used for new sessions.                                                     |
-| `ui`               | `string`   | `"tui"`                     | UI ID started when Xal runs without a command.                                      |
-| `mode`             | `string`   | `"normal"`                  | Permission mode used for new TUI and headless sessions.                             |
-| `permissions`      | `object`   | `{}`                        | Global rules described in [Permissions and security](/docs/permissions).            |
-| `modes`            | `object`   | `{}`                        | [Custom permission modes](/docs/permissions#custom-modes) keyed by name.            |
-| `goal`             | `object`   | `{}`                        | Evaluator models described in [Goals](/docs/goals).                                 |
-| `redaction`        | `object`   | `{}`                        | [Sensitive values](/docs/permissions#redaction) to redact.                          |
-| `agents`           | `object`   | `{}`                        | Limits described in [Background work](/docs/background-work#configuration).         |
-| `pluginConfig`     | `object`   | `{}`                        | Configuration keyed by plugin name.                                                 |
-| `thinking`         | `object`   | `{}`                        | Thinking effort keyed by provider ID and model ID.                                  |
-| `contextWindows`   | `object`   | `{}`                        | Context-window choices keyed by provider ID and model ID.                           |
-| `compaction`       | `object`   | `{ "strategy": "summary" }` | Optional [Jev compaction](#jev-compaction).                                         |
-| `compactionLimits` | `object`   | `{}`                        | Auto-compaction limits keyed by provider ID and model ID.                           |
-| `codeSearch`       | `object`   | `{ "strategy": "off" }`     | Optional [Jev code search](#jev-code-search).                                       |
-| `reasoningRouting` | `object`   | `{ "strategy": "off" }`     | Optional [Jev reasoning routing](#jev-reasoning-routing) for read-only task agents. |
+| Option             | Type       | Default                  | Details                                                                     |
+| ------------------ | ---------- | ------------------------ | --------------------------------------------------------------------------- |
+| `plugins`          | `string[]` | `[]`                     | Additional modules described in [Plugins and hooks](/docs/plugins).         |
+| `provider`         | `string`   | Last registered provider | Provider ID or alias used for new sessions.                                 |
+| `profile`          | `string`   | Selected connection      | Internal ID of the named provider profile used for new sessions.            |
+| `model`            | `string`   | Provider default         | Model ID used for new sessions.                                             |
+| `ui`               | `string`   | `"tui"`                  | UI ID started when Xal runs without a command.                              |
+| `mode`             | `string`   | `"normal"`               | Permission mode used for new TUI and headless sessions.                     |
+| `permissions`      | `object`   | `{}`                     | Global rules described in [Permissions and security](/docs/permissions).    |
+| `modes`            | `object`   | `{}`                     | [Custom permission modes](/docs/permissions#custom-modes) keyed by name.    |
+| `goal`             | `object`   | `{}`                     | Evaluator models described in [Goals](/docs/goals).                         |
+| `redaction`        | `object`   | `{}`                     | [Sensitive values](/docs/permissions#redaction) to redact.                  |
+| `agents`           | `object`   | `{}`                     | Limits described in [Background work](/docs/background-work#configuration). |
+| `pluginConfig`     | `object`   | `{}`                     | Configuration keyed by plugin name.                                         |
+| `thinking`         | `object`   | `{}`                     | Thinking effort keyed by provider ID and model ID.                          |
+| `contextWindows`   | `object`   | `{}`                     | Context-window choices keyed by provider ID and model ID.                   |
+| `compactionLimits` | `object`   | `{}`                     | Auto-compaction limits keyed by provider ID and model ID.                   |
+| `typesafeAI`       | `object`   | `{ "enabled": false }`   | One switch for all [TypeSafe AI features](#typesafe-ai).                    |
 
 The `profile` value is managed by `/connect` and `/model`. Profile names remain user-facing and may be renamed without changing this ID.
 
 `mode` accepts `normal`, `plan`, `yolo`, or a name defined under `modes`. A command-line `--mode` overrides the configured default for that session.
 
-Malformed `mode`, `permissions`, `modes`, `goal`, `redaction`, `compaction`, `codeSearch`, `reasoningRouting`, or `agents` configuration fails startup instead of silently running without those rules.
+Malformed `mode`, `permissions`, `modes`, `goal`, `redaction`, `typesafeAI`, or `agents` configuration fails startup instead of silently running without those rules.
 
 Built-in configuration is documented with the feature that consumes it:
 
@@ -120,20 +118,35 @@ Use `/compaction-limit` to choose a context-relative limit for the active model.
 
 Provider entries must be objects, and each model value must be a positive integer. A saved value takes precedence over a provider-advertised limit, but every effective limit is capped at 80% of the active context window. This cap also keeps a stale value safe when `/context-window` changes the model's active window.
 
-## Jev compaction
+## TypeSafe AI
 
-Jev pruning is disabled by default. After connecting TypeSafe, run `/config`, choose **Compaction**, and select **Jev · <profile>**. `/config compaction` opens that selector directly. Only connected TypeSafe profiles are offered. Choose **Summary compaction** to disable it. If the selected profile is later removed, the selector remains available so you can disable or replace it.
+Run `/config`, choose **Use TypeSafe AI**, then **On** or **Off**. `/config typesafe` opens the same choice directly. This is the only feature switch:
+
+- **On:** enables Jev compaction, currently the only built-in TypeSafe AI feature.
+- **Off** (default): blocks TypeSafe inference and uses ordinary summary compaction.
+
+Search and selected thinking effort are unchanged in both modes. There is no Jev code search, reasoning routing, or Auto mode.
+
+Connect TypeSafe using `/connect` first. With one connection, enabling needs only the On choice. Xal reuses the previously selected connection; when several connections exist without a valid selection, it asks which profile to use. Disconnecting a profile does not hide the switch. You can turn everything off without reconnecting. An enabled but disconnected profile produces a visible notice and falls back to ordinary summary compaction.
 
 ```json
 {
-  "compaction": {
-    "strategy": "jev",
+  "typesafeAI": {
+    "enabled": true,
     "profile": "<immutable TypeSafe profile ID>"
   }
 }
 ```
 
-`strategy` accepts `summary` (default) or `jev`. `jev` requires a non-empty `profile` ID, not the profile name or token. Unknown options or malformed strategy settings fail startup. UI changes write the user config; a trusted project override still takes precedence. The setting applies to manual `/compact` and automatic compaction, including task-agent sessions. It does not change the existing `compactionLimits` trigger.
+`enabled` must be a boolean. On requires a non-empty `profile` ID, not the profile name or API key. Off may retain that ID for the next enable. Unknown fields and malformed settings fail startup. Changes save to user configuration; trusted project configuration takes precedence. The choice can be changed when the session is idle and applies to current and new sessions, headless runs, resumed/forked sessions, and newly starting tasks. The shared decision service also rejects TypeSafe inference while Off or with a different profile than the selected one.
+
+**Privacy:** Jev compaction sends a redacted text view of the active conversation, tool names and inputs, and the compaction focus to TypeSafe. Tool output bodies, images, and opaque provider replay data are omitted from that view. Conversation text and tool inputs can still contain paths or code. Known-secret redaction is a safeguard, not a guarantee that every sensitive value is removed. Enable only for conversation data you may send to TypeSafe.
+
+**Migration:** the previous `compaction`, `codeSearch`, `reasoningRouting`, and `automaticThinking` settings are ignored. Existing `typesafeAI` choices remain valid. If you only have a legacy setting, enable **Use TypeSafe AI** once to use Jev compaction again. Saving this choice removes those legacy fields from user configuration; remove obsolete fields from project configuration manually. Existing `thinking` preferences and `compactionLimits` are unchanged. There are no separate feature toggles or `/thinking` Auto option. Older sessions remain readable; archived routing and request-metric events are not replayed, and historical TypeSafe usage remains included in usage totals.
+
+## Jev compaction
+
+Enabled by the [TypeSafe AI switch](#typesafe-ai) for manual `/compact` and automatic compaction, including task-agent sessions. It does not change the existing `compactionLimits` trigger. Off uses ordinary summary compaction.
 
 Enabling this sends structured state to TypeSafe's `jev-latest` with `context`, `goal`, and `history`. The context explains that pruning frees space for the assistant to continue its task while preserving requirements, decisions, and information needed for unfinished work. The goal is the explicit `/compact` focus when non-empty; otherwise it uses the last three non-empty user prompts in chronological order, each limited to 500 UTF-8 bytes with an omission marker when shortened. History contains an indexed text view of the active conversation, tool names and inputs. Tool results are represented by their lengths, images by omission notices, and opaque provider replay data is excluded. Long inputs and older text may be shortened in the decision view only. Xal conservatively targets 25,000 estimated state tokens and 30,000 estimated total tokens per request, batching questions as needed. Every batch receives the same context, goal, and fitted history. These are estimates, not a tokenizer guarantee.
 
@@ -142,44 +155,6 @@ Jev scores whether older tool calls and their results should stay. A result prob
 Pruning is accepted only when it reduces the estimated full harness request by more than 25% and leaves it below 90% of the active auto-compaction limit, when known. Unavailable credentials, API errors, invalid decisions, an oversized decision view, or insufficient reduction produce a visible fallback notice, then run ordinary summary compaction against the original history. No partial Jev edits are applied. User cancellation stops without fallback or history replacement. The whole Jev attempt is bounded to 60 seconds. Successful decision requests are included in TypeSafe's compaction token usage.
 
 This is inspired by [fast-jev-compaction](https://github.com/tamaratran/fast-jev-compaction), adapted to Xal's conversation and persistence contracts without importing its Claude-specific message format.
-
-## Jev reasoning routing
-
-Reasoning routing is disabled by default and is independent of compaction and code search. Connect TypeSafe, then choose **Reasoning routing → Jev · <profile>** in `/config`, or run `/config reasoning-routing`. Choose **Reasoning routing off** to disable it. The selector remains available after an enabled profile disconnects.
-
-```json
-{
-  "reasoningRouting": {
-    "strategy": "jev",
-    "profile": "your-connected-typesafe-profile-id"
-  }
-}
-```
-
-`strategy` accepts `off` (default) or `jev`. `jev` requires a non-empty profile ID. Unknown fields and invalid settings fail startup. UI changes save to user configuration; trusted project configuration takes precedence. Settings apply when task agents start, including previously queued tasks, not midway through a running task.
-
-**Privacy:** enabling this permits the complete task assignment and batch shared context to be sent to TypeSafe. Existing redaction protects known sensitive values, not every possible secret. Oversized requests are skipped rather than truncated. Enable this only for task descriptions and context you may send to TypeSafe.
-
-Only eligible read-only task agents can have their inherited effort reduced to `low`. The main agent, write agents, and explicit task `thinking` values are unchanged. See [task reasoning routing](/docs/background-work#reasoning-routing) for eligibility, timeouts, and visibility. This does not authorize additional delegation or guarantee a speedup.
-
-## Jev code search
-
-Code search is disabled by default and is independent of compaction. Connect TypeSafe, then run `/config`, choose **Code search**, and select **Jev · <profile>**. `/config code-search` opens the selector directly. Choose **Code search off** to disable it. The selector remains available if an enabled profile is disconnected.
-
-```json
-{
-  "codeSearch": {
-    "strategy": "jev",
-    "profile": "<immutable TypeSafe profile ID>"
-  }
-}
-```
-
-`strategy` accepts `off` (default) or `jev`. `jev` requires a non-empty profile ID, not a profile name or API key. Unknown fields or invalid settings fail startup. UI changes save to user configuration; a trusted project override still takes precedence. This enables the read-only `code_search` tool in primary and task-agent sessions without changing the harness model.
-
-**Privacy:** enabling this allows search queries, relative file paths, and shortlisted source excerpts to be sent to TypeSafe. It does not upload an index or the entire workspace. Requests use the existing secret redactor, which protects known values, not every possible secret. File exclusions are defense in depth, not a guarantee that source files contain no secrets. Only enable it for code you can send to TypeSafe. Use `code_search` permission rules to control tool access.
-
-See [semantic code search](/docs/integrations#semantic-code-search) for retrieval limits, ranking, fallback behavior, and examples.
 
 ## Combined example
 

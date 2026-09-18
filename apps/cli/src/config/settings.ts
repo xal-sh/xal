@@ -1,6 +1,4 @@
-import { parseCompactionSettings, type CompactionSettings } from "./compaction"
-import { parseCodeSearchSettings, type CodeSearchSettings } from "./code-search"
-import { parseReasoningRoutingSettings, type ReasoningRoutingSettings } from "./reasoning-routing"
+import { parseTypeSafeAISettings, type TypeSafeAISettings } from "./typesafe-ai"
 import { readJsonFile, writeSecureJson } from "../lib/fs"
 import { asString, asStringArray, isRecord } from "../lib/json"
 import { builtinPermissionModes } from "../permissions/modes"
@@ -53,9 +51,7 @@ export interface Settings {
   pluginConfig: Record<string, Record<string, unknown>>
   thinking: Record<string, Record<string, ThinkingEffort>>
   contextWindows: Record<string, Record<string, number>>
-  reasoningRouting: ReasoningRoutingSettings
-  codeSearch: CodeSearchSettings
-  compaction: CompactionSettings
+  typesafeAI: TypeSafeAISettings
   compactionLimits: Record<string, Record<string, number>>
 }
 
@@ -72,9 +68,7 @@ let current: Settings = {
   pluginConfig: {},
   thinking: {},
   contextWindows: {},
-  reasoningRouting: { strategy: "off" },
-  codeSearch: { strategy: "off" },
-  compaction: { strategy: "summary" },
+  typesafeAI: { enabled: false },
   compactionLimits: {},
 }
 
@@ -90,6 +84,12 @@ export async function loadSettings(): Promise<Settings> {
 export async function saveSettings(patch: Partial<Settings>): Promise<void> {
   const path = userConfigPath()
   const [user, project] = await Promise.all([readSettingsFile(path), readProjectSettings()])
+  if (patch.typesafeAI !== undefined) {
+    delete user.compaction
+    delete user.codeSearch
+    delete user.reasoningRouting
+    delete user.automaticThinking
+  }
   const nextUser = mergeSettings(user, { ...patch })
   const next = parseSettings(mergeSettings(nextUser, project))
   await writeSecureJson(path, nextUser)
@@ -292,9 +292,7 @@ function parseSettings(raw: Record<string, unknown>): Settings {
     pluginConfig,
     thinking,
     contextWindows,
-    reasoningRouting: parseReasoningRoutingSettings(raw.reasoningRouting),
-    codeSearch: parseCodeSearchSettings(raw.codeSearch),
-    compaction: parseCompactionSettings(raw.compaction),
+    typesafeAI: parseTypeSafeAISettings(raw.typesafeAI),
     compactionLimits,
   }
 }

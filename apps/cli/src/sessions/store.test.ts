@@ -5,9 +5,10 @@ import { join } from "node:path"
 import { appInfo } from "../app-info"
 import type { AgentEvent } from "../agent/events"
 import type { HistoryItem } from "../agent/history"
+import { parseRecord } from "./records"
 import { SessionRecorder } from "./recorder"
 import { loadSession } from "./store"
-import type { SessionMeta } from "./types"
+import type { SessionMeta, SessionRecord } from "./types"
 
 const meta: SessionMeta = {
   version: 2,
@@ -94,6 +95,30 @@ test("reloads historical task-agent questions without adding provider history", 
 
     expect(loaded?.events).toEqual([question])
     expect(loaded?.items).toEqual([])
+  })
+})
+
+test("reads archived reasoning records without replaying them or changing the saved history", async () => {
+  await withSessionFile(async (path) => {
+    const archived: Extract<SessionRecord, { type: "event" }>["event"][] = [
+      { type: "reasoning_routed", thinking: "low", baseline: "high", reason: "routine lookup", escalated: false },
+      { type: "request_measured", metrics: { status: "completed", elapsedMs: 100, automatic: true } },
+    ]
+    const text =
+      record({ type: "meta", meta: { ...meta, thinking: "high", automaticThinking: true } }) +
+      archived.map((event) => record({ type: "event", event })).join("") +
+      record({ type: "item", item: { type: "assistant_message", text: "Saved answer" } })
+    await writeFile(path, text)
+    for (const event of archived)
+      expect(parseRecord(record({ type: "event", event }))).toEqual({ type: "event", event })
+    const loaded = await loadSession(path)
+    expect(loaded?.meta.thinking).toBe("high")
+    expect(loaded?.events).toEqual([])
+    expect(loaded?.items).toEqual([{ type: "assistant_message", text: "Saved answer" }])
+    expect(await readFile(path, "utf8")).toBe(text)
+    expect(() => parseRecord(record({ type: "event", event: { type: "unknown_event" } }))).toThrow(
+      "malformed session record",
+    )
   })
 })
 

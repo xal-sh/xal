@@ -28,7 +28,6 @@ const GLOB_LIMIT: usize = 100;
 const MAX_COLUMNS: usize = 500;
 const MAX_OUTPUT_CHARS: usize = 30_000;
 
-mod code;
 mod glob;
 mod grep;
 mod walk;

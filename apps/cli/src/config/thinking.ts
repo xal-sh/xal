@@ -23,10 +23,5 @@ export async function resolveThinking(
 }
 
 export async function saveThinking(provider: Provider, model: string, effort: ThinkingEffort): Promise<void> {
-  await saveSettings({
-    thinking: {
-      ...settings().thinking,
-      [provider.id]: { ...settings().thinking[provider.id], [model]: effort },
-    },
-  })
+  await saveSettings({ thinking: { [provider.id]: { [model]: effort } } })
 }

@@ -9,6 +9,7 @@ import { saveCompactionLimit } from "./compaction-limit"
 import { saveContextWindow } from "./context-window"
 import { projectConfigPath } from "./paths"
 import { loadSettings, saveSettings, settings } from "./settings"
+import { saveThinking } from "./thinking"
 
 interface SettingsEnvironment {
   home: string
@@ -111,9 +112,7 @@ test("trusted project settings override user settings with recursive object merg
       },
       modes: {},
       goal: { evaluatorModels: {} },
-      reasoningRouting: { strategy: "off" },
-      codeSearch: { strategy: "off" },
-      compaction: { strategy: "summary" },
+      typesafeAI: { enabled: false },
       agents: { maxConcurrent: 4, timeoutMinutes: 0, maxTurns: 24 },
       redaction: {
         values: [],
@@ -156,9 +155,7 @@ test("does not read malformed project settings until the project is trusted", as
       permissions: { allow: [], ask: [], deny: [] },
       modes: {},
       goal: { evaluatorModels: {} },
-      reasoningRouting: { strategy: "off" },
-      codeSearch: { strategy: "off" },
-      compaction: { strategy: "summary" },
+      typesafeAI: { enabled: false },
       agents: { maxConcurrent: 4, timeoutMinutes: 0, maxTurns: 24 },
       redaction: { values: [], environment: [] },
       pluginConfig: {},
@@ -221,9 +218,7 @@ test("saves only user settings securely while retaining project overrides in mem
       permissions: { allow: [], ask: [], deny: [] },
       modes: {},
       goal: { evaluatorModels: {} },
-      reasoningRouting: { strategy: "off" },
-      codeSearch: { strategy: "off" },
-      compaction: { strategy: "summary" },
+      typesafeAI: { enabled: false },
       agents: { maxConcurrent: 4, timeoutMinutes: 0, maxTurns: 24 },
       redaction: { values: [], environment: [] },
       pluginConfig: { userPlugin: { enabled: true } },
@@ -289,13 +284,17 @@ test("rejects malformed compaction-limit settings", async () => {
   })
 })
 
-test("saves canonical model limits without copying project-only values into user settings", async () => {
+test("saves model preferences without copying project overrides into user settings", async () => {
   await withSettingsEnvironment(async ({ home, project }) => {
-    await writeJson(join(home, "config.json"), { plugins: ["user-plugin"] })
+    await writeJson(join(home, "config.json"), {
+      plugins: ["user-plugin"],
+      thinking: { "provider-a": { "project-model": "low" } },
+    })
     await writeJson(join(home, "trust.json"), [project])
     await writeJson(projectConfigPath(project), {
       contextWindows: { "provider-a": { "project-model": 300_000 } },
       compactionLimits: { "provider-a": { "project-model": 200_000 } },
+      thinking: { "provider-a": { "project-model": "high" } },
     })
     await loadSettings()
     const provider: Provider = {
@@ -328,6 +327,8 @@ test("saves canonical model limits without copying project-only values into user
 
     await saveContextWindow(provider, "model-a", 400_000)
     await saveCompactionLimit(provider, "model-a", 200_000)
+    await saveThinking(provider, "model-a", "medium")
+    expect(settings().thinking).toEqual({ "provider-a": { "project-model": "high", "model-a": "medium" } })
 
     expect(settings().contextWindows).toEqual({
       "provider-a": { "model-a": 400_000, "project-model": 300_000 },
@@ -339,6 +340,7 @@ test("saves canonical model limits without copying project-only values into user
       plugins: ["user-plugin"],
       contextWindows: { "provider-a": { "model-a": 400_000 } },
       compactionLimits: { "provider-a": { "model-a": 200_000 } },
+      thinking: { "provider-a": { "project-model": "low", "model-a": "medium" } },
     })
     expect(await findModel(provider, "profile-a", "model-a")).toMatchObject({
       id: "model-a",
@@ -354,63 +356,51 @@ test("saves canonical model limits without copying project-only values into user
   })
 })
 
-test("code search settings default off, round-trip, reject malformed values, and honor trusted overrides", async () => {
+test("the single TypeSafe setting defaults off, validates input, round-trips and honors trusted overrides", async () => {
   await withSettingsEnvironment(async ({ home, project }) => {
-    expect((await loadSettings()).codeSearch).toEqual({ strategy: "off" })
-    for (const codeSearch of [
+    expect((await loadSettings()).typesafeAI).toEqual({ enabled: false })
+    for (const typesafeAI of [
       null,
       true,
-      { strategy: "other" },
-      { strategy: "jev" },
-      { strategy: "jev", profile: " " },
-      { strategy: "off", unknown: true },
+      {},
+      { enabled: "true" },
+      { enabled: true },
+      { enabled: true, profile: " " },
+      { enabled: false, profile: 1 },
+      { enabled: false, unknown: true },
     ]) {
-      await writeJson(join(home, "config.json"), { codeSearch })
-      await expect(loadSettings()).rejects.toThrow()
+      await writeJson(join(home, "config.json"), { typesafeAI })
+      await expect(loadSettings()).rejects.toThrow("typesafeAI")
     }
     await writeJson(join(home, "config.json"), {})
-    await saveSettings({ codeSearch: { strategy: "jev", profile: "typesafe-profile" } })
-    expect((await loadSettings()).codeSearch).toEqual({ strategy: "jev", profile: "typesafe-profile" })
-    await writeJson(projectConfigPath(project), { codeSearch: { strategy: "off" } })
-    expect((await loadSettings()).codeSearch.strategy).toBe("jev")
+    await saveSettings({ typesafeAI: { enabled: true, profile: "typesafe-profile" } })
+    expect((await loadSettings()).typesafeAI).toEqual({ enabled: true, profile: "typesafe-profile" })
+    await saveSettings({ typesafeAI: { enabled: false } })
+    expect((await loadSettings()).typesafeAI).toEqual({ enabled: false, profile: "typesafe-profile" })
+    await saveSettings({ typesafeAI: { enabled: true, profile: "typesafe-profile" } })
+    await writeJson(projectConfigPath(project), { typesafeAI: { enabled: false } })
+    expect((await loadSettings()).typesafeAI.enabled).toBe(true)
     await writeJson(join(home, "trust.json"), [project])
-    expect((await loadSettings()).codeSearch).toEqual({ strategy: "off" })
+    expect((await loadSettings()).typesafeAI.enabled).toBe(false)
   })
 })
 
-test("reasoning routing defaults off, round-trips, validates settings, and honors trusted overrides", async () => {
-  await withSettingsEnvironment(async ({ home, project }) => {
-    expect((await loadSettings()).reasoningRouting).toEqual({ strategy: "off" })
-    for (const reasoningRouting of [
-      null,
-      true,
-      { strategy: "other" },
-      { strategy: "jev" },
-      { strategy: "jev", profile: " " },
-      { strategy: "off", unknown: true },
-    ]) {
-      await writeJson(join(home, "config.json"), { reasoningRouting })
-      await expect(loadSettings()).rejects.toThrow()
-    }
-    await writeJson(join(home, "config.json"), {})
-    await saveSettings({ reasoningRouting: { strategy: "jev", profile: "routing-profile" } })
-    expect((await loadSettings()).reasoningRouting).toEqual({ strategy: "jev", profile: "routing-profile" })
-    await writeJson(projectConfigPath(project), { reasoningRouting: { strategy: "off" } })
-    expect((await loadSettings()).reasoningRouting.strategy).toBe("jev")
-    await writeJson(join(home, "trust.json"), [project])
-    expect((await loadSettings()).reasoningRouting).toEqual({ strategy: "off" })
-  })
-})
-
-test("Jev compaction settings round-trip, default off, and honor project overrides", async () => {
-  await withSettingsEnvironment(async ({ home, project }) => {
-    expect((await loadSettings()).compaction).toEqual({ strategy: "summary" })
-    await saveSettings({ compaction: { strategy: "jev", profile: "typesafe-profile" } })
-    expect((await loadSettings()).compaction).toEqual({ strategy: "jev", profile: "typesafe-profile" })
-    await writeJson(join(home, "trust.json"), [project])
-    await writeJson(projectConfigPath(project), { compaction: { strategy: "summary" } })
-    expect((await loadSettings()).compaction).toEqual({ strategy: "summary" })
-    await writeJson(projectConfigPath(project), { compaction: { strategy: "other" } })
-    await expect(loadSettings()).rejects.toThrow("compaction requires strategy")
+test("legacy feature settings are ignored and removed on explicit TypeSafe configuration", async () => {
+  await withSettingsEnvironment(async ({ home }) => {
+    await writeJson(join(home, "config.json"), {
+      compaction: { strategy: "jev", profile: "old-profile" },
+      codeSearch: { strategy: "jev", profile: "old-profile" },
+      reasoningRouting: { strategy: "jev", profile: "old-profile" },
+      automaticThinking: { provider: { model: true } },
+      thinking: { provider: { model: "high" } },
+    })
+    expect((await loadSettings()).typesafeAI).toEqual({ enabled: false })
+    await saveSettings({ typesafeAI: { enabled: true, profile: "chosen-profile" } })
+    expect(await Bun.file(join(home, "config.json")).json()).toEqual({
+      typesafeAI: { enabled: true, profile: "chosen-profile" },
+      thinking: { provider: { model: "high" } },
+    })
+    await saveSettings({ typesafeAI: { enabled: false } })
+    expect((await loadSettings()).typesafeAI.enabled).toBe(false)
   })
 })

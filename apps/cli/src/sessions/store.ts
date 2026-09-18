@@ -106,6 +106,7 @@ async function summarize(path: string): Promise<SessionSummary | undefined> {
         continue
       }
       const event = record.event
+      if (event.type === "reasoning_routed" || event.type === "request_measured") continue
       if (event.type === "session_title_changed") recordedTitle = event.title
       if (event.type === "conversation_rewound") {
         const rewound = rewindMessageIds(messageIds, event.messageId)
@@ -253,6 +254,7 @@ export async function loadSession(path: string): Promise<LoadedSession | undefin
       }
 
       const event = record.event
+      if (event.type === "reasoning_routed" || event.type === "request_measured") continue
       if (event.type === "user_message" && isMessageId(event.messageId)) {
         pendingUserMessage = event
         continue

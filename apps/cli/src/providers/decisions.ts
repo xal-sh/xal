@@ -1,3 +1,4 @@
+import { settings } from "../config/settings"
 import { getProfile, listProfiles } from "../config/credentials"
 import { getProvider } from "./registry"
 import { redactDecisionRequest } from "./decision-redaction"
@@ -27,6 +28,12 @@ export const decisions: DecisionService = {
   async evaluate(profileId, request) {
     request.signal?.throwIfAborted()
     const provider = await connectedProvider(profileId)
+    if (provider.id === "typesafe") {
+      const config = settings().typesafeAI
+      if (!config.enabled) throw new Error("TypeSafe AI is off; enable it in /config typesafe")
+      if (config.profile !== profileId)
+        throw new Error("TypeSafe AI profile changed; retry with the configured profile")
+    }
     const response = await provider.evaluate(profileId, redactDecisionRequest(request))
     request.signal?.throwIfAborted()
     return response

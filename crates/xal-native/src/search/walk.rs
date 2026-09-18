@@ -22,37 +22,18 @@ pub(crate) fn walk_files(
     cancelled: &AtomicBool,
     deadline: Option<Instant>,
 ) -> napi::Result<Vec<PathBuf>> {
-    Ok(walk_files_bounded(root, cancelled, deadline, None, None)?.files)
-}
-
-pub(super) struct WalkedFiles {
-    pub files: Vec<PathBuf>,
-    pub limited: bool,
-}
-
-pub(super) fn walk_files_bounded(
-    root: &Path,
-    cancelled: &AtomicBool,
-    deadline: Option<Instant>,
-    maximum_files: Option<usize>,
-    scope: Option<&Path>,
-) -> napi::Result<WalkedFiles> {
-    let mut result = WalkedFiles {
-        files: Vec::new(),
-        limited: false,
-    };
     if cancelled.load(Ordering::Relaxed) {
-        return Ok(result);
+        return Ok(Vec::new());
     }
     if let Ok(metadata) = fs::symlink_metadata(root) {
         if metadata.file_type().is_symlink() {
-            return Ok(result);
+            return Ok(Vec::new());
         }
         if metadata.is_file() {
-            if !contains_git(root) {
-                result.files.push(root.to_path_buf());
-            }
-            return Ok(result);
+            return Ok((!contains_git(root))
+                .then(|| root.to_path_buf())
+                .into_iter()
+                .collect());
         }
     }
     let mut builder = WalkBuilder::new(root);
@@ -65,21 +46,12 @@ pub(super) fn walk_files_bounded(
         .require_git(false)
         .parents(true)
         .follow_links(false)
-        .filter_entry({
-            let scope = scope.map(Path::to_path_buf);
-            move |entry| {
-                (entry.depth() == 0 || entry.file_name() != ".git")
-                    && scope.as_ref().is_none_or(|scope| {
-                        entry.path().starts_with(scope) || scope.starts_with(entry.path())
-                    })
-            }
-        });
+        .filter_entry(|entry| entry.depth() == 0 || entry.file_name() != ".git");
+    let mut files = Vec::new();
     for entry in builder.build() {
         if cancelled.load(Ordering::Relaxed)
             || deadline.is_some_and(|deadline| Instant::now() >= deadline)
-            || maximum_files.is_some_and(|limit| result.files.len() >= limit)
         {
-            result.limited = true;
             break;
         }
         let entry = entry.map_err(|error| Error::new(Status::GenericFailure, error.to_string()))?;
@@ -87,11 +59,11 @@ pub(super) fn walk_files_bounded(
             .file_type()
             .is_some_and(|file_type| file_type.is_file())
         {
-            result.files.push(entry.into_path());
+            files.push(entry.into_path());
         }
     }
-    result.files.sort();
-    Ok(result)
+    files.sort();
+    Ok(files)
 }
 
 pub(super) fn display_path(path: &Path, cwd: &Path) -> String {

@@ -1,5 +1,6 @@
 import type { AgentEvent } from "../agent/events"
 import type { ConversationCheckpoint, HistoryItem } from "../agent/history"
+import type { JsonObject } from "../lib/json"
 import type { PermissionMode } from "../permissions/types"
 import type { ThinkingEffort } from "../providers/types"
 
@@ -18,7 +19,12 @@ export interface SessionMeta {
 }
 
 export type SessionRecord =
-  { type: "meta"; meta: SessionMeta } | { type: "item"; item: HistoryItem } | { type: "event"; event: AgentEvent }
+  | { type: "meta"; meta: SessionMeta }
+  | { type: "item"; item: HistoryItem }
+  | {
+      type: "event"
+      event: AgentEvent | (JsonObject & ({ type: "reasoning_routed" } | { type: "request_measured" }))
+    }
 
 export interface SessionSummary {
   id: string

@@ -551,6 +551,8 @@ export function parseRecord(line: string): SessionRecord {
     case "event": {
       const event = parseEvent(raw.event)
       if (event) return { type: "event", event }
+      if (isJsonObject(raw.event) && (raw.event.type === "reasoning_routed" || raw.event.type === "request_measured"))
+        return { type: "event", event: { ...raw.event, type: raw.event.type } }
       break
     }
   }

@@ -258,8 +258,8 @@ export async function runCompaction(
 
   try {
     host.setState("compacting")
-    const compaction = settings().compaction
-    if (compaction.strategy === "jev") {
+    const compaction = settings().typesafeAI
+    if (compaction.enabled) {
       let checkpoint: CompactionItem | undefined
       try {
         if (

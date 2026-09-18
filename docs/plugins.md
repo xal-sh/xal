@@ -101,7 +101,7 @@ Providers and models have explicit kinds. `Provider` and `TextModelInfo` have `k
 
 Both provider kinds register through `ctx.registerProvider` and may implement `connect` to return a credential. A decision provider implements `listModels(profileId, refresh)` and `evaluate(profileId, request)` instead of `defaultModel` and `stream`. The harness accepts only text providers. Decision models are discovered separately and are never selectable as the harness model.
 
-Consumers use `ctx.runtime.decisions`, so plugins never depend on or import one another:
+Consumers use `ctx.runtime.decisions`, so plugins never depend on or import one another. TypeSafe evaluations require the [Use TypeSafe AI](/docs/configs#typesafe-ai) setting to be On and the requested profile to match its selected profile. Connection/model discovery remains available while Off, but inference is blocked:
 
 ```ts
 const connections = await ctx.runtime.decisions.connections()

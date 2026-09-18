@@ -132,7 +132,12 @@ export class SessionRecorder {
       throw new Error("session record contains duplicate metadata")
     }
 
-    const sourceEvents = records.flatMap((record) => (record.type === "event" ? [record.event] : []))
+    const sourceEvents = records.flatMap((record) => {
+      if (record.type !== "event") return []
+      const event = record.event
+      if (event.type === "reasoning_routed" || event.type === "request_measured") return []
+      return [event]
+    })
     const corrections = stateCorrections(replayState(first.meta, sourceEvents), target)
     const meta: SessionMeta = {
       ...first.meta,

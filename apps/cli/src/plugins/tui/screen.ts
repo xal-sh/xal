@@ -150,9 +150,7 @@ export class Screen {
         scrollbackRows: preferences.scrollbackRows,
       },
       {
-        configureCompaction: () => this.executeCommand("/config compaction"),
-        configureCodeSearch: () => this.executeCommand("/config code-search"),
-        configureReasoningRouting: () => this.executeCommand("/config reasoning-routing"),
+        configureTypeSafeAI: () => this.executeCommand("/config typesafe"),
         change: async (config, key) => {
           await saveTuiConfig(config)
           switch (key) {
@@ -423,10 +421,10 @@ export class Screen {
     this.syncFooter()
   }
 
-  openConfig(available = { compaction: false, codeSearch: false, reasoningRouting: false }): void {
+  openConfig(): void {
     this.picker.hide()
     this.usage.hide()
-    this.config.show(available)
+    this.config.show()
     this.syncFooter()
   }
 

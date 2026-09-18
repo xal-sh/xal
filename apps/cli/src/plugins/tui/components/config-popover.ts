@@ -1,4 +1,5 @@
 import { StyledText, TextAttributes, type BoxRenderable, type RenderContext, type TextRenderable } from "@opentui/core"
+import { settings } from "../../../config/settings"
 import { describeError } from "../../../lib/error"
 import type { TuiPreferences } from "../config"
 import { column, label, row } from "../lib/renderables"
@@ -17,19 +18,16 @@ const SETTINGS = [
     label: "Show thinking",
     description: "Include model reasoning in the transcript",
   },
-  { key: "compaction", label: "Compaction", description: "Choose Jev pruning or harness-model summary" },
-  { key: "codeSearch", label: "Code search", description: "Send source excerpts to Jev for relevance ranking" },
   {
-    key: "reasoningRouting",
-    label: "Reasoning routing",
-    description: "Use Jev to lower effort for routine read-agent lookups",
+    key: "typesafeAI",
+    label: "Use TypeSafe AI",
+    description: "Enable TypeSafe AI features, currently Jev compaction",
   },
 ] as const
 
-export type TuiToggleKey = Exclude<(typeof SETTINGS)[number]["key"], "compaction" | "codeSearch" | "reasoningRouting">
+export type TuiToggleKey = Exclude<(typeof SETTINGS)[number]["key"], "typesafeAI">
 
 interface SettingRow {
-  view: BoxRenderable
   cursor: TextRenderable
   name: TextRenderable
   value: TextRenderable
@@ -38,9 +36,7 @@ interface SettingRow {
 
 interface ConfigPopoverActions {
   change(config: TuiPreferences, key: TuiToggleKey): Promise<void>
-  configureCompaction(): void
-  configureCodeSearch(): void
-  configureReasoningRouting(): void
+  configureTypeSafeAI(): void
   changed(): void
   error(message: string): void
 }
@@ -51,22 +47,12 @@ export class ConfigPopover {
   private readonly rows: SettingRow[] = []
   private selected = 0
   private saving = false
-  private available = { compaction: false, codeSearch: false, reasoningRouting: false }
-
-  private get settings() {
-    return SETTINGS.filter((setting) =>
-      setting.key === "compaction" || setting.key === "codeSearch" || setting.key === "reasoningRouting"
-        ? this.available[setting.key]
-        : true,
-    )
-  }
-
   get visible(): boolean {
     return this.view.visible
   }
 
   get height(): number {
-    return 5 + this.settings.length
+    return 5 + SETTINGS.length
   }
 
   constructor(
@@ -119,7 +105,7 @@ export class ConfigPopover {
       settingRow.add(name)
       settingRow.add(value)
       settingRow.add(description)
-      this.rows.push({ view: settingRow, cursor, name, value, description })
+      this.rows.push({ cursor, name, value, description })
       this.view.add(settingRow)
     }
 
@@ -131,8 +117,7 @@ export class ConfigPopover {
     )
   }
 
-  show(available = { compaction: false, codeSearch: false, reasoningRouting: false }): void {
-    this.available = available
+  show(): void {
     this.view.height = this.height - 1
     this.selected = 0
     this.status.content = ""
@@ -153,7 +138,7 @@ export class ConfigPopover {
       return true
     }
     if (name === "up" || name === "down") {
-      const count = this.settings.length
+      const count = SETTINGS.length
       this.selected = (this.selected + (name === "up" ? -1 : 1) + count) % count
       this.renderRows()
       return true
@@ -163,21 +148,11 @@ export class ConfigPopover {
   }
 
   private toggle(): void {
-    const setting = this.settings[this.selected]
+    const setting = SETTINGS[this.selected]
     if (!setting) return
-    if (setting.key === "compaction") {
+    if (setting.key === "typesafeAI") {
       this.hide()
-      this.actions.configureCompaction()
-      return
-    }
-    if (setting.key === "codeSearch") {
-      this.hide()
-      this.actions.configureCodeSearch()
-      return
-    }
-    if (setting.key === "reasoningRouting") {
-      this.hide()
-      this.actions.configureReasoningRouting()
+      this.actions.configureTypeSafeAI()
       return
     }
     const previous = this.config
@@ -205,17 +180,11 @@ export class ConfigPopover {
   private renderRows(): void {
     this.rows.forEach((entry, index) => {
       const setting = SETTINGS[index]!
-      const selected = setting.key === this.settings[this.selected]?.key
-      entry.view.visible = this.settings.some((visible) => visible.key === setting.key)
-      const enabled =
-        setting.key === "compaction" || setting.key === "codeSearch" || setting.key === "reasoningRouting"
-          ? undefined
-          : this.config[setting.key]
+      const selected = setting.key === SETTINGS[this.selected]?.key
+      const enabled = setting.key === "typesafeAI" ? settings().typesafeAI.enabled : this.config[setting.key]
       entry.cursor.content = selected ? terminalGlyph("❯", ">") : ""
       entry.name.content = new StyledText([selected ? paint(COLORS.accent, setting.label) : muted(setting.label)])
-      entry.value.content = new StyledText([
-        enabled === undefined ? muted("[edit]") : enabled ? paint(COLORS.success, "[on]") : muted("[off]"),
-      ])
+      entry.value.content = new StyledText([enabled ? paint(COLORS.success, "[on]") : muted("[off]")])
       entry.description.content = new StyledText([muted(setting.description)])
     })
   }

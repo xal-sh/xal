@@ -1,6 +1,4 @@
-import { compactionConfigAvailable, configureCompaction } from "../../config/compaction-command"
-import { codeSearchConfigAvailable, configureCodeSearch } from "../../config/code-search-command"
-import { reasoningRoutingConfigAvailable, configureReasoningRouting } from "../../config/reasoning-routing-command"
+import { configureTypeSafeAI } from "../../config/typesafe-ai-command"
 import { appInfo } from "../../app-info"
 import { resumeSession } from "../../agent/session/compose"
 import { stopBackgroundWorker, takeOverBackgroundSession } from "../../bg/attach"
@@ -18,7 +16,7 @@ import type { PluginContext } from "../types"
 
 interface TuiCommandActions {
   agents(): void
-  config(available: { compaction: boolean; codeSearch: boolean; reasoningRouting: boolean }): void
+  config(): void
   usage(summary: ProviderUsageSummary, view: UsageActivityView, provider?: string): void
   terminal(): string[]
   quit(): void
@@ -45,19 +43,12 @@ const terminalCommand: Command = {
 
 const configCommand: Command = {
   name: "config",
-  describe: "configure display preferences, compaction, code search, and reasoning routing",
+  describe: "configure display preferences and all TypeSafe AI features",
   async run(args, ctx) {
-    if (args.length === 1 && args[0] === "compaction") return configureCompaction(ctx)
-    if (args.length === 1 && args[0] === "code-search") return configureCodeSearch(ctx)
-    if (args.length === 1 && args[0] === "reasoning-routing") return configureReasoningRouting(ctx)
-    if (args.length > 0) throw new Error("usage: /config [compaction|code-search|reasoning-routing]")
+    if (args.length === 1 && args[0] === "typesafe") return configureTypeSafeAI(ctx)
+    if (args.length > 0) throw new Error("usage: /config [typesafe]")
     if (!actions) throw new Error("tui is not running")
-    const [compaction, codeSearch, reasoningRouting] = await Promise.all([
-      compactionConfigAvailable(),
-      codeSearchConfigAvailable(),
-      reasoningRoutingConfigAvailable(),
-    ])
-    actions.config({ compaction, codeSearch, reasoningRouting })
+    actions.config()
   },
 }
 

@@ -48,14 +48,6 @@ impl SecretMatcher {
     }
 
     pub(crate) fn redact(&self, input: &[u16]) -> Vec<u16> {
-        self.replace(input, false)
-    }
-
-    pub(crate) fn redact_lines(&self, input: &[u16]) -> Vec<u16> {
-        self.replace(input, true)
-    }
-
-    fn replace(&self, input: &[u16], preserve_lines: bool) -> Vec<u16> {
         let mut candidates = vec![Candidate::default(); input.len()];
         let mut state = 0;
 
@@ -92,14 +84,6 @@ impl SecretMatcher {
             }
             if candidate.secret_length > 0 {
                 output.extend_from_slice(&self.marker);
-                if preserve_lines {
-                    output.extend(
-                        input[cursor..cursor + candidate.secret_length]
-                            .iter()
-                            .copied()
-                            .filter(|unit| *unit == u16::from(b'\n')),
-                    );
-                }
                 cursor += candidate.secret_length;
                 continue;
             }
@@ -224,21 +208,6 @@ mod tests {
         expected.extend_from_slice(&marker);
 
         assert_eq!(matcher.redact(&input), expected);
-    }
-
-    #[test]
-    fn preserves_source_line_positions_when_redacting_multiline_values() {
-        let matcher = SecretMatcher::new(vec![units("秘密\r\nsecond\nthird")], units("[REDACTED]"))
-            .expect("matcher should be valid");
-        let source = units("before 秘密\r\nsecond\nthird after\nlast");
-        assert_eq!(
-            matcher.redact_lines(&source),
-            units("before [REDACTED]\n\n after\nlast")
-        );
-        assert_eq!(
-            matcher.redact(&source),
-            units("before [REDACTED] after\nlast")
-        );
     }
 
     #[test]

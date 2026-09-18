@@ -6,7 +6,7 @@ import { ContextBudget } from "../agent/session/context-budget"
 import { completedRound, ScriptedProvider, setupAgentSessionTests } from "../agent/session/test-support"
 import { getCommand } from "../commands/registry"
 import type { CommandContext, SelectRequest } from "../commands/types"
-import { compactionConfigAvailable, configureCompaction } from "../config/compaction-command"
+import { configureTypeSafeAI } from "../config/typesafe-ai-command"
 import { createProfile, deleteProfile, listProfiles } from "../config/credentials"
 import { loadSettings, saveSettings, settings } from "../config/settings"
 import { listModelChoices } from "./catalog"
@@ -40,7 +40,7 @@ function provider(): DecisionProvider {
 
 test("connecting a decision provider leaves the harness unchanged and exposes only decision runtime operations", async () => {
   const harness = await setupAgentSessionTests("decision-connect-")
-  const previous = settings().compaction
+  const previous = settings().typesafeAI
   try {
     await loadSettings()
     const text = new ScriptedProvider([])
@@ -49,7 +49,6 @@ test("connecting a decision provider leaves the harness unchanged and exposes on
     const active = await createProfile(text.id, "text", { type: "api_key", key: "text-token" })
     await saveSettings({ provider: text.id, profile: active.id, model: "test-model" })
     const session = harness.createSession(text)
-    expect(await compactionConfigAvailable()).toBe(false)
     registerProviderCommands()
     let selections = 0
     const ctx: CommandContext = {
@@ -66,7 +65,7 @@ test("connecting a decision provider leaves the harness unchanged and exposes on
       async select<T>(request: SelectRequest<T>): Promise<T | undefined> {
         selections += 1
         return request.options.find((entry) =>
-          selections === 1 ? entry.detail === "TypeSafe AI" : entry.label.startsWith("Jev"),
+          selections === 1 ? entry.detail === "TypeSafe AI" : entry.label === "On",
         )?.value
       },
     }
@@ -79,9 +78,8 @@ test("connecting a decision provider leaves the harness unchanged and exposes on
     const connected = (await decisions.connections())[0]
     if (!connected) throw new Error("missing decision connection")
     expect((await decisions.models(connected.profile.id)).models[0]?.kind).toBe("decision")
-    expect(await compactionConfigAvailable()).toBe(true)
-    await configureCompaction(ctx)
-    expect((await loadSettings()).compaction).toEqual({ strategy: "jev", profile: connected.profile.id })
+    await configureTypeSafeAI(ctx)
+    expect((await loadSettings()).typesafeAI).toEqual({ enabled: true, profile: connected.profile.id })
     expect((await listProfiles()).map((profile) => profile.name)).toEqual(["decisions", "text"])
     await deleteProfile(connected.profile.id)
     await expect(
@@ -91,23 +89,23 @@ test("connecting a decision provider leaves the harness unchanged and exposes on
         questions: { needed: { type: "noul", instructions: "Needed?" } },
       }),
     ).rejects.toThrow("not connected")
-    expect(await compactionConfigAvailable()).toBe(true)
   } finally {
-    settings().compaction = previous
+    settings().typesafeAI = previous
     await harness.cleanup()
   }
 })
 
 test("manual and automatic compaction use Jev atomically, with visible summary fallback and no fallback on user cancellation", async () => {
   const harness = await setupAgentSessionTests("decision-compact-")
-  const previous = settings().compaction
+  const previous = settings().typesafeAI
   try {
     await loadSettings()
     const decision = provider()
     registerProvider(decision)
     const profile = await createProfile("typesafe", "decisions", { type: "api_key", key: "test-token" })
-    settings().compaction = { strategy: "jev", profile: profile.id }
-    for (const scenario of ["success", "failure", "insufficient", "cancel", "disconnected"] as const) {
+    for (const scenario of ["off", "success", "failure", "insufficient", "cancel", "disconnected"] as const) {
+      settings().typesafeAI = scenario === "off" ? { enabled: false } : { enabled: true, profile: profile.id }
+      let decisionCalls = 0
       const text = new ScriptedProvider([completedRound("Fallback summary")], 100_000)
       let history: HistoryItem[] = [
         { type: "user_message", text: "User request", images: [] },
@@ -149,6 +147,7 @@ test("manual and automatic compaction use Jev atomically, with visible summary f
         },
       }
       decision.evaluate = async (_profile, request) => {
+        decisionCalls++
         if (scenario === "failure") throw new Error("TypeSafe offline")
         if (scenario === "cancel") controller.abort()
         return {
@@ -175,13 +174,14 @@ test("manual and automatic compaction use Jev atomically, with visible summary f
       ).toBe(true)
       expect(history[0]).toMatchObject({ strategy: scenario === "success" ? "jev_v1" : "user_messages_v1" })
       expect(text.requests).toHaveLength(scenario === "success" ? 0 : 1)
-      if (scenario !== "success") {
+      if (scenario === "off") expect(decisionCalls).toBe(0)
+      if (scenario !== "success" && scenario !== "off") {
         expect(events.some((event) => event.type === "error" && event.message.includes("falling back"))).toBe(true)
         expect(text.requests[0]?.input).toContainEqual(original[2])
       }
     }
   } finally {
-    settings().compaction = previous
+    settings().typesafeAI = previous
     await harness.cleanup()
   }
 })
