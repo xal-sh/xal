@@ -64,6 +64,7 @@ import { PendingInteractions } from "./interactions"
 import { OutputContract, parseOutputSchema } from "./output-contract"
 import { InputQueue, interjectionMessage, isDirectShellInput } from "./queue"
 import { StreamBuffer, type StreamRoundHost } from "./stream"
+import { readAheadOrNotice } from "./read-ahead"
 import { runDirectShell, runTurn, type TurnHost, type TurnSummary } from "./turn"
 import { ToolCallRunner, type ToolRunnerHost } from "./tool-runner"
 import {
@@ -238,6 +239,7 @@ export class AgentSession {
       permissionSessionKey: () => this.sessionPermissionKey,
       outputContract: () => this.outputContract,
       availableTool: (name) => this.availableTool(name),
+      activeItems: () => activeHistory(this.items),
       hookContext: (signal) => this.hookContext(signal),
       emit: (event) => this.emit(event),
       setState: (state) => this.setState(state),
@@ -1243,8 +1245,23 @@ export class AgentSession {
       imageCount: input.images.length,
       sentAt: Date.now(),
     })
-    const modelText = redactText(outcome.text)
+    const modelText = await this.withReadAhead(redactText(outcome.text), signal)
     this.pushItem(this.userMessage(input, interjected ? interjectionMessage(modelText) : modelText, messageId))
+  }
+
+  private async withReadAhead(modelText: string, signal: AbortSignal): Promise<string> {
+    const prefetched = await readAheadOrNotice(
+      {
+        items: activeHistory(this.items),
+        trigger: { type: "prompt", text: modelText },
+        cwd: this.cwd,
+        sessionId: this.sessionId,
+        signal,
+        readFile: (path, readSignal) => this.toolRunner.prefetchFile(path, readSignal),
+      },
+      (event) => this.emit(event),
+    )
+    return prefetched ? `${modelText}\n\n${prefetched}` : modelText
   }
 
   private async checkpoint(messageId: string, input: UserInput): Promise<void> {

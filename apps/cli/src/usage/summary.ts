@@ -77,6 +77,8 @@ function parseRecord(line: string, location: string): ParsedUsageRecord {
     value.phase !== "turn" &&
     value.phase !== "compaction" &&
     value.phase !== "goal_evaluation" &&
+    value.phase !== "classification" &&
+    value.phase !== "read_ahead" &&
     value.phase !== "code_search" &&
     value.phase !== "reasoning_routing"
   ) {

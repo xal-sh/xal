@@ -3,12 +3,14 @@ import { createTestRenderer } from "@opentui/core/testing"
 import { settings } from "../../../config/settings"
 import { ConfigPopover } from "./config-popover"
 
-test("shows one TypeSafe AI setting with its effective state and opens the On/Off choice", async () => {
+test("toggles TypeSafe AI in place and only opens the profile choice when one is needed", async () => {
   const previous = settings().typesafeAI
   settings().typesafeAI = { enabled: false }
   const setup = await createTestRenderer({ width: 120, height: 24 })
-  let opened = 0
+  let chooses = 0
+  let outcome: "saved" | "choose" = "saved"
   const toggled: string[] = []
+  const requested: boolean[] = []
   const popover = new ConfigPopover(
     setup.renderer,
     { showOutputs: false, showThinking: false, scrollbackRows: 1000 },
@@ -16,8 +18,13 @@ test("shows one TypeSafe AI setting with its effective state and opens the On/Of
       async change(_config, key) {
         toggled.push(key)
       },
-      configureTypeSafeAI() {
-        opened += 1
+      async toggleTypeSafeAI(enabled) {
+        requested.push(enabled)
+        if (outcome === "saved") settings().typesafeAI = enabled ? { enabled, profile: "profile" } : { enabled }
+        return outcome
+      },
+      chooseTypeSafeProfile() {
+        chooses += 1
       },
       changed() {},
       error(message) {
@@ -26,14 +33,16 @@ test("shows one TypeSafe AI setting with its effective state and opens the On/Of
     },
   )
   setup.renderer.root.add(popover.view)
+  const typesafeLine = (): string | undefined =>
+    setup
+      .captureCharFrame()
+      .split("\n")
+      .find((line) => line.includes("Use TypeSafe AI"))
   try {
     popover.show()
     await setup.renderOnce()
-    const frame = setup.captureCharFrame()
-    expect(frame).toContain("Use TypeSafe AI")
-    expect(frame).toContain("[off]")
-    expect(frame).not.toContain("Reasoning routing")
-    expect(frame).not.toContain("[edit]")
+    expect(typesafeLine()).toContain("[off]")
+    expect(setup.captureCharFrame()).not.toContain("[edit]")
     popover.handleKey("enter")
     await Bun.sleep(0)
     await setup.renderOnce()
@@ -41,17 +50,24 @@ test("shows one TypeSafe AI setting with its effective state and opens the On/Of
     popover.handleKey("down")
     popover.handleKey("down")
     popover.handleKey("enter")
-    expect(opened).toBe(1)
-    expect(popover.visible).toBe(false)
-    settings().typesafeAI = { enabled: true, profile: "profile" }
-    popover.show()
+    await Bun.sleep(0)
     await setup.renderOnce()
-    expect(
-      setup
-        .captureCharFrame()
-        .split("\n")
-        .find((line) => line.includes("Use TypeSafe AI")),
-    ).toContain("[on]")
+    expect(requested).toEqual([true])
+    expect(chooses).toBe(0)
+    expect(popover.visible).toBe(true)
+    expect(typesafeLine()).toContain("[on]")
+    expect(setup.captureCharFrame()).toContain("Saved to user config")
+    popover.handleKey("enter")
+    await Bun.sleep(0)
+    await setup.renderOnce()
+    expect(requested).toEqual([true, false])
+    expect(typesafeLine()).toContain("[off]")
+    outcome = "choose"
+    popover.handleKey("enter")
+    await Bun.sleep(0)
+    expect(requested).toEqual([true, false, true])
+    expect(chooses).toBe(1)
+    expect(popover.visible).toBe(false)
   } finally {
     settings().typesafeAI = previous
     setup.renderer.destroy()

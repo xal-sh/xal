@@ -8,6 +8,7 @@ import {
 } from "../../background/registry"
 import { runCommand } from "../../commands/run"
 import type { CommandContext, SelectRequest } from "../../commands/types"
+import { toggleTypeSafeAI } from "../../config/typesafe-ai-command"
 import { describeError } from "../../lib/error"
 import { compactPath } from "../../lib/path"
 import type { PermissionMode } from "../../permissions/types"
@@ -150,7 +151,8 @@ export class Screen {
         scrollbackRows: preferences.scrollbackRows,
       },
       {
-        configureTypeSafeAI: () => this.executeCommand("/config typesafe"),
+        toggleTypeSafeAI: (enabled) => toggleTypeSafeAI(this.session, enabled),
+        chooseTypeSafeProfile: () => this.executeCommand("/config typesafe"),
         change: async (config, key) => {
           await saveTuiConfig(config)
           switch (key) {

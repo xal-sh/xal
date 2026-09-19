@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test"
 import { mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { usageSessionFingerprint } from "./recorder"
+import { UsageRecorder, usageSessionFingerprint } from "./recorder"
 import { readProviderUsageSummary } from "./summary"
 
 let directory: string | undefined
@@ -54,6 +54,25 @@ const zeroTotals = {
 }
 
 describe("provider usage summary", () => {
+  test("classification and read-ahead usage round-trip through the recorder and summary", async () => {
+    directory = await mkdtemp(join(tmpdir(), "xal-classification-usage-"))
+    const recorder = new UsageRecorder(directory)
+    for (const phase of ["classification", "read_ahead"] as const) {
+      recorder.record({
+        sessionId: "classification-session",
+        provider: "typesafe",
+        model: "jev-1.13.0",
+        phase,
+        outcome: "completed",
+        usage: { totalInputTokens: 120, outputTokens: 10 },
+      })
+    }
+    await recorder.flush()
+    const summary = await readProviderUsageSummary(directory, "classification-session", { providers: ["typesafe"] })
+    expect(summary.session.requests).toBe(2)
+    expect(summary.session.totalTokens).toBe(260)
+  })
+
   test("historical search and routing usage remains readable after removing their producers", async () => {
     directory = await mkdtemp(join(tmpdir(), "xal-archived-usage-"))
     const records = ["code_search", "reasoning_routing"].map((phase): string =>

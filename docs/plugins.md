@@ -95,6 +95,10 @@ A custom plugin receives the object under `pluginConfig` whose key matches its e
 
 Built-in plugin options are documented with their features in [TUI](/docs/tui), [Integrations](/docs/integrations), and [Providers and models](/docs/providers).
 
+## Classification tool
+
+The built-in `classify` plugin exposes the general-purpose [classification tool](/docs/configs#classification-tool). It uses `ctx.runtime.decisions`, independently of the `typesafe` provider plugin. It contributes a tool definition, not a system-prompt instruction or automatic planning/review workflow. The existing TypeSafe AI switch controls availability and inference. [Jev read-ahead](/docs/configs#jev-read-ahead) is part of the harness tool runner rather than a plugin: it reads the results of the registered `read`, `grep`, and `glob` tools by name and prefetches through whichever `read` tool is registered, so a plugin that replaces those tools keeps read-ahead working as long as the output still lists workspace paths.
+
 ## Decision models
 
 Providers and models have explicit kinds. `Provider` and `TextModelInfo` have `kind: "text"`; `DecisionProvider` and `DecisionModelInfo` have `kind: "decision"`. `AnyProvider` and `ModelInfo` are their respective unions. Existing text-provider plugins must add `kind: "text"` to their provider and model metadata. `ModelCatalog` defaults to text models; decision providers return `ModelCatalog<DecisionModelInfo>`.

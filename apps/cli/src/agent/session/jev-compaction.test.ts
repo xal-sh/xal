@@ -18,6 +18,8 @@ function history(count = 3): ConversationItem[] {
     {
       type: "user_message",
       text: "Keep exact requirements",
+      modelText:
+        "Keep exact requirements\n\n[read-ahead] Prefetched src/secret.ts because the next step likely needs it:\n1\tPREFETCHED FILE BODY",
       images: [{ mediaType: "image/png", data: "bm90LWZvci1qZXY=" }],
     },
     ...Array.from({ length: count }, (_, index): ConversationItem[] => [
@@ -64,6 +66,7 @@ test("keeps, truncates or removes paired tools without rewriting text, images or
       service((request) => {
         expect(JSON.stringify(request.state)).not.toContain("bm90LWZvci1qZXY=")
         expect(JSON.stringify(request.state)).not.toContain("old output old output")
+        expect(JSON.stringify(request.state)).not.toContain("PREFETCHED FILE BODY")
         expect(JSON.stringify(request.state)).toContain("Keep exact requirements")
         return {
           call_1: { type: "noul", noul: 0 },

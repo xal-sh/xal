@@ -5,9 +5,22 @@ import { modeDefinition } from "../../permissions/modes"
 import { evaluatePolicy } from "../../permissions/service"
 import type { PermissionMode, PermissionScope } from "../../permissions/types"
 import { profileToolBatchFinished, profileToolBatchStarted, profileToolOutputShape } from "../../profiler/profiler"
-import type { ContextUsage, ModelInputModality, Provider, ThinkingEffort, ToolCallItem } from "../../providers/types"
+import type {
+  ContextUsage,
+  ConversationItem,
+  ModelInputModality,
+  Provider,
+  ThinkingEffort,
+  ToolCallItem,
+} from "../../providers/types"
 import { createRedactedStream, redactJsonObject, redactText } from "../../secrets/redactor"
-import { boundToolOutput, TOOL_FAILED_PREFIX, TOOL_OUTPUT_UNSAVED_PREFIX } from "../../tools/output"
+import {
+  boundToolOutput,
+  parseBoundedToolOutput,
+  TOOL_FAILED_PREFIX,
+  TOOL_OUTPUT_UNSAVED_PREFIX,
+  toolFailed,
+} from "../../tools/output"
 import { isInteractiveTool, isSessionTool } from "../../tools/types"
 import type {
   ElicitationRequest,
@@ -16,6 +29,7 @@ import type {
   RegisteredTool,
   ToolConcurrency,
   ToolEvent,
+  ToolExecutionContext,
   ToolResult,
   UndoAction,
 } from "../../tools/types"
@@ -23,6 +37,7 @@ import type { WorkspaceUndo } from "../../tools/undo"
 import type { AgentEvent, AgentState, DenialCause } from "../events"
 import type { ToolLoopDetector, ToolLoopAction } from "./loop-detection"
 import type { OutputContract } from "./output-contract"
+import { READ_AHEAD_TOOLS, readAheadOrNotice } from "./read-ahead"
 import { isAbortError } from "./types"
 import type { DeliveredAgentQuestion, ParentQuestionResult } from "../task/questions"
 import type { SessionKind } from "../types"
@@ -92,6 +107,7 @@ export interface ToolRunnerHost {
   permissionSessionKey(): object
   outputContract(): OutputContract | undefined
   availableTool(name: string): RegisteredTool | undefined
+  activeItems(): ConversationItem[]
   hookContext(signal: AbortSignal): HookContext
   emit(event: AgentEvent): void
   setState(state: AgentState): void
@@ -247,10 +263,18 @@ export class ToolCallRunner {
       } else {
         for (const entry of ready) outcomes[entry.index] = await this.execute(entry.prepared, signal)
       }
+      const prefetch = loopError
+        ? undefined
+        : await this.readAhead(
+            outcomes.map((outcome, index) => (recorded[index] ? outcome : undefined)),
+            signal,
+          )
 
       for (const [index, outcome] of outcomes.entries()) {
         if (!outcome) throw new Error("tool scheduler did not produce a result")
-        this.commit(outcome)
+        this.commit(
+          prefetch?.target === outcome ? { ...outcome, output: `${outcome.output}\n\n${prefetch.text}` } : outcome,
+        )
         if (recorded[index]) toolLoops.record(outcome.call, outcome.output)
       }
       profileToolBatchFinished(profile, loopError ? "failed" : signal.aborted ? "interrupted" : "completed")
@@ -399,14 +423,7 @@ export class ToolCallRunner {
                 signal,
                 update,
               })
-            : tool.execute(call.args, {
-                cwd: this.host.cwd(),
-                sessionId: this.host.sessionId(),
-                sessionKind: this.host.kind,
-                directory: this.host.outputDirectory(),
-                signal,
-                update,
-              })
+            : tool.execute(call.args, this.toolContext(signal, update))
       let result: ToolResult
       switch (undo.type) {
         case "none":
@@ -458,6 +475,80 @@ export class ToolCallRunner {
     }
     profileToolOutputShape(this.host.sessionId(), this.host.kind, call.name, originalOutput, output, bounded)
     return this.outcome(call, title, readOnly, output, undefined, events, execution)
+  }
+
+  private toolContext(signal: AbortSignal, update: (text: string) => void): ToolExecutionContext {
+    return {
+      cwd: this.host.cwd(),
+      sessionId: this.host.sessionId(),
+      sessionKind: this.host.kind,
+      directory: this.host.outputDirectory(),
+      signal,
+      update,
+    }
+  }
+
+  private async readAhead(
+    outcomes: Array<ToolCallOutcome | undefined>,
+    signal: AbortSignal,
+  ): Promise<{ target: ToolCallOutcome; text: string } | undefined> {
+    const sources = outcomes.flatMap((outcome) =>
+      outcome &&
+      READ_AHEAD_TOOLS.has(outcome.call.name) &&
+      !outcome.denial &&
+      !toolFailed(outcome.output) &&
+      !parseBoundedToolOutput(outcome.output)
+        ? [outcome]
+        : [],
+    )
+    const target = sources.at(-1)
+    if (!target) return undefined
+    const text = await readAheadOrNotice(
+      {
+        items: this.host.activeItems(),
+        trigger: { type: "tools", outcomes: sources.map(({ call, output }) => ({ call, output })) },
+        cwd: this.host.cwd(),
+        sessionId: this.host.sessionId(),
+        signal,
+        readFile: (path, readSignal) => this.prefetchFile(path, readSignal),
+      },
+      (event) => this.host.emit(event),
+    )
+    return text === undefined ? undefined : { target, text }
+  }
+
+  async prefetchFile(path: string, signal: AbortSignal): Promise<string | undefined> {
+    const tool = this.host.availableTool("read")
+    if (!tool || isInteractiveTool(tool) || isSessionTool(tool)) return undefined
+    const args = { file_path: path }
+    const context = { cwd: this.host.cwd() }
+    const permission = tool.permission?.(args, context)
+    const decision = await evaluatePolicy({
+      sessionKey: this.host.permissionSessionKey(),
+      cwd: this.host.cwd(),
+      tool: tool.name,
+      title: tool.title(args, context),
+      args,
+      subject: permission?.subject,
+      readOnly: tool.readOnly?.(args, context) ?? false,
+      sandboxed: tool.sandboxed?.(args, context) ?? false,
+      mode: this.host.mode(),
+      inheritedDenyMode: this.host.inheritedDenyMode,
+    })
+    if (decision !== "allow") return undefined
+    try {
+      return redactText(
+        (
+          await tool.execute(
+            args,
+            this.toolContext(signal, () => {}),
+          )
+        ).output,
+      )
+    } catch (error) {
+      if (isAbortError(error) || signal.aborted) throw error
+      return undefined
+    }
   }
 
   commit(outcome: ToolCallOutcome): void {

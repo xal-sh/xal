@@ -2,6 +2,8 @@ import { truncateUtf8Middle } from "../../lib/text"
 import type { DecisionQuestion, DecisionService } from "../../providers/decision-types"
 import type { ConversationItem, ToolCallItem } from "../../providers/types"
 import { recordProviderUsage } from "../../usage/recorder"
+import { DECISION_STATE_TOKENS, decisionBatches, estimatedDecisionTokens, recentUserPrompts } from "./decision-view"
+import { withoutPrefetched } from "./read-ahead"
 
 interface Candidate {
   call: ToolCallItem
@@ -30,10 +32,6 @@ function candidates(items: ConversationItem[]): Candidate[] {
   return candidates
 }
 
-function estimatedTokens(value: unknown): number {
-  return Math.ceil(Buffer.byteLength(JSON.stringify(value), "utf8") / 3)
-}
-
 type JevState = { context: string; goal: string; history: string[] }
 
 function stateFor(items: ConversationItem[], goal: string, inputBytes: number, textBytes: number): JevState {
@@ -47,7 +45,7 @@ function stateFor(items: ConversationItem[], goal: string, inputBytes: number, t
       const textLimit = index === 0 || index >= items.length - 6 ? Infinity : textBytes
       switch (item.type) {
         case "user_message":
-          return `[${index}] user: ${shorten(item.modelText ?? item.text, textLimit)}${item.images.length ? ` [${item.images.length} images omitted]` : ""}`
+          return `[${index}] user: ${shorten(withoutPrefetched(item.modelText ?? item.text), textLimit)}${item.images.length ? ` [${item.images.length} images omitted]` : ""}`
         case "assistant_message":
           return `[${index}] assistant: ${shorten(item.text, textLimit)}`
         case "reasoning":
@@ -62,20 +60,14 @@ function stateFor(items: ConversationItem[], goal: string, inputBytes: number, t
 }
 
 function fittedState(items: ConversationItem[], focus?: string): JevState {
-  const goal =
-    focus?.trim() ||
-    items
-      .flatMap((item) => (item.type === "user_message" && item.text.trim() ? [item.text.trim()] : []))
-      .slice(-3)
-      .map((text) => truncateUtf8Middle(text, 500, " [... omitted ...] "))
-      .join("\n")
+  const goal = focus?.trim() || recentUserPrompts(items)
   for (const inputBytes of [Infinity, 1000, 200, 60]) {
     const state = stateFor(items, goal, inputBytes, Infinity)
-    if (estimatedTokens(state) <= 25_000) return state
+    if (estimatedDecisionTokens(state) <= DECISION_STATE_TOKENS) return state
   }
   for (const textBytes of [4000, 1000, 200, 60]) {
     const state = stateFor(items, goal, 60, textBytes)
-    if (estimatedTokens(state) <= 25_000) return state
+    if (estimatedDecisionTokens(state) <= DECISION_STATE_TOKENS) return state
   }
   throw new Error("history cannot fit Jev's state budget without omitting protected context")
 }
@@ -108,22 +100,7 @@ export async function pruneWithJev(
   const calls = candidates(items)
   if (calls.length === 0) return items
   const state = fittedState(items, options.focus)
-  const batches: Candidate[][] = []
-  let batch: Candidate[] = []
-  let tokens = estimatedTokens({ model: "jev-latest", state, questions: {} })
-  const stateTokens = tokens
-  for (const call of calls) {
-    const questionTokens = estimatedTokens(questionsFor(call))
-    if (stateTokens + questionTokens > 30_000) throw new Error("Jev state leaves no room for a compaction question")
-    if (tokens + questionTokens > 30_000) {
-      batches.push(batch)
-      batch = []
-      tokens = stateTokens
-    }
-    batch.push(call)
-    tokens += questionTokens
-  }
-  if (batch.length) batches.push(batch)
+  const batches = decisionBatches(state, calls, questionsFor, "compaction")
   const actions = new Map<number, "drop" | "truncate">()
   for (const batch of batches) {
     options.signal.throwIfAborted()

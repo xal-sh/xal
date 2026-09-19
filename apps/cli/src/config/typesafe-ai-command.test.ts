@@ -1,4 +1,7 @@
 import { expect, test } from "bun:test"
+import { mkdtemp, rm } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import { completedRound, runSettledTurn, ScriptedProvider, setupAgentSessionTests } from "../agent/session/test-support"
 import type { CommandContext, SelectRequest } from "../commands/types"
 import { registerBasePrompt } from "../agent/prompt/base"
@@ -7,7 +10,7 @@ import type { DecisionProvider } from "../providers/decision-types"
 import { registerProvider } from "../providers/registry"
 import { createProfile, deleteProfile } from "./credentials"
 import { loadSettings, saveSettings, settings } from "./settings"
-import { configureTypeSafeAI } from "./typesafe-ai-command"
+import { configureTypeSafeAI, toggleTypeSafeAI } from "./typesafe-ai-command"
 
 const provider: DecisionProvider = {
   kind: "decision",
@@ -52,7 +55,13 @@ test("one choice enables TypeSafe without changing thinking, reuses the profile,
       expect(request.options.map((option) => option.label)).toEqual(["On", "Off"])
       const option = request.options.find((option) => option.label === (enabled ? "On" : "Off"))
       if (enabled) {
-        for (const disclosure of ["compaction", "conversation", "tool names and inputs"])
+        for (const disclosure of [
+          "compaction",
+          "conversation",
+          "tool names and inputs",
+          "classify",
+          "classification content",
+        ])
           expect(option?.detail).toContain(disclosure)
       }
       return option?.value
@@ -72,6 +81,34 @@ test("one choice enables TypeSafe without changing thinking, reuses the profile,
     await configureTypeSafeAI(ctx)
     expect((await loadSettings()).typesafeAI).toEqual({ enabled: false, profile: profile.id })
     expect(session.currentThinking).toBe("high")
+    session.disposeAsyncDelivery()
+    session.disposeToolResources()
+  } finally {
+    settings().typesafeAI = previous
+    await harness.cleanup()
+  }
+})
+
+test("the in-place toggle saves without a choice when the profile is unambiguous", async () => {
+  const harness = await setupAgentSessionTests("typesafe-toggle-")
+  const previous = settings().typesafeAI
+  try {
+    await loadSettings()
+    registerProvider(provider)
+    const session = harness.createSession(new ScriptedProvider([]))
+    await expect(toggleTypeSafeAI(session, true)).rejects.toThrow("connect TypeSafe")
+    const first = await createProfile("typesafe", "first", { type: "api_key", key: "one" })
+    expect(await toggleTypeSafeAI(session, true)).toBe("saved")
+    expect((await loadSettings()).typesafeAI).toEqual({ enabled: true, profile: first.id })
+    await createProfile("typesafe", "second", { type: "api_key", key: "two" })
+    expect(await toggleTypeSafeAI(session, false)).toBe("saved")
+    expect((await loadSettings()).typesafeAI).toEqual({ enabled: false, profile: first.id })
+    expect(await toggleTypeSafeAI(session, true)).toBe("saved")
+    expect((await loadSettings()).typesafeAI).toEqual({ enabled: true, profile: first.id })
+    await deleteProfile(first.id)
+    await createProfile("typesafe", "third", { type: "api_key", key: "three" })
+    expect(await toggleTypeSafeAI(session, true)).toBe("choose")
+    expect((await loadSettings()).typesafeAI).toEqual({ enabled: true, profile: first.id })
     session.disposeAsyncDelivery()
     session.disposeToolResources()
   } finally {
@@ -138,7 +175,8 @@ test("the decision boundary blocks every TypeSafe call while off or using a stal
     expect(calls).toBe(1)
     registerBasePrompt()
     const textProvider = new ScriptedProvider([completedRound("Done")])
-    const session = harness.createSession(textProvider)
+    const cwd = await mkdtemp(join(tmpdir(), "typesafe-gate-workspace-"))
+    const session = harness.createSession(textProvider, { cwd })
     try {
       session.setThinking("high")
       expect((await runSettledTurn(session, { text: "Explain this function", images: [] })).status).toBe("completed")
@@ -147,6 +185,7 @@ test("the decision boundary blocks every TypeSafe call while off or using a stal
     } finally {
       session.disposeAsyncDelivery()
       session.disposeToolResources()
+      await rm(cwd, { recursive: true, force: true })
     }
     await saveSettings({ typesafeAI: { enabled: false } })
     await expect(decisions.evaluate(profile.id, request)).rejects.toThrow("TypeSafe AI is off")

@@ -4,7 +4,7 @@ import { dirname, join } from "node:path"
 import { usageDir } from "../config/paths"
 import type { Usage } from "../providers/types"
 
-export type UsagePhase = "turn" | "compaction" | "goal_evaluation"
+export type UsagePhase = "turn" | "compaction" | "goal_evaluation" | "classification" | "read_ahead"
 export type UsageOutcome = "completed" | "failed" | "interrupted"
 
 export interface ProviderUsageInput {

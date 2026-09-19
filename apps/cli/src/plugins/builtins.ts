@@ -3,6 +3,7 @@ import alibabaCloud from "./alibaba-cloud/plugin"
 import anthropic from "./anthropic/plugin"
 import ask from "./ask/plugin"
 import codeReview from "./code-review/plugin"
+import classify from "./classify/plugin"
 import deepseek from "./deepseek/plugin"
 import google from "./google/plugin"
 import files from "./files/plugin"
@@ -45,6 +46,7 @@ export const builtinPlugins: Plugin[] = [
   opencodeGo,
   xai,
   typesafe,
+  classify,
   ask,
   tui,
 ]

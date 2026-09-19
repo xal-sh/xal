@@ -21,7 +21,7 @@ const SETTINGS = [
   {
     key: "typesafeAI",
     label: "Use TypeSafe AI",
-    description: "Enable TypeSafe AI features, currently Jev compaction",
+    description: "Enable Jev compaction, read-ahead, and the classify tool",
   },
 ] as const
 
@@ -36,7 +36,8 @@ interface SettingRow {
 
 interface ConfigPopoverActions {
   change(config: TuiPreferences, key: TuiToggleKey): Promise<void>
-  configureTypeSafeAI(): void
+  toggleTypeSafeAI(enabled: boolean): Promise<"saved" | "choose">
+  chooseTypeSafeProfile(): void
   changed(): void
   error(message: string): void
 }
@@ -151,23 +152,34 @@ export class ConfigPopover {
     const setting = SETTINGS[this.selected]
     if (!setting) return
     if (setting.key === "typesafeAI") {
-      this.hide()
-      this.actions.configureTypeSafeAI()
+      this.save(async () => {
+        if ((await this.actions.toggleTypeSafeAI(!settings().typesafeAI.enabled)) !== "choose") return
+        this.hide()
+        this.actions.chooseTypeSafeProfile()
+      })
       return
     }
     const previous = this.config
     const next = { ...previous, [setting.key]: !previous[setting.key] }
     this.config = next
+    this.save(
+      () => this.actions.change(next, setting.key),
+      () => {
+        this.config = previous
+      },
+    )
+  }
+
+  private save(apply: () => Promise<void>, revert?: () => void): void {
     this.saving = true
     this.status.content = new StyledText([muted("Saving…")])
     this.renderRows()
-    void this.actions
-      .change(next, setting.key)
+    void apply()
       .then(() => {
         this.status.content = new StyledText([paint(COLORS.success, "Saved to user config")])
       })
       .catch((error: unknown) => {
-        this.config = previous
+        revert?.()
         this.status.content = new StyledText([paint(COLORS.error, "Save failed")])
         this.actions.error(`config not saved: ${describeError(error)}`)
       })
