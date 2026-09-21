@@ -422,6 +422,10 @@ async function compile(target: NativeTarget, version: string, outfile: string, p
       undefined,
       process.platform === "win32" ? dirname(process.execPath) : ROOT,
     )
+    if (target.os === "darwin") {
+      await run(["codesign", "--force", "--sign", "-", resolve(outfile)])
+      await run(["codesign", "--verify", "--strict", resolve(outfile)])
+    }
   } finally {
     try {
       await rm(STAGED_ADDON, { force: true })

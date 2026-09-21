@@ -50,6 +50,8 @@ A beta version has the form `X.Y.Z-beta.N`.
 
 Every push to `main` runs `.github/workflows/release-beta.yml`. The workflow runs all repository checks, derives the beta version from `apps/cli/package.json` and the commit count, and builds every supported target on its matching architecture. Each release executable contains its target-specific Rust addon and verifies the lightweight version path, native-backed self-check, external plugin redaction, and musl TUI initialization before publication.
 
+macOS builds replace Bun's generated code signature with an ad-hoc signature and verify it before smoke testing and checksum generation. This also applies to local `bun release:dev` builds. Building a macOS executable requires Apple's `codesign` tool. An invalid generated signature can cause macOS 27 to terminate older executables immediately with `killed` and a `Code Signature Invalid` crash report.
+
 Each successful run publishes:
 
 - A versioned GitHub prerelease tagged `vX.Y.Z-beta.N` whose assets are never overwritten by the workflow.
