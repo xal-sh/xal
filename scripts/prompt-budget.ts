@@ -38,7 +38,12 @@ async function main(args: string[]): Promise<void> {
   const options = parseArgs(args)
   const settings = await loadSettings()
   registerCore(settings)
-  await registerPlugins({ ...settings, plugins: [] })
+  const plugins = await registerPlugins(settings)
+  if (plugins.failures.length > 0) {
+    throw new Error(
+      `plugin registration failed: ${plugins.failures.map((failure) => `${failure.plugin} (${failure.reason})`).join(", ")}`,
+    )
+  }
 
   const availability = {
     sessionId: "prompt-budget",

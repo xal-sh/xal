@@ -19,6 +19,14 @@ function integer(args: string[], name: string, fallback: number): number {
   return value
 }
 
+function rate(args: string[], name: string): number | undefined {
+  const raw = option(args, name)
+  if (raw === undefined) return undefined
+  const value = Number(raw)
+  if (!(value >= 0 && value <= 1)) throw new Error(`${name} expects a number from 0 to 1`)
+  return value
+}
+
 function usage(): string {
   return [
     "usage: bun scripts/evals/run.ts [options]",
@@ -66,6 +74,9 @@ async function main(args: string[]): Promise<void> {
     ...(option(args, "--connection") ? { connection: option(args, "--connection")! } : {}),
   }
   const runsPerCase = integer(args, "--runs", 3)
+  const minimum = rate(args, "--min-pass-rate")
+  const baselinePath = option(args, "--baseline")
+  const baseline = baselinePath ? await readReport(baselinePath) : undefined
   const only = new Set(selected(args))
   const names = (await readdir(CASES, { withFileTypes: true }))
     .filter((entry) => entry.isDirectory() && (only.size === 0 || only.has(entry.name)))
@@ -94,13 +105,11 @@ async function main(args: string[]): Promise<void> {
   const output = option(args, "--output")
   if (output) await writeFile(output, `${json}\n`, "utf8")
 
-  const baseline = option(args, "--baseline")
   if (baseline) {
-    for (const line of compare(await readReport(baseline), report)) console.error(line)
+    for (const line of compare(baseline, report)) console.error(line)
   }
 
-  const minimum = option(args, "--min-pass-rate")
-  if (minimum !== undefined && report.passRate < Number(minimum)) {
+  if (minimum !== undefined && report.passRate < minimum) {
     console.error(`pass rate ${(report.passRate * 100).toFixed(1)}% is below the required ${minimum}`)
     process.exitCode = 1
   }

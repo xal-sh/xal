@@ -12,6 +12,7 @@ export interface RunObservation {
   outputTokens: number
   durationMs: number
   stopped?: "rounds" | "timeout"
+  failure?: string
   error?: string
 }
 

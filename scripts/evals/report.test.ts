@@ -45,7 +45,9 @@ test("calls a difference inside the run-to-run spread noise", () => {
 
 test("reads a written report back in the same shape and rejects anything else", () => {
   const report = evalReport("yolo", 1, [
-    caseReport("alpha", [{ ...run(false, 50), stopped: "timeout", error: "boom", detail: "stopped on timeout" }]),
+    caseReport("alpha", [
+      { ...run(false, 50), stopped: "timeout", failure: "turn failed", error: "boom", detail: "stopped on timeout" },
+    ]),
   ])
 
   expect(parseReport(JSON.parse(JSON.stringify(report)))).toEqual(report)

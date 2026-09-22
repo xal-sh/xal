@@ -75,6 +75,7 @@ function parseRun(value: unknown, path: string): RunRecord {
   if (!isRecord(value)) throw new Error(`eval report has no valid ${path}`)
   const stopped = value.stopped === "rounds" || value.stopped === "timeout" ? value.stopped : undefined
   if (value.stopped !== undefined && stopped === undefined) throw new Error(`eval report has no valid ${path}.stopped`)
+  const failure = asString(value.failure)
   const error = asString(value.error)
   const detail = asString(value.detail)
   return {
@@ -84,6 +85,7 @@ function parseRun(value: unknown, path: string): RunRecord {
     outputTokens: required(asNumber(value.outputTokens), `${path}.outputTokens`),
     durationMs: required(asNumber(value.durationMs), `${path}.durationMs`),
     ...(stopped === undefined ? {} : { stopped }),
+    ...(failure === undefined ? {} : { failure }),
     ...(error === undefined ? {} : { error }),
     pass: required(asBoolean(value.pass), `${path}.pass`),
     ...(detail === undefined ? {} : { detail }),

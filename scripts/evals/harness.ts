@@ -87,6 +87,7 @@ async function drive(workspace: string, prompt: string, options: RunOptions): Pr
   }, options.timeoutMs)
 
   let pending = ""
+  let turnFailure: string | undefined
   try {
     for await (const chunk of child.stdout) {
       pending += new TextDecoder().decode(chunk)
@@ -110,6 +111,7 @@ async function drive(workspace: string, prompt: string, options: RunOptions): Pr
         if (event.type === "tool_started") observation.toolCalls += 1
         const message = event.type === "error" ? asString(event.message) : undefined
         if (message !== undefined) observation.error ??= message
+        if (event.type === "turn_failed") turnFailure ??= asString(event.message)
         if (event.type === "context_updated") {
           observation.rounds += 1
           const delta = usageDelta(event)
@@ -128,8 +130,8 @@ async function drive(workspace: string, prompt: string, options: RunOptions): Pr
   }
 
   if (child.exitCode !== 0 && !observation.stopped) {
-    const stderr = await new Response(child.stderr).text()
-    observation.error ??= stderr.trim().split("\n").at(-1) ?? `xal run exited with ${child.exitCode}`
+    const stderr = (await new Response(child.stderr).text()).trim().split("\n").at(-1)
+    observation.failure = turnFailure ?? (stderr || `xal run exited with ${child.exitCode}`)
   }
   observation.durationMs = Date.now() - started
   return observation
@@ -145,6 +147,7 @@ export async function runCase(
     if (observation.stopped) {
       return { ...observation, pass: false, detail: `stopped on ${observation.stopped}` }
     }
+    if (observation.failure !== undefined) return { ...observation, pass: false, detail: observation.failure }
     const verdict = await definition.check(workspace)
     return { ...observation, pass: verdict.pass, ...(verdict.detail ? { detail: verdict.detail } : {}) }
   } finally {
