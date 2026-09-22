@@ -17,6 +17,7 @@ import {
   parseWorktreeToolPreparation,
   parsePathRanker,
   parseSearchOutcome,
+  parseFileToolOutput,
   parseToolOutput,
   parseWorkspaceIndex,
   type NativeDiff,
@@ -37,6 +38,7 @@ import {
   type NativeReadRequest,
   type NativeSearchOutcome,
   type NativeSkillRequest,
+  type NativeFileToolOutput,
   type NativeToolOutput,
   type NativeWebFetchRequest,
   type NativeWorkspaceIndex,
@@ -76,6 +78,7 @@ export type {
   NativeReadRequest,
   NativeSearchOutcome,
   NativeSkillRequest,
+  NativeFileToolOutput,
   NativeToolOutput,
   NativeWebFetchRequest,
   NativeWorkspaceIndex,
@@ -125,9 +128,9 @@ interface NativeBinding {
     displayPath: string
     worktree: NativeManagedWorktree
   }): NativeToolOutput
-  readFile(request: NativeReadRequest): Promise<NativeToolOutput>
-  editFile(request: NativeEditRequest): Promise<NativeToolOutput>
-  writeFile(request: NativeWriteRequest): Promise<NativeToolOutput>
+  readFile(request: NativeReadRequest): Promise<NativeFileToolOutput>
+  editFile(request: NativeEditRequest): Promise<NativeFileToolOutput>
+  writeFile(request: NativeWriteRequest): Promise<NativeFileToolOutput>
   skill(request: NativeSkillRequest): Promise<NativeToolOutput>
   webFetch(request: NativeWebFetchRequest, signal?: AbortSignal): Promise<NativeToolOutput>
   htmlToMarkdown(html: string): string
@@ -360,19 +363,19 @@ function createBinding(value: unknown): NativeBinding {
       )
     },
     async readFile(request) {
-      return parseToolOutput(
+      return parseFileToolOutput(
         await Promise.resolve(Reflect.apply(nativeReadFile, value, [request])),
         "native read returned an invalid value",
       )
     },
     async editFile(request) {
-      return parseToolOutput(
+      return parseFileToolOutput(
         await Promise.resolve(Reflect.apply(nativeEditFile, value, [request])),
         "native edit returned an invalid value",
       )
     },
     async writeFile(request) {
-      return parseToolOutput(
+      return parseFileToolOutput(
         await Promise.resolve(Reflect.apply(nativeWriteFile, value, [request])),
         "native write returned an invalid value",
       )
@@ -524,15 +527,15 @@ export function nativeFormatWorktreeTool(request: {
   return nativeBinding().formatWorktreeTool(request)
 }
 
-export function nativeReadFile(request: NativeReadRequest): Promise<NativeToolOutput> {
+export function nativeReadFile(request: NativeReadRequest): Promise<NativeFileToolOutput> {
   return nativeBinding().readFile(request)
 }
 
-export function nativeEditFile(request: NativeEditRequest): Promise<NativeToolOutput> {
+export function nativeEditFile(request: NativeEditRequest): Promise<NativeFileToolOutput> {
   return nativeBinding().editFile(request)
 }
 
-export function nativeWriteFile(request: NativeWriteRequest): Promise<NativeToolOutput> {
+export function nativeWriteFile(request: NativeWriteRequest): Promise<NativeFileToolOutput> {
   return nativeBinding().writeFile(request)
 }
 

@@ -1,7 +1,7 @@
 import { release } from "node:os"
 import { dirname, resolve } from "node:path"
 import { appInfo } from "../../app-info"
-import { unsettledJobs } from "../../background/jobs"
+import { forgetOwner, unsettledJobs } from "../../background/jobs"
 import { projectSessionsDir } from "../../config/paths"
 import { describeError } from "../../lib/error"
 import { evaluateGoal, resolveGoalEvaluatorTarget } from "../../goals/evaluator"
@@ -313,7 +313,6 @@ export class AgentSession {
       sessionId: () => this.sessionId,
       profileId: () => this.selectedProfileId(),
       history: () => this.items,
-      prompt: (model) => this.providerPrompt(model),
       contextTokens: () => this.contextBudget.currentTokens,
       buildRequest: (provider, model, thinking, signal) => this.buildStreamRequest(provider, model, thinking, signal),
       buildRequestWithHistory: (history, provider, model, thinking, signal) =>
@@ -504,6 +503,7 @@ export class AgentSession {
     if (this.currentState !== "idle" || this.asyncState.hasPendingAsyncWork()) return false
     this.disposeToolResources()
     this.asyncState.advanceEpoch()
+    forgetOwner(this.sessionId)
     this.sessionId = crypto.randomUUID()
     this.parentId = undefined
     this.sessionPermissionKey = {}
@@ -562,6 +562,7 @@ export class AgentSession {
       )
       this.disposeToolResources()
       this.asyncState.advanceEpoch()
+      forgetOwner(this.sessionId)
       this.sessionId = id
       this.parentId = parentId
       this.sessionPermissionKey = {}
@@ -587,6 +588,7 @@ export class AgentSession {
     }
     this.disposeToolResources()
     this.asyncState.advanceEpoch()
+    forgetOwner(this.sessionId)
     this.sessionId = meta.id
     this.parentId = meta.parentId
     this.sessionPermissionKey = {}

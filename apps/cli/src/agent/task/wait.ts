@@ -1,4 +1,4 @@
-import { unsettledAgentJobs } from "../../background/jobs"
+import { hasOwnedAgentJob, unsettledAgentJobs } from "../../background/jobs"
 import { asNumber } from "../../lib/json"
 import type { SessionTool } from "../../tools/types"
 import { waitForActivity } from "../../tools/wait"
@@ -38,7 +38,7 @@ export const waitAgentTool: SessionTool = {
     required: [],
   },
   available(ctx) {
-    return ctx.kind === "primary" && ctx.interactive
+    return ctx.kind === "primary" && ctx.interactive && hasOwnedAgentJob(ctx.sessionId)
   },
   title() {
     return "Wait for task-agent activity"

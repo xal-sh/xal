@@ -1,13 +1,15 @@
+import { modeDefinition } from "../../permissions/modes"
 import { asBoolean, asString } from "../../lib/json"
 import { displayPath, resolveFilePath } from "../../lib/path"
 import { nativeEditFile } from "../../native"
+import { knownFileState, recordFileState } from "../../tools/file-state"
 import type { Tool } from "../../tools/types"
 import { pathPermission } from "./permission"
 
 export const editTool: Tool = {
   name: "edit",
   description:
-    "Replace an exact string in an existing file and return a diff of the change. old_string must match the file text exactly, including whitespace and indentation, and must occur exactly once unless replace_all is true; the call fails with a corrective hint otherwise. Paths are absolute or relative to the working directory.",
+    "Replace an exact string in an existing file and return a diff of the change. old_string must match the file text exactly, including whitespace and indentation, and must occur exactly once unless replace_all is true; the call fails with a corrective hint otherwise. replace_all additionally requires that the file was read in this session and has not changed since. Paths are absolute or relative to the working directory.",
   parameters: {
     type: "object",
     properties: {
@@ -32,6 +34,9 @@ export const editTool: Tool = {
     required: ["file_path", "old_string", "new_string"],
     additionalProperties: false,
   },
+  available(ctx) {
+    return !modeDefinition(ctx.mode).readOnly
+  },
   title(args, ctx) {
     return displayPath(asString(args.file_path) ?? "", ctx.cwd)
   },
@@ -47,12 +52,17 @@ export const editTool: Tool = {
     const oldString = asString(args.old_string)
     const newString = asString(args.new_string)
     const replaceAll = asBoolean(args.replace_all)
-    return nativeEditFile({
-      ...(path ? { path: resolveFilePath(path, ctx.cwd) } : {}),
+    const resolved = path ? resolveFilePath(path, ctx.cwd) : undefined
+    const expected = replaceAll && resolved ? knownFileState(ctx.sessionId, resolved) : undefined
+    const result = await nativeEditFile({
+      ...(resolved ? { path: resolved } : {}),
       displayPath: displayPath(path ?? "", ctx.cwd),
       ...(oldString === undefined ? {} : { oldString }),
       ...(newString === undefined ? {} : { newString }),
       ...(replaceAll === undefined ? {} : { replaceAll }),
+      ...(expected === undefined ? {} : { expected }),
     })
+    if (resolved) recordFileState(ctx.sessionId, resolved, result.contentHash)
+    return { output: result.output }
   },
 }

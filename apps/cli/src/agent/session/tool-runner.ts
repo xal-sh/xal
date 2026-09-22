@@ -21,6 +21,7 @@ import {
   TOOL_OUTPUT_UNSAVED_PREFIX,
   toolFailed,
 } from "../../tools/output"
+import { getTool } from "../../tools/registry"
 import { isInteractiveTool, isSessionTool } from "../../tools/types"
 import type {
   ElicitationRequest,
@@ -151,7 +152,7 @@ export class ToolCallRunner {
 
   concurrency(entry: ToolCallEntry): ToolConcurrency {
     if (entry.type === "outcome") return "exclusive"
-    const tool = this.host.availableTool(entry.call.name)
+    const tool = this.host.availableTool(entry.call.name) ?? getTool(entry.call.name)
     return tool?.concurrency?.(entry.call.args, { cwd: this.host.cwd() }) ?? "exclusive"
   }
 
@@ -193,7 +194,7 @@ export class ToolCallRunner {
   }
 
   skippedOutcome(call: ToolCallItem, output: string, denial?: DenialCause): ToolCallOutcome {
-    const tool = this.host.availableTool(call.name)
+    const tool = this.host.availableTool(call.name) ?? getTool(call.name)
     const title = tool?.title(call.args, { cwd: this.host.cwd() }) ?? JSON.stringify(call.args)
     const readOnly = tool?.readOnly?.(call.args, { cwd: this.host.cwd() }) ?? false
     return this.outcome(call, title, readOnly, output, denial)
@@ -287,8 +288,9 @@ export class ToolCallRunner {
 
   async prepare(call: ToolCallItem, signal: AbortSignal): Promise<ToolCallPreparation> {
     const tool = this.host.availableTool(call.name)
-    const title = tool?.title(call.args, { cwd: this.host.cwd() }) ?? JSON.stringify(call.args)
-    const readOnly = tool?.readOnly?.(call.args, { cwd: this.host.cwd() }) ?? false
+    const known = tool ?? getTool(call.name)
+    const title = known?.title(call.args, { cwd: this.host.cwd() }) ?? JSON.stringify(call.args)
+    const readOnly = known?.readOnly?.(call.args, { cwd: this.host.cwd() }) ?? false
 
     if (signal.aborted) {
       return {
@@ -298,9 +300,12 @@ export class ToolCallRunner {
     }
 
     if (!tool) {
+      const reason = known
+        ? `Tool ${call.name} is registered but unavailable in the current session state, so it was not offered with this request. Use one of the offered tools instead of retrying it.`
+        : `Unknown tool: ${call.name}`
       return {
         type: "outcome",
-        outcome: this.outcome(call, title, false, `Unknown tool: ${call.name}`, "policy"),
+        outcome: this.outcome(call, title, readOnly, reason, "policy"),
       }
     }
 
@@ -477,12 +482,13 @@ export class ToolCallRunner {
     return this.outcome(call, title, readOnly, output, undefined, events, execution)
   }
 
-  private toolContext(signal: AbortSignal, update: (text: string) => void): ToolExecutionContext {
+  private toolContext(signal: AbortSignal, update: (text: string) => void, speculative = false): ToolExecutionContext {
     return {
       cwd: this.host.cwd(),
       sessionId: this.host.sessionId(),
       sessionKind: this.host.kind,
       directory: this.host.outputDirectory(),
+      speculative,
       signal,
       update,
     }
@@ -541,7 +547,7 @@ export class ToolCallRunner {
         (
           await tool.execute(
             args,
-            this.toolContext(signal, () => {}),
+            this.toolContext(signal, () => {}, true),
           )
         ).output,
       )

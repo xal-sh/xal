@@ -1,4 +1,5 @@
 import { registerBasePrompt } from "./agent/prompt/base"
+import { registerBehaviorPrompt } from "./agent/prompt/behavior"
 import { registerAgentClis } from "./agent/cli"
 import { registerAgentCommands } from "./agent/commands"
 import { registerTaskAgents } from "./agent/task/tool"
@@ -59,6 +60,7 @@ const ctx: CliContext = {
 
 export function registerCore(settings: Settings): void {
   registerBasePrompt()
+  registerBehaviorPrompt()
   registerPermissions(settings)
   registerRedaction(settings)
   registerGoals()

@@ -19,7 +19,7 @@ import { highlightSkillReferences } from "../lib/skill-text"
 import { displayWidth, firstLine, terminalGlyph, truncateToWidth } from "../lib/text"
 import { renderMarkdown, type RenderedMarkdown } from "../markdown/render"
 import { MAX_OUTPUT_ROWS, renderToolOutput } from "../output/render"
-import { summarizeToolOutput, toolOutputFailed } from "../output/summary"
+import { describeToolFailure, summarizeToolOutput, toolOutputFailed } from "../output/summary"
 import { COLORS } from "../theme/colors"
 import { background, muted, paint } from "../theme/styles"
 import type {
@@ -270,7 +270,9 @@ const denialSummary: Record<DenialCause, string> = {
 function tool(ctx: RenderContext, block: ToolBlock, expanded: boolean, grouped: boolean): Renderable {
   const toolRenderer = getToolRenderer(block.tool)
   const detailsVisible = expanded || block.expanded || toolRenderer?.alwaysExpanded
-  const title = detailsVisible ? block.title : (toolRenderer?.compactTitle?.(block.title) ?? block.title)
+  const multilineTitle = block.title.includes("\n")
+  const title =
+    detailsVisible && !multilineTitle ? block.title : (toolRenderer?.compactTitle?.(block.title) ?? block.title)
   const bounded = parseBoundedToolOutput(block.output)
   const coreFailed = toolOutputFailed(block.output, block.execution)
   const failed = coreFailed || (toolRenderer?.failed?.(block.output) ?? false)
@@ -280,7 +282,7 @@ function tool(ctx: RenderContext, block: ToolBlock, expanded: boolean, grouped: 
     : bounded
       ? summarizeToolOutput(block.output)
       : coreFailed
-        ? "failed"
+        ? describeToolFailure(block.output, block.execution)
         : (toolRenderer?.summarize?.(block.output) ?? summarizeToolOutput(block.output))
 
   const marginTop = grouped ? 0 : 1
@@ -305,11 +307,26 @@ function tool(ctx: RenderContext, block: ToolBlock, expanded: boolean, grouped: 
   )
   box.add(head)
 
-  if (!detailsVisible || block.output.length === 0) {
+  if (!detailsVisible || (block.output.length === 0 && !multilineTitle)) {
     return frame(ctx, box, marginTop)
   }
 
   const width = Math.max(1, ctx.width - GUTTER * 2 - 4)
+  if (multilineTitle) {
+    const command = detailPanel(ctx, { marginLeft: 2 })
+    const script = label(ctx, {
+      content: new StyledText([muted(block.title)]),
+      height: block.title
+        .split("\n")
+        .reduce((rows, line) => rows + Math.max(1, Math.ceil(displayWidth(line) / width)), 0),
+    })
+    script.wrapMode = "char"
+    script.truncate = false
+    command.add(script)
+    box.add(command)
+  }
+  if (block.output.length === 0) return frame(ctx, box, marginTop)
+
   const coreOutput = bounded || coreFailed
   const maxRows = coreOutput ? MAX_OUTPUT_ROWS : (toolRenderer?.maxRows ?? MAX_OUTPUT_ROWS)
   const customOutput = coreOutput ? undefined : toolRenderer?.renderOutput?.(block.output, width)

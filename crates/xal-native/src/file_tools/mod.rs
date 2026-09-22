@@ -7,6 +7,7 @@ use std::path::PathBuf;
 use napi::bindgen_prelude::{AsyncTask, Utf16String};
 use napi::{Env, Error, Status, Task};
 use napi_derive::napi;
+use sha2::{Digest, Sha256};
 
 use crate::diff::{DiffOutput, unified_diff};
 use crate::tool_contracts::{checked_count, truncate_utf16, utf16_lossy};
@@ -22,6 +23,34 @@ mod write;
 #[napi(object)]
 pub struct NativeToolOutput {
     pub output: Utf16String,
+}
+
+#[napi(object)]
+pub struct NativeFileToolOutput {
+    pub output: Utf16String,
+    pub content_hash: String,
+}
+
+pub struct ContentHasher(Sha256);
+
+impl ContentHasher {
+    pub fn new() -> Self {
+        Self(Sha256::new())
+    }
+
+    pub fn update(&mut self, bytes: &[u8]) {
+        self.0.update(bytes);
+    }
+
+    pub fn finish(self) -> String {
+        format!("{:x}", self.0.finalize())
+    }
+}
+
+pub fn content_hash(bytes: &[u8]) -> String {
+    let mut hasher = ContentHasher::new();
+    hasher.update(bytes);
+    hasher.finish()
 }
 
 #[napi(object)]

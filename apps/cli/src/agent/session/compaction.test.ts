@@ -151,17 +151,12 @@ test("summarizes the active history with the dedicated request contract", async 
     { type: "assistant_message", text: "Original answer" },
   ]
 
-  const originalPrompt = {
-    ...prompt,
-    cacheKey: promptCacheKey("original-model", prompt.instructions, prompt.tools),
-  }
   const summary = await summarizeHistory({
     provider,
     profileId: "test-profile",
     model: "test-model-fast",
     historyModel: "original-model",
     thinking: "high",
-    prompt: originalPrompt,
     sessionId: "summary-session",
     history,
     instructions: "the unfinished migration",
@@ -175,12 +170,14 @@ test("summarizes the active history with the dedicated request contract", async 
     model: "test-model-fast",
     conversationModel: "original-model",
     thinking: "high",
-    instructions: prompt.instructions,
     tools: [],
     toolChoice: "none",
     sessionId: "summary-session",
   })
-  expect(provider.requests[0]?.cacheKey).toBe(promptCacheKey("original-model", prompt.instructions, []))
+  const summaryInstructions = provider.requests[0]?.instructions ?? ""
+  expect(summaryInstructions).toContain("You summarize coding session transcripts")
+  expect(summaryInstructions).not.toContain(prompt.instructions)
+  expect(provider.requests[0]?.cacheKey).toBe(promptCacheKey("original-model", summaryInstructions, []))
   expect(provider.requests[0]?.input.slice(0, -1)).toEqual([
     { type: "user_message", text: "Original prompt\n\n[1 image attachment omitted]", images: [] },
     { type: "assistant_message", text: "Original answer" },
@@ -201,7 +198,6 @@ test("falls back to streamed summary text and rejects an empty summary", async (
       profileId: "test-profile",
       model: "test-model",
       thinking: undefined,
-      prompt,
       sessionId: "streamed-summary",
       history: [{ type: "user_message", text: "Prompt", images: [] }],
       instructions: undefined,
@@ -217,7 +213,6 @@ test("falls back to streamed summary text and rejects an empty summary", async (
       profileId: "test-profile",
       model: "test-model",
       thinking: undefined,
-      prompt,
       sessionId: "empty-summary",
       history: [{ type: "user_message", text: "Prompt", images: [] }],
       instructions: undefined,
@@ -264,7 +259,6 @@ test("rebuilds and re-admits after compaction and sends that exact snapshot", as
     sessionId: () => "admitted-session",
     profileId: () => "test-profile",
     history: () => history,
-    prompt: () => prompt,
     contextTokens: () => budget.currentTokens,
     buildRequest,
     buildRequestWithHistory: (candidateHistory) => ({
@@ -374,7 +368,6 @@ test("summarizes complete active history and atomically writes a bounded user-on
     sessionId: () => "complete-history",
     profileId: () => "test-profile",
     history: () => history,
-    prompt: (model) => ({ ...prompt, cacheKey: promptCacheKey(model, prompt.instructions, prompt.tools) }),
     contextTokens: () => 40_000,
     buildRequest: () => buildRequestWithHistory(history),
     buildRequestWithHistory,
@@ -463,7 +456,6 @@ test("recompacts a new checkpoint once and returns nothing without later history
     sessionId: () => "repeated-checkpoint",
     profileId: () => "test-profile",
     history: () => history,
-    prompt: () => prompt,
     contextTokens: () => 40_000,
     buildRequest: () => request(history),
     buildRequestWithHistory: request,
@@ -524,7 +516,6 @@ test("leaves history unchanged when the static prefix and summary exceed the rep
     sessionId: () => "oversized-replacement",
     profileId: () => "test-profile",
     history: () => history,
-    prompt: () => ({ instructions: request([]).instructions, tools: [], cacheKey: "oversized" }),
     contextTokens: () => 40_000,
     buildRequest: () => request(history),
     buildRequestWithHistory: request,

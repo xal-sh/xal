@@ -1,6 +1,7 @@
 import { asNumber, asString } from "../../lib/json"
 import { displayPath, resolveFilePath } from "../../lib/path"
 import { nativeReadFile } from "../../native"
+import { recordFileState } from "../../tools/file-state"
 import type { Tool } from "../../tools/types"
 import { pathPermission } from "./permission"
 
@@ -45,11 +46,14 @@ export const readTool: Tool = {
     const path = asString(args.file_path)
     const offset = asNumber(args.offset)
     const limit = asNumber(args.limit)
-    return nativeReadFile({
-      ...(path ? { path: resolveFilePath(path, ctx.cwd) } : {}),
+    const resolved = path ? resolveFilePath(path, ctx.cwd) : undefined
+    const result = await nativeReadFile({
+      ...(resolved ? { path: resolved } : {}),
       displayPath: displayPath(path ?? "", ctx.cwd),
       ...(offset === undefined ? {} : { offset }),
       ...(limit === undefined ? {} : { limit }),
     })
+    if (resolved && !ctx.speculative) recordFileState(ctx.sessionId, resolved, result.contentHash)
+    return { output: result.output }
   },
 }

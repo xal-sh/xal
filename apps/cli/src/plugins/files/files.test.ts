@@ -21,7 +21,7 @@ async function withWorkspace(run: (workspace: string) => Promise<void>): Promise
 function context(cwd: string): ToolExecutionContext {
   return {
     cwd,
-    sessionId: "files-test",
+    sessionId: `files-test-${crypto.randomUUID()}`,
     sessionKind: "primary",
     directory: cwd,
     signal: new AbortController().signal,
@@ -46,12 +46,17 @@ test("write reports unchanged and update outcomes while preserving permissions",
     const path = join(workspace, "existing.txt")
     await writeFile(path, "before\n")
     await chmod(path, 0o744)
+    const ctx = context(workspace)
+    await readTool.execute({ file_path: "existing.txt" }, ctx)
 
-    expect(
-      (await writeTool.execute({ file_path: "existing.txt", content: "before\n" }, context(workspace))).output,
-    ).toBe("Unchanged existing.txt")
-    const result = await writeTool.execute({ file_path: "existing.txt", content: "after\n" }, context(workspace))
+    expect((await writeTool.execute({ file_path: "existing.txt", content: "before\n" }, ctx)).output).toBe(
+      "Unchanged existing.txt",
+    )
+    const result = await writeTool.execute({ file_path: "existing.txt", content: "after\n" }, ctx)
     expect(result.output).toBe("Updated existing.txt (+1 -1)\n@@ -1,1 +1,1 @@\n-before\n+after")
+    expect((await writeTool.execute({ file_path: "existing.txt", content: "third\n" }, ctx)).output).toContain(
+      "Updated existing.txt",
+    )
     expect((await stat(path)).mode & 0o777).toBe(0o744)
   })
 })
@@ -83,10 +88,12 @@ test("edit replaces every requested occurrence and reports accurate line counts"
   await withWorkspace(async (workspace) => {
     const path = join(workspace, "repeated.txt")
     await writeFile(path, "red\nkeep\nred\n")
+    const ctx = context(workspace)
+    await readTool.execute({ file_path: "repeated.txt" }, ctx)
 
     const result = await editTool.execute(
       { file_path: "repeated.txt", old_string: "red", new_string: "blue", replace_all: true },
-      context(workspace),
+      ctx,
     )
 
     expect(await readFile(path, "utf8")).toBe("blue\nkeep\nblue\n")
@@ -137,9 +144,11 @@ test("edit matches text copied from read output and CRLF files", async () => {
 
     const crlf = join(workspace, "crlf.txt")
     await writeFile(crlf, "red\r\nkeep\r\nred\r\n")
+    const crlfContext = context(workspace)
+    await readTool.execute({ file_path: "crlf.txt" }, crlfContext)
     const crlfResult = await editTool.execute(
       { file_path: "crlf.txt", old_string: "red\n", new_string: "blue\n", replace_all: true },
-      context(workspace),
+      crlfContext,
     )
     expect(await readFile(crlf, "utf8")).toBe("blue\r\nkeep\r\nblue\r\n")
     expect(crlfResult.output).toContain("Updated crlf.txt (+2 -2)")
@@ -222,4 +231,72 @@ test("unified diff separates distant changes while retaining bounded context", (
       "@@ -1,5 +1,5 @@\n line 1\n-line 2\n+changed 2\n line 3\n line 4\n line 5\n@@ -8,5 +8,5 @@\n line 8\n line 9\n line 10\n-line 11\n+changed 11\n line 12",
   })
   expect(nativeUnifiedDiff("", "\ud800").hunks).toBe("@@ -0,0 +1,1 @@\n+\ud800")
+})
+
+test("write refuses an existing file that was never read in this session", async () => {
+  await withWorkspace(async (workspace) => {
+    await writeFile(join(workspace, "unread.txt"), "original\n")
+
+    await expect(
+      writeTool.execute({ file_path: "unread.txt", content: "replaced\n" }, context(workspace)),
+    ).rejects.toThrow("has not been read in this session")
+    expect(await readFile(join(workspace, "unread.txt"), "utf8")).toBe("original\n")
+  })
+})
+
+test("write refuses a file that changed after it was read", async () => {
+  await withWorkspace(async (workspace) => {
+    const path = join(workspace, "raced.txt")
+    await writeFile(path, "original\n")
+    const ctx = context(workspace)
+    await readTool.execute({ file_path: "raced.txt" }, ctx)
+    await writeFile(path, "changed by someone else\n")
+
+    await expect(writeTool.execute({ file_path: "raced.txt", content: "replaced\n" }, ctx)).rejects.toThrow(
+      "changed since it was read",
+    )
+    expect(await readFile(path, "utf8")).toBe("changed by someone else\n")
+  })
+})
+
+test("write recreates a file that was deleted after it was read", async () => {
+  await withWorkspace(async (workspace) => {
+    const path = join(workspace, "recreated.txt")
+    await writeFile(path, "original\n")
+    const ctx = context(workspace)
+    await readTool.execute({ file_path: "recreated.txt" }, ctx)
+    await rm(path)
+
+    expect((await writeTool.execute({ file_path: "recreated.txt", content: "again\n" }, ctx)).output).toContain(
+      "Created recreated.txt",
+    )
+    expect((await writeTool.execute({ file_path: "recreated.txt", content: "later\n" }, ctx)).output).toContain(
+      "Updated recreated.txt",
+    )
+  })
+})
+
+test("edit needs no prior read but replace_all requires an unchanged read", async () => {
+  await withWorkspace(async (workspace) => {
+    const path = join(workspace, "targets.txt")
+    await writeFile(path, "value\nother\n")
+    await expect(
+      editTool.execute(
+        { file_path: "targets.txt", old_string: "value", new_string: "kept", replace_all: true },
+        context(workspace),
+      ),
+    ).rejects.toThrow("has not been read in this session")
+    expect(await readFile(path, "utf8")).toBe("value\nother\n")
+    const ctx = context(workspace)
+
+    expect(
+      (await editTool.execute({ file_path: "targets.txt", old_string: "value", new_string: "kept" }, ctx)).output,
+    ).toContain("Updated targets.txt")
+
+    await readTool.execute({ file_path: "targets.txt" }, ctx)
+    await writeFile(path, "kept\nother\nkept\n")
+    await expect(
+      editTool.execute({ file_path: "targets.txt", old_string: "kept", new_string: "done", replace_all: true }, ctx),
+    ).rejects.toThrow("changed since it was read")
+  })
 })

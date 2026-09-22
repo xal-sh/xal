@@ -40,7 +40,7 @@ function parameters(): Record<string, unknown> {
     background: {
       type: "boolean",
       description:
-        "True runs the command as a managed background job and returns its job id immediately; the timeout does not apply. The job's result is delivered automatically when it exits; read new output with job_output and stop the job with job_kill",
+        "True runs the command as a managed background job and returns its job id immediately; the timeout does not apply. The job's result is delivered automatically when it exits. Once the session has a job, job_output reads its new output and job_kill stops it",
     },
   }
   if (sandboxAvailable()) {

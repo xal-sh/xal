@@ -83,6 +83,7 @@ export interface ToolExecutionContext extends ToolCallContext {
   sessionId: string
   sessionKind: SessionKind
   directory: string
+  speculative?: boolean
   signal: AbortSignal
   update(text: string): void
 }

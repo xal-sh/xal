@@ -3,14 +3,21 @@ import { bashTool, commandOf as bashCommandOf } from "./bash/tool"
 import { commandPolicy, commandRiskRules } from "./policy"
 import { sandboxRequested } from "./sandbox"
 import { disposeShellSession, shellPrompt } from "./shell"
+import { compactCommandTitle } from "./title"
 
 type ShellRegistrationContext = Pick<
   PluginContext,
-  "registerPermissionRules" | "registerPolicyRule" | "registerPrompt" | "registerTool" | "registerToolSessionDisposer"
+  | "registerPermissionRules"
+  | "registerPolicyRule"
+  | "registerPrompt"
+  | "registerTool"
+  | "registerToolRenderer"
+  | "registerToolSessionDisposer"
 >
 
 export function registerBash(ctx: ShellRegistrationContext): void {
   ctx.registerTool(bashTool)
+  ctx.registerToolRenderer({ tool: bashTool.name, compactTitle: compactCommandTitle })
   ctx.registerToolSessionDisposer(disposeShellSession)
   ctx.registerPrompt({ id: "environment", text: shellPrompt })
   ctx.registerPermissionRules({ ask: commandRiskRules(bashTool.name) })
