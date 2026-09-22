@@ -52,16 +52,22 @@ export interface NativeEditRequest {
   oldString?: string
   newString?: string
   replaceAll?: boolean
+  expected?: string
 }
 
 export interface NativeWriteRequest {
   path?: string
   displayPath: string
   content?: string
+  expected?: string
 }
 
 export interface NativeToolOutput {
   output: string
+}
+
+export interface NativeFileToolOutput extends NativeToolOutput {
+  contentHash: string
 }
 
 export interface NativeWebFetchRequest {
@@ -328,6 +334,14 @@ export function parseToolOutput(value: unknown, message: string): NativeToolOutp
   const output = asString(value.output)
   if (output === undefined) throw new Error(message)
   return { output }
+}
+
+export function parseFileToolOutput(value: unknown, message: string): NativeFileToolOutput {
+  if (!isRecord(value)) throw new Error(message)
+  const output = asString(value.output)
+  const contentHash = asString(value.contentHash)
+  if (output === undefined || contentHash === undefined) throw new Error(message)
+  return { output, contentHash }
 }
 
 export function parseGitCommandOutput(value: unknown): NativeGitCommandOutput {

@@ -15,8 +15,8 @@ pub struct ReadTask {
 }
 
 impl Task for ReadTask {
-    type Output = NativeToolOutput;
-    type JsValue = NativeToolOutput;
+    type Output = NativeFileToolOutput;
+    type JsValue = NativeFileToolOutput;
 
     fn compute(&mut self) -> napi::Result<Self::Output> {
         let metadata = fs::metadata(&self.path)
@@ -35,12 +35,14 @@ impl Task for ReadTask {
         let mut shown = 0_usize;
         let mut end = self.offset.saturating_sub(1);
         let mut retaining = true;
+        let mut hasher = ContentHasher::new();
         loop {
             buffer.clear();
             let read = reader.read_until(b'\n', &mut buffer).map_err(io_error)?;
             if read == 0 {
                 break;
             }
+            hasher.update(&buffer[..read]);
             if buffer.contains(&0) {
                 return Err(failed(format!(
                     "Cannot read binary file: {}",
@@ -68,8 +70,9 @@ impl Task for ReadTask {
         }
         let total_output = checked_count(total, "read line")?;
         if total == 0 {
-            return Ok(NativeToolOutput {
+            return Ok(NativeFileToolOutput {
                 output: "(empty file)".to_owned().into(),
+                content_hash: hasher.finish(),
             });
         }
         if self.offset > total {
@@ -88,8 +91,9 @@ impl Task for ReadTask {
             )
         };
         output.extend(footer.encode_utf16());
-        Ok(NativeToolOutput {
+        Ok(NativeFileToolOutput {
             output: output.into(),
+            content_hash: hasher.finish(),
         })
     }
 
@@ -122,5 +126,38 @@ mod tests {
             normalized_count(Some(f64::from(u32::MAX) * 2.0), 2000),
             u32::MAX
         );
+    }
+
+    use std::fs;
+
+    use napi::Task;
+
+    use super::ReadTask;
+
+    fn hash_of(contents: &str, name: &str) -> String {
+        let path = std::env::temp_dir().join(format!(
+            "xal-native-read-hash-{}-{name}.txt",
+            std::process::id()
+        ));
+        fs::write(&path, contents).expect("fixture should write");
+        let mut task = ReadTask {
+            path: path.clone(),
+            display_path: name.to_owned(),
+            offset: 1,
+            limit: 2000,
+        };
+        let output = task.compute().expect("read should succeed");
+        fs::remove_file(&path).ok();
+        output.content_hash
+    }
+
+    #[test]
+    fn hashes_distinguish_a_trailing_newline() {
+        assert_ne!(hash_of("foo\n", "with"), hash_of("foo", "without"));
+    }
+
+    #[test]
+    fn hashes_an_empty_file() {
+        assert_eq!(hash_of("", "empty").len(), 64);
     }
 }

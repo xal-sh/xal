@@ -76,7 +76,7 @@ export const askParentTool: SessionTool = {
 export const taskTool: SessionTool = {
   name: "task",
   get description() {
-    return `Dispatch a batch of independent assignments to background agents. The call returns agent ids immediately, runs up to ${settings().agents.maxConcurrent} agents at once, queues the rest, and automatically delivers each result to this session. wait_agent blocks on task-agent activity without collecting the delivered result. Agents start without conversation history. Read agents cannot modify files; write agents use the shared checkout or an isolated Git worktree.`
+    return `Dispatch a batch of independent assignments to background agents. The call returns agent ids immediately, runs up to ${settings().agents.maxConcurrent} agents at once, queues the rest, and automatically delivers each result to this session. Dispatching makes the job tools and wait_agent available for the rest of the session. wait_agent blocks on task-agent activity without collecting the delivered result. Agents start without conversation history. Read agents cannot modify files; write agents use the shared checkout or an isolated Git worktree.`
   },
   parameters: {
     type: "object",

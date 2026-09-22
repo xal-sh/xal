@@ -111,6 +111,8 @@ const sinks = new Map<string, BackgroundDeliverySink>()
 const dispatching = new Map<string, Promise<void>>()
 const pendingDeliveries: BackgroundJob[] = []
 const deliveryReservations = new WeakMap<BackgroundJob, symbol>()
+const collectableOwners = new Set<string>()
+const agentOwners = new Set<string>()
 let nextId = 1
 let cleanupRegistered = false
 
@@ -181,7 +183,28 @@ function registerJob(job: BackgroundJob, complete: () => void): void {
   completions.set(job, complete)
   redactors.set(job, createRedactedStream())
   jobs.set(job.id, job)
+  if (job.kind !== "schedule") collectableOwners.add(job.ownerId)
+  if (job.kind === "agent") agentOwners.add(job.ownerId)
   profileJobCreated(job.id)
+}
+
+export function hasOwnedJob(ownerId: string): boolean {
+  if (collectableOwners.has(ownerId)) return true
+  if (![...jobs.values()].some((job) => job.ownerId === ownerId && job.kind !== "schedule")) return false
+  collectableOwners.add(ownerId)
+  return true
+}
+
+export function hasOwnedAgentJob(ownerId: string): boolean {
+  if (agentOwners.has(ownerId)) return true
+  if (![...jobs.values()].some((job) => job.ownerId === ownerId && job.kind === "agent")) return false
+  agentOwners.add(ownerId)
+  return true
+}
+
+export function forgetOwner(ownerId: string): void {
+  collectableOwners.delete(ownerId)
+  agentOwners.delete(ownerId)
 }
 
 export function createProcessJob(

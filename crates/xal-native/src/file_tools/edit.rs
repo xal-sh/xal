@@ -10,6 +10,7 @@ pub struct NativeEditRequest {
     pub old_string: Option<Utf16String>,
     pub new_string: Option<Utf16String>,
     pub replace_all: Option<bool>,
+    pub expected: Option<String>,
 }
 fn match_positions(haystack: &[u16], needle: &[u16]) -> Vec<usize> {
     if needle.is_empty() {
@@ -172,11 +173,12 @@ pub struct EditTask {
     old: Vec<u16>,
     new: Vec<u16>,
     replace_all: bool,
+    expected: Option<String>,
 }
 
 impl Task for EditTask {
-    type Output = NativeToolOutput;
-    type JsValue = NativeToolOutput;
+    type Output = NativeFileToolOutput;
+    type JsValue = NativeFileToolOutput;
 
     fn compute(&mut self) -> napi::Result<Self::Output> {
         let metadata = fs::metadata(&self.path)
@@ -187,6 +189,12 @@ impl Task for EditTask {
                 self.display_path
             )));
         }
+        if self.replace_all && self.expected.is_none() {
+            return Err(failed(format!(
+                "{} has not been read in this session. Read it before replacing every occurrence.",
+                self.display_path
+            )));
+        }
         let previous_text =
             String::from_utf8(fs::read(&self.path).map_err(io_error)?).map_err(|error| {
                 invalid(format!(
@@ -194,6 +202,14 @@ impl Task for EditTask {
                     self.display_path
                 ))
             })?;
+        if let Some(expected) = self.expected.as_deref()
+            && content_hash(previous_text.as_bytes()) != expected
+        {
+            return Err(failed(format!(
+                "{} changed since it was read. Read it again before replacing every occurrence.",
+                self.display_path
+            )));
+        }
         let previous = previous_text.encode_utf16().collect::<Vec<_>>();
         let (old, new, positions) = resolve_match(&previous, &self.old, &self.new);
         let matches = checked_count(positions.len(), "edit match")?;
@@ -211,8 +227,9 @@ impl Task for EditTask {
         }
         let next = replace_matches(&previous, &old, &new, &positions, self.replace_all);
         let diff = unified_diff(&previous, &next);
-        fs::write(&self.path, utf16_lossy(&next).as_bytes()).map_err(io_error)?;
-        Ok(NativeToolOutput {
+        let bytes = utf16_lossy(&next);
+        fs::write(&self.path, bytes.as_bytes()).map_err(io_error)?;
+        Ok(NativeFileToolOutput {
             output: with_diff(
                 format!(
                     "Updated {} (+{} -{})",
@@ -221,6 +238,7 @@ impl Task for EditTask {
                 &diff.hunks,
             )
             .into(),
+            content_hash: content_hash(bytes.as_bytes()),
         })
     }
 
@@ -251,6 +269,7 @@ pub fn native_edit_file(request: NativeEditRequest) -> napi::Result<AsyncTask<Ed
         old: old.to_vec(),
         new: new.to_vec(),
         replace_all: request.replace_all.unwrap_or(false),
+        expected: request.expected,
     }))
 }
 

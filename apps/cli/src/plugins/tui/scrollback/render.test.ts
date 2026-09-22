@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test"
 import { createTestRenderer } from "@opentui/core/testing"
 import { appInfo } from "../../../app-info"
+import { registerToolRenderer } from "../../../ui/extension"
 import { displayWidth, terminalGlyph } from "../lib/text"
 import type { BackgroundBlock } from "./blocks"
 import { backgroundResultHeading } from "./render"
@@ -12,6 +13,10 @@ const completed: BackgroundBlock = {
   label: 'Wait for 3 seconds, then report: "sleeper 2 is back". Do not inspect or modify files.',
   status: "completed",
   output: "sleeper 2 is back\nFull task record: /tmp/sleeper2.md",
+}
+
+function registerScriptRenderer(): void {
+  registerToolRenderer({ tool: "bash", compactTitle: (title) => `${title.split("\n")[1]} · compacted` })
 }
 
 test("startup banner places the terminal mark beside session details", async () => {
@@ -454,6 +459,89 @@ test("a block that would overflow the row budget is dropped, including the oldes
     expect(rows.filter((row) => row.includes("entry")).length).toBe(2)
     expect(rows.some((row) => row.includes("entry 0"))).toBe(false)
     expect(rows.some((row) => row.includes("entry 2"))).toBe(true)
+  } finally {
+    setup.renderer.destroy()
+  }
+})
+
+test("a collapsed tool stays one line while naming the command and why it failed", async () => {
+  registerScriptRenderer()
+  const setup = await createTestRenderer({
+    width: 80,
+    height: 24,
+    footerHeight: 1,
+    screenMode: "split-footer",
+    externalOutputMode: "capture-stdout",
+  })
+
+  try {
+    const scrollback = new Scrollback(
+      setup.renderer,
+      0,
+      () => {},
+      { showOutputs: false, showThinking: false, scrollbackRows: 40 },
+      undefined,
+    )
+    scrollback.append({
+      kind: "tool",
+      tool: "bash",
+      title: "set -e\nrm -rf /tmp/example\nbun run checks",
+      readOnly: false,
+      denial: undefined,
+      output: "first line of output\nsecond line of output\nthird line of output",
+      execution: { status: "exited", exitCode: 1 },
+      elapsed: "2s",
+      expanded: false,
+    })
+
+    const rows = setup.externalOutput.take().flatMap((commit) => commit.rows)
+    const text = rows.join("\n")
+    expect(text).toContain("rm -rf /tmp/example · compacted")
+    expect(text).not.toContain("bash set -e")
+    expect(text).toContain("exit 1")
+    expect(text).not.toContain("failed")
+    expect(text).not.toContain("third line of output")
+  } finally {
+    setup.renderer.destroy()
+  }
+})
+
+test("an expanded multi-line command keeps every wrapped line of the script", async () => {
+  registerScriptRenderer()
+  const setup = await createTestRenderer({
+    width: 60,
+    height: 24,
+    footerHeight: 1,
+    screenMode: "split-footer",
+    externalOutputMode: "capture-stdout",
+  })
+
+  try {
+    const scrollback = new Scrollback(
+      setup.renderer,
+      0,
+      () => {},
+      { showOutputs: true, showThinking: false, scrollbackRows: 40 },
+      undefined,
+    )
+    scrollback.append({
+      kind: "tool",
+      tool: "bash",
+      title: `set -e\necho ${"abcdefghij".repeat(12)}\necho final-line`,
+      readOnly: false,
+      denial: undefined,
+      output: "first output\nsecond output",
+      execution: { status: "exited", exitCode: 0 },
+      elapsed: "1s",
+      expanded: true,
+    })
+
+    const text = setup.externalOutput
+      .take()
+      .flatMap((commit) => commit.rows)
+      .join("\n")
+    expect(text).toContain("echo final-line")
+    expect(text).toContain("second output")
   } finally {
     setup.renderer.destroy()
   }

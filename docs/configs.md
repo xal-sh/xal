@@ -53,6 +53,7 @@ Malformed `mode`, `permissions`, `modes`, `goal`, `redaction`, `typesafeAI`, or 
 Built-in configuration is documented with the feature that consumes it:
 
 - [TUI](/docs/tui) covers display preferences and keybindings.
+- [Built-in tools](/docs/tools) covers the tools the model is offered and when each one is available.
 - [Integrations](/docs/integrations) covers language servers and MCP servers.
 - [Providers and models](/docs/providers) covers built-in provider options and model discovery.
 - [Plugins and hooks](/docs/plugins) covers custom plugin configuration.

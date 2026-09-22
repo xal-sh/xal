@@ -131,7 +131,6 @@ test("manual and automatic compaction use Jev atomically, with visible summary f
         sessionId: () => "session",
         profileId: () => "text-profile",
         history: () => history,
-        prompt: () => ({ instructions: "Continue", tools: [], cacheKey: "key" }),
         contextTokens: () => 12_000,
         buildRequest: () => build(history),
         buildRequestWithHistory: build,

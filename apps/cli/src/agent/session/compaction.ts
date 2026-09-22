@@ -10,14 +10,7 @@ import { conversationForSummary, omitUserMessageImages, prepareConversation } fr
 import { estimateConversationItemTokens, estimateRequestTokens } from "../../providers/request-size"
 import { collectStreamedText, StreamedTextAttemptError } from "../../providers/streamed-text"
 import { isProviderError } from "../../providers/errors"
-import type {
-  ConversationItem,
-  Provider,
-  ProviderPrompt,
-  StreamRequest,
-  ThinkingEffort,
-  UserMessageItem,
-} from "../../providers/types"
+import type { ConversationItem, Provider, StreamRequest, ThinkingEffort, UserMessageItem } from "../../providers/types"
 import type { AgentEvent, AgentState } from "../events"
 import { activeHistory, type CompactionItem, type HistoryItem } from "../history"
 import type { SessionKind } from "../types"
@@ -47,6 +40,9 @@ export interface CompactionTarget {
   thinking: ThinkingEffort | undefined
   imageInput: boolean
 }
+
+const SUMMARY_SYSTEM_INSTRUCTIONS =
+  "You summarize coding session transcripts. Follow the instructions in the final user message and output only the summary."
 
 const SUMMARY_INSTRUCTIONS = `Summarize this coding session transcript so the assistant can keep working after the older messages are dropped.
 
@@ -134,7 +130,6 @@ export interface SummaryRequest {
   model: string
   historyModel?: string
   thinking: ThinkingEffort | undefined
-  prompt: ProviderPrompt
   sessionId: string
   kind?: SessionKind
   history: HistoryItem[]
@@ -152,9 +147,9 @@ function summaryRequest(instructions: string | undefined): UserMessageItem {
 export async function summarizeHistory(request: SummaryRequest): Promise<string> {
   const target = { provider: request.provider.id, model: request.historyModel ?? request.model }
   const prompt = {
-    instructions: request.prompt.instructions,
+    instructions: SUMMARY_SYSTEM_INSTRUCTIONS,
     tools: [],
-    cacheKey: promptCacheKey(target.model, request.prompt.instructions, []),
+    cacheKey: promptCacheKey(target.model, SUMMARY_SYSTEM_INSTRUCTIONS, []),
   }
   const input = prepareConversation(
     [...conversationForSummary(activeHistory(request.history)), summaryRequest(request.instructions)],
@@ -204,7 +199,6 @@ export interface CompactionHost {
   sessionId(): string
   profileId(): string
   history(): HistoryItem[]
-  prompt(model: string): ProviderPrompt
   contextTokens(): number | undefined
   buildRequest(
     provider: Provider,
@@ -348,7 +342,6 @@ export async function runCompaction(
           model: target.model,
           historyModel: model,
           thinking: target.thinking,
-          prompt: host.prompt(model),
           sessionId: host.sessionId(),
           kind: host.kind,
           history,

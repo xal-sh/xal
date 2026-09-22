@@ -1,6 +1,8 @@
 import {
   acknowledgeDelivery,
   agentSupervisionWaitMs,
+  hasOwnedAgentJob,
+  hasOwnedJob,
   collectAgentOutcome,
   extendAgentBudget,
   getJob,
@@ -196,6 +198,9 @@ export const jobOutputTool: SessionTool = {
     additionalProperties: false,
   },
   sessionAware: true,
+  available(ctx) {
+    return hasOwnedJob(ctx.sessionId)
+  },
   title(args) {
     return `${asString(args.id) ?? ""} output`
   },
@@ -227,6 +232,9 @@ export const jobKillTool: SessionTool = {
     additionalProperties: false,
   },
   sessionAware: true,
+  available(ctx) {
+    return hasOwnedJob(ctx.sessionId)
+  },
   title(args) {
     return `kill ${asString(args.id) ?? ""}`
   },
@@ -277,6 +285,9 @@ export const jobStatusTool: SessionTool = {
     additionalProperties: false,
   },
   sessionAware: true,
+  available(ctx) {
+    return hasOwnedJob(ctx.sessionId)
+  },
   title(args) {
     const id = asString(args.id)?.trim()
     return id ? `${id} status` : "background job status"
@@ -312,7 +323,7 @@ export const jobExtendTool: SessionTool = {
     return `extend ${asString(args.id) ?? ""}`
   },
   available(ctx) {
-    return ctx.kind === "primary"
+    return ctx.kind === "primary" && hasOwnedAgentJob(ctx.sessionId)
   },
   readOnly() {
     return true
@@ -366,7 +377,7 @@ export const jobSendTool: SessionTool = {
     return `message ${asString(args.id) ?? ""}`
   },
   available(ctx) {
-    return ctx.kind === "primary"
+    return ctx.kind === "primary" && hasOwnedAgentJob(ctx.sessionId)
   },
   readOnly() {
     return true

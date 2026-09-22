@@ -1,4 +1,5 @@
 import { homedir, tmpdir } from "node:os"
+import { forgetFileStates } from "../../tools/file-state"
 import type { Plugin } from "../types"
 import { editTool } from "./edit"
 import { readTool } from "./read"
@@ -19,6 +20,7 @@ const plugin: Plugin = {
     ctx.registerTool(readTool)
     ctx.registerTool(writeTool)
     ctx.registerTool(editTool)
+    ctx.registerToolSessionDisposer(forgetFileStates)
     ctx.registerPermissionRules({
       ask: [
         "write(/*)",

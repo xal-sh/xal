@@ -4,6 +4,7 @@ import { registerShell } from "./plugin"
 test("registers shell tools and their supporting contributions through the plugin context", () => {
   const tools: string[] = []
   const prompts: string[] = []
+  const renderers: string[] = []
   let disposers = 0
   let permissionRules = 0
   let policyRules = 0
@@ -11,6 +12,9 @@ test("registers shell tools and their supporting contributions through the plugi
   registerShell({
     registerTool(tool) {
       tools.push(tool.name)
+    },
+    registerToolRenderer(renderer) {
+      renderers.push(renderer.tool)
     },
     registerToolSessionDisposer() {
       disposers += 1
@@ -27,6 +31,7 @@ test("registers shell tools and their supporting contributions through the plugi
   })
 
   expect(tools).toEqual(["bash"])
+  expect(renderers).toEqual(["bash"])
   expect(prompts).toEqual(["environment"])
   expect(disposers).toBe(1)
   expect(permissionRules).toBe(1)

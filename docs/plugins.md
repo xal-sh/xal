@@ -24,9 +24,11 @@ Plugin registration is transactional. If importing, validating, or registering a
 
 ## Model-facing context
 
-Xal keeps its built-in system prompt small: identity, current environment, permission state, and stateful workflows that the user explicitly entered, such as plan mode. Tool definitions reach the model through the provider's native tool schema. A tool description should explain capability, inputs, effects, limits, and failure conditions; it should not tell the model to prefer that tool or impose a general workflow.
+Xal's built-in system prompt carries two things: session state, and behavioral policy. Session state is identity, current environment, permission mode, and stateful workflows the user explicitly entered, such as plan mode. Behavioral policy is how the agent is expected to work, covering execution, code changes, verification, and the shape of its replies; the change sections are withheld in read-only modes, where they do not apply.
 
-Plugins may contribute system-prompt sections with `ctx.registerPrompt`. Reserve these for runtime state, an explicitly enabled mode, or instructions intrinsic to the plugin as a whole. Project `AGENTS.md` files, the compact skill catalog, and global memory are intentional prompt contributions because the user enabled those context sources. MCP server instructions stay deferred until a search loads tools from that server. Prompt hooks can replace individual user messages and therefore remain a separate, explicitly trusted extension point.
+Tool contracts stay out of the prompt. Tool definitions reach the model through the provider's native tool schema, and a tool description should explain capability, inputs, effects, limits, preconditions, and failure conditions; it should not restate general workflow that belongs in the prompt.
+
+Plugins may contribute system-prompt sections with `ctx.registerPrompt`. Reserve these for runtime state, an explicitly enabled mode, or instructions intrinsic to the plugin as a whole. Do not use them to restate a tool's contract, which the tool description already carries. Project `AGENTS.md` files, the compact skill catalog, and global memory are intentional prompt contributions because the user enabled those context sources. MCP server instructions stay deferred until a search loads tools from that server. Prompt hooks can replace individual user messages and therefore remain a separate, explicitly trusted extension point.
 
 ## Lifecycle
 

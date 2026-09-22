@@ -10,6 +10,11 @@ import {
   collectAgentOutcome,
   createAgentJob,
   createProcessJob,
+  createScheduleJob,
+  finishScheduleJob,
+  forgetOwner,
+  hasOwnedAgentJob,
+  hasOwnedJob,
   drainOwnerDeliveries,
   extendAgentBudget,
   finishAgentJob,
@@ -460,3 +465,25 @@ test("escalates to kill when a process ignores stop", async () => {
   expect(processJob.done).toBe(true)
   expect(processJob.termination?.status).toBe("signaled")
 }, 10_000)
+
+test("exposes job tools only after a collectable job exists and never retracts them mid-session", () => {
+  const owner = "sticky-gate-owner"
+  expect(hasOwnedJob(owner)).toBe(false)
+  expect(hasOwnedAgentJob(owner)).toBe(false)
+
+  const schedule = createScheduleJob(owner, 1_000, () => {})
+  expect(hasOwnedJob(owner)).toBe(false)
+  expect(hasOwnedAgentJob(owner)).toBe(false)
+  finishScheduleJob(schedule, "canceled")
+
+  const process = processJob("sticky-gate", owner)
+  expect(hasOwnedJob(owner)).toBe(true)
+  expect(hasOwnedAgentJob(owner)).toBe(false)
+
+  acknowledgeDelivery(process)
+  expect(hasOwnedJob(owner)).toBe(true)
+
+  expect(hasOwnedJob("sticky-gate-other-owner")).toBe(false)
+  forgetOwner("sticky-gate-other-owner")
+  expect(hasOwnedJob("sticky-gate-other-owner")).toBe(false)
+})

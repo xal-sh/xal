@@ -5,22 +5,30 @@ pub struct NativeWriteRequest {
     pub path: Option<String>,
     pub display_path: String,
     pub content: Option<Utf16String>,
+    pub expected: Option<String>,
 }
 pub struct WriteTask {
     path: PathBuf,
     display_path: String,
     content: Vec<u16>,
+    expected: Option<String>,
 }
 
 impl Task for WriteTask {
-    type Output = NativeToolOutput;
-    type JsValue = NativeToolOutput;
+    type Output = NativeFileToolOutput;
+    type JsValue = NativeFileToolOutput;
 
     fn compute(&mut self) -> napi::Result<Self::Output> {
         let metadata = fs::metadata(&self.path).ok();
         if metadata.as_ref().is_some_and(fs::Metadata::is_dir) {
             return Err(failed(format!(
                 "Path is a directory, not a file: {}",
+                self.display_path
+            )));
+        }
+        if metadata.is_some() && self.expected.is_none() {
+            return Err(failed(format!(
+                "{} already exists and has not been read in this session. Read it first so the new content is based on what is there now.",
                 self.display_path
             )));
         }
@@ -38,16 +46,27 @@ impl Task for WriteTask {
             ),
             None => None,
         };
+        if let (Some(expected), Some(current)) = (self.expected.as_deref(), previous.as_deref()) {
+            let live = content_hash(utf16_lossy(current).as_bytes());
+            if live != expected {
+                return Err(failed(format!(
+                    "{} changed since it was read. Read it again before writing so the new content is based on what is there now.",
+                    self.display_path
+                )));
+            }
+        }
         if previous.as_deref() == Some(&self.content) {
-            return Ok(NativeToolOutput {
+            return Ok(NativeFileToolOutput {
                 output: format!("Unchanged {}", self.display_path).into(),
+                content_hash: content_hash(utf16_lossy(&self.content).as_bytes()),
             });
         }
         let diff = unified_diff(previous.as_deref().unwrap_or(&[]), &self.content);
         if let Some(parent) = self.path.parent() {
             fs::create_dir_all(parent).map_err(io_error)?;
         }
-        fs::write(&self.path, utf16_lossy(&self.content).as_bytes()).map_err(io_error)?;
+        let bytes = utf16_lossy(&self.content);
+        fs::write(&self.path, bytes.as_bytes()).map_err(io_error)?;
         let header = if previous.is_some() {
             format!(
                 "Updated {} (+{} -{})",
@@ -56,8 +75,9 @@ impl Task for WriteTask {
         } else {
             format!("Created {} ({} lines)", self.display_path, diff.added)
         };
-        Ok(NativeToolOutput {
+        Ok(NativeFileToolOutput {
             output: with_diff(header, &diff.hunks).into(),
+            content_hash: content_hash(bytes.as_bytes()),
         })
     }
 
@@ -75,6 +95,7 @@ pub fn native_write_file(request: NativeWriteRequest) -> napi::Result<AsyncTask<
         path: required_path(request.path)?,
         display_path: request.display_path,
         content: content.to_vec(),
+        expected: request.expected,
     }))
 }
 
@@ -84,7 +105,7 @@ mod tests {
 
     use napi::Task;
 
-    use super::{WriteTask, units};
+    use super::{WriteTask, content_hash, units};
 
     #[test]
     fn rejects_non_utf8_files_in_write_comparisons() {
@@ -92,6 +113,7 @@ mod tests {
             std::env::temp_dir().join(format!("xal-native-write-test-{}.bin", std::process::id()));
         fs::write(&path, [0xff]).expect("fixture should write");
         let mut task = WriteTask {
+            expected: Some(content_hash(&[0xff])),
             path: path.clone(),
             display_path: path.display().to_string(),
             content: units("�"),

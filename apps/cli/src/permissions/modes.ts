@@ -18,7 +18,7 @@ const builtins: ModeDefinition[] = [
     readOnly: true,
     skipAsk: false,
     guidance:
-      "Plan mode is active. Read-only tools may be used for investigation, but writes, edits, and shell commands that are not read-only are refused before they run. Never retry a refused action.",
+      "Plan mode is active. Read-only tools may be used for investigation. File-modifying tools are withheld entirely, and shell commands that are not read-only are refused before they run. Never retry a refused action.",
     subagentGuidance:
       "This is a read-only delegation. Use only read-only tools, make no workspace changes, and return your findings to the primary agent.",
   },

@@ -64,7 +64,7 @@ A running foreground `bash` command can be promoted to a background job at any m
 
 ## Job tools
 
-The model coordinates jobs with six tools:
+The model coordinates jobs with six tools. None of them are offered until the session has actually started a background job or task agent, so a session that never uses background work never carries their definitions. Once offered they stay offered for the rest of the session, including after every job has finished, so a job that settles mid-turn can still be collected. A `scheduler` wait does not count, because a schedule delivers nothing to collect. `job_send`, `job_extend`, and `wait_agent` additionally require that the session has started a task agent.
 
 | Tool         | Purpose                                                                                                                |
 | ------------ | ---------------------------------------------------------------------------------------------------------------------- |

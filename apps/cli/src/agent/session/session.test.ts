@@ -2,7 +2,14 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import { rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { appendProcessOutput, createProcessJob, drainOwnerDeliveries, finishProcessJob } from "../../background/jobs"
+import {
+  appendProcessOutput,
+  createProcessJob,
+  drainOwnerDeliveries,
+  finishProcessJob,
+  suppressDelivery,
+} from "../../background/jobs"
+import { jobExtendTool, jobKillTool, jobOutputTool, jobSendTool, jobStatusTool } from "../../background/tools"
 import { contributeRules } from "../../permissions/rules"
 import { registerTool, unregisterTool } from "../../tools/registry"
 import type { Tool } from "../../tools/types"
@@ -11,11 +18,13 @@ import type { Usage } from "../../providers/types"
 import { updatePlanTool } from "../../tasks/tool"
 import type { AgentEvent } from "../events"
 import { registerPrompt } from "../prompt/registry"
+import { waitAgentTool } from "../task/wait"
 import {
   completedRound,
   round,
   runSettledTurn,
   ScriptedProvider,
+  toolRound,
   setupAgentSessionTests,
   type AgentSession,
   type AgentSessionTestHarness,
@@ -126,6 +135,63 @@ describe("AgentSession", () => {
     } finally {
       unregisterTool(visible)
       unregisterTool(hidden)
+    }
+  })
+
+  test("tells the model a gated tool is unavailable instead of calling it unknown", async () => {
+    const gated: Tool = {
+      name: `gated_${crypto.randomUUID().replaceAll("-", "_")}`,
+      description: "Registered but never available here",
+      parameters: { type: "object" },
+      available: () => false,
+      title: () => "Gated",
+      execute: async () => ({ output: "should not run" }),
+    }
+    const provider = new ScriptedProvider([toolRound("call-gated", gated.name, {}), completedRound("Handled")])
+    const session = harness.createSession(provider)
+
+    registerTool(gated)
+    try {
+      await runSettledTurn(session, { text: "Use the gated tool", images: [] })
+
+      expect(provider.requests[0]?.tools.some((tool) => tool.name === gated.name)).toBe(false)
+      const result = provider.requests[1]?.input.find((item) => item.type === "tool_result")
+      if (result?.type !== "tool_result") throw new Error("missing tool result")
+      expect(result.output).toContain("registered but unavailable")
+      expect(result.output).not.toContain("Unknown tool")
+    } finally {
+      unregisterTool(gated)
+    }
+  })
+
+  test("offers job tools only once the session owns a job and keeps them after it settles", async () => {
+    const jobTools = [jobOutputTool, jobStatusTool, jobKillTool, jobSendTool, jobExtendTool, waitAgentTool]
+    const provider = new ScriptedProvider([
+      completedRound("Idle"),
+      completedRound("Running"),
+      completedRound("Settled"),
+    ])
+    const session = harness.createSession(provider, { interactive: true })
+    const offered = (index: number): string[] =>
+      (provider.requests[index]?.tools ?? [])
+        .map((tool) => tool.name)
+        .filter((name) => jobTools.some((tool) => tool.name === name))
+        .toSorted()
+
+    for (const tool of jobTools) registerTool(tool)
+    try {
+      await runSettledTurn(session, { text: "Before any job", images: [] })
+      const job = createProcessJob("tool-gate", session.id, "synthetic command", () => {})
+      await runSettledTurn(session, { text: "While the job runs", images: [] })
+      suppressDelivery(job)
+      await finishProcessJob(job, { status: "exited", exitCode: 0 })
+      await runSettledTurn(session, { text: "After the job settles", images: [] })
+
+      expect(offered(0)).toEqual([])
+      expect(offered(1)).toEqual(["job_kill", "job_output", "job_status"])
+      expect(offered(2)).toEqual(["job_kill", "job_output", "job_status"])
+    } finally {
+      for (const tool of jobTools) unregisterTool(tool)
     }
   })
 

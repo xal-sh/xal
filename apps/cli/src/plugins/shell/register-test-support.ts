@@ -8,6 +8,7 @@ export function registerBashCtx(): void {
     registerPolicyRule,
     registerPrompt() {},
     registerTool() {},
+    registerToolRenderer() {},
     registerToolSessionDisposer() {},
   })
 }

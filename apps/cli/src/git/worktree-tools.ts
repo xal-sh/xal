@@ -5,6 +5,7 @@ import { createManagedWorktree, managedWorktreeAt, removeManagedWorktree, unmana
 import { asBoolean, asString } from "../lib/json"
 import { nativeFormatWorktreeTool, nativePrepareWorktreeTool } from "../native"
 import { compactPath, resolveFilePath } from "../lib/path"
+import { modeDefinition } from "../permissions/modes"
 import { contributeRules } from "../permissions/rules"
 import { registerTool } from "../tools/registry"
 import type { SessionTool } from "../tools/types"
@@ -38,7 +39,7 @@ export const worktreeEnterTool: SessionTool = {
   },
   sessionAware: true,
   available(ctx) {
-    return ctx.kind === "primary"
+    return ctx.kind === "primary" && !modeDefinition(ctx.mode).readOnly
   },
   title(args) {
     return asString(args.name)?.trim() ?? ""
@@ -85,7 +86,7 @@ export const worktreeExitTool: SessionTool = {
   },
   sessionAware: true,
   available(ctx) {
-    return ctx.kind === "primary"
+    return ctx.kind === "primary" && !modeDefinition(ctx.mode).readOnly
   },
   title(args) {
     return `${asString(args.action) ?? ""} current worktree`
@@ -143,7 +144,7 @@ export const worktreeRemoveTool: SessionTool = {
   },
   sessionAware: true,
   available(ctx) {
-    return ctx.kind === "primary"
+    return ctx.kind === "primary" && !modeDefinition(ctx.mode).readOnly
   },
   title(args) {
     return compactPath(asString(args.path) ?? "")

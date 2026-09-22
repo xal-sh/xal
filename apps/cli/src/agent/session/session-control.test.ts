@@ -343,9 +343,10 @@ describe("AgentSession control flow", () => {
 
       expect(await session.compact("remaining implementation work")).toBe("compacted")
       expect(session.currentState).toBe("idle")
-      expect(provider.requests[1]?.cacheKey).toBe(provider.requests[0]?.cacheKey)
-      expect(provider.requests[1]?.instructions).toBe(provider.requests[0]?.instructions)
-      expect(provider.requests[1]?.tools).toEqual(provider.requests[0]?.tools)
+      expect(provider.requests[1]?.instructions).toContain("You summarize coding session transcripts")
+      expect(provider.requests[1]?.instructions).not.toBe(provider.requests[0]?.instructions)
+      expect(provider.requests[1]?.cacheKey).not.toBe(provider.requests[0]?.cacheKey)
+      expect(provider.requests[1]?.tools).toEqual([])
       expect(provider.requests[1]?.toolChoice).toBe("none")
       const summaryRequest = provider.requests[1]?.input.at(-1)
       if (!summaryRequest || summaryRequest.type !== "user_message") throw new Error("missing summary request")
@@ -432,9 +433,10 @@ describe("AgentSession control flow", () => {
       { type: "assistant_message", text: longResponse },
       { type: "user_message", text: "Continue after it fills", images: [] },
     ])
-    expect(provider.requests[1]?.cacheKey).toBe(provider.requests[0]?.cacheKey)
-    expect(provider.requests[1]?.instructions).toBe(provider.requests[0]?.instructions)
-    expect(provider.requests[1]?.tools).toEqual(provider.requests[0]?.tools)
+    expect(provider.requests[1]?.instructions).toContain("You summarize coding session transcripts")
+    expect(provider.requests[1]?.instructions).not.toBe(provider.requests[0]?.instructions)
+    expect(provider.requests[1]?.cacheKey).not.toBe(provider.requests[0]?.cacheKey)
+    expect(provider.requests[1]?.tools).toEqual([])
     expect(provider.requests[1]?.toolChoice).toBe("none")
     const summaryRequest = provider.requests[1]?.input.at(-1)
     if (!summaryRequest || summaryRequest.type !== "user_message") throw new Error("missing summary request")

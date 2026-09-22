@@ -23,7 +23,7 @@ Chained commands are evaluated per segment, so `git status && rm /etc/hosts` ask
 Xal ships three modes, cycled while the session is idle with the `session.next-mode` shortcut, Shift+Tab by default:
 
 - `normal` is the default. Actions run without confirmation unless they are risky: shell commands whose file arguments, redirect targets, or `cd` destinations leave the workspace; destructive commands aimed at the workspace root or `.git`; file writes and edits outside the workspace; privileged or system-level commands such as `sudo` and `dd`; network fetches with `curl` or `wget`; force pushes; package publishes; and reads of `.env` files or key material. MCP calls run without confirmation unless an explicit permission rule asks or denies them. Deletes and other file operations inside the workspace run without prompting because workspace undo can restore them. Writes to the system temporary directory are also allowed.
-- `plan` is read-only. Tools that mutate anything are refused before they run.
+- `plan` is read-only. File-modifying tools (`write`, `edit`, and the `worktree_*` tools) are withheld from the model entirely, and any other tool call that would mutate something is refused before it runs.
 - `yolo` converts every ask into an allow. Deny rules still block actions.
 
 Set the default for new TUI and headless sessions in `config.json`:
