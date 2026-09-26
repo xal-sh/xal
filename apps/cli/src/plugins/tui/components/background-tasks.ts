@@ -6,7 +6,7 @@ import {
   type TextRenderable,
 } from "@opentui/core"
 import {
-  dismissDoneBackgroundAgents,
+  dismissDoneBackgroundTasks,
   listBackgroundTasks,
   removeBackgroundTask,
   subscribeBackgroundTasks,
@@ -216,8 +216,8 @@ export class BackgroundTasks {
     return agents.length > 0
   }
 
-  dismissDoneAgents(): void {
-    dismissDoneBackgroundAgents()
+  dismissDone(): void {
+    dismissDoneBackgroundTasks()
   }
 
   private viewJob(task: BackgroundTask | undefined): void {

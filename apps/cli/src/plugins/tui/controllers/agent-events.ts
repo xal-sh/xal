@@ -153,12 +153,12 @@ export class AgentEventController {
         if (event.state !== "idle") break
         this.screen.dismissApproval()
         this.screen.dismissElicitation()
-        this.screen.tasks.dismissDoneAgents()
         this.screen.taskList.dismissCompleted()
         scrollback.endStream()
         live.clear()
         break
       case "user_message":
+        if (!this.replaying) this.screen.tasks.dismissDone()
         if (event.messageId) scrollback.checkpoint(event.messageId)
         scrollback.append({ kind: "user", text: event.text, imageCount: event.imageCount, sentAt: event.sentAt })
         break
