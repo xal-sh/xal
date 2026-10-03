@@ -1,4 +1,3 @@
-mod diff;
 mod file_tools;
 mod fuzzy;
 mod git;

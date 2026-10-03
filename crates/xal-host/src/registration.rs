@@ -22,6 +22,7 @@ pub struct Registration {
     pub(crate) prompts: BTreeMap<String, String>,
     pub(crate) subscriptions: Vec<Sender<Event>>,
     pub(crate) disposers: Vec<Disposer>,
+    pub(crate) session_disposers: Vec<Handler<(), ()>>,
     pub(crate) tasks: Vec<tokio::task::JoinHandle<Result<()>>>,
     pub(crate) cancellation: Cancellation,
 }
@@ -39,6 +40,7 @@ impl Registration {
             prompts: BTreeMap::new(),
             subscriptions: Vec::new(),
             disposers: Vec::new(),
+            session_disposers: Vec::new(),
             tasks: Vec::new(),
             cancellation,
         }
@@ -75,6 +77,8 @@ impl Registration {
 
     pub fn tool(&mut self, name: &str, tool: Tool) -> Result<()> {
         self.cancellation.check()?;
+        xal_services::schema::validator(&serde_json::Value::Object(tool.parameters.clone()))
+            .map_err(|error| Error::Failed(error.to_string()))?;
         insert(&mut self.tools, name, tool)
     }
 
@@ -147,6 +151,10 @@ impl Registration {
         self.disposers.push(Box::new(disposer));
     }
 
+    pub fn session_disposer(&mut self, handler: Handler<(), ()>) {
+        self.session_disposers.push(handler);
+    }
+
     pub fn cancellation(&self) -> Cancellation {
         self.cancellation.clone()
     }
@@ -204,6 +212,7 @@ impl Registration {
         self.ui.clear();
         self.prompts.clear();
         self.subscriptions.clear();
+        self.session_disposers.clear();
     }
 }
 

@@ -1,7 +1,16 @@
 pub mod config;
 pub mod credentials;
+pub mod diff;
+pub mod file_tools;
+pub mod output_contract;
 pub mod paths;
+pub mod process;
 pub mod records;
 pub mod redactor;
+pub mod schema;
+pub mod search;
 pub mod settings;
+pub mod shell;
 pub mod storage;
+pub mod tool_contracts;
+pub mod transport;

@@ -10,7 +10,7 @@ struct RunOutput {
 pub(super) struct RunState {
     output: Mutex<RunOutput>,
     output_changed: Condvar,
-    completion: Mutex<Option<Result<NativeProcessTermination, String>>>,
+    completion: Mutex<Option<Result<ProcessTermination, String>>>,
     completed: Condvar,
     deadline: Mutex<Option<Instant>>,
     timed_out: AtomicBool,
@@ -67,7 +67,7 @@ impl RunState {
         output.chunks.push_back(bytes);
     }
 
-    pub(super) fn finish(&self, termination: NativeProcessTermination) {
+    pub(super) fn finish(&self, termination: ProcessTermination) {
         let mut completion = lock(&self.completion);
         if completion.is_some() {
             return;
@@ -115,8 +115,8 @@ impl RunState {
         true
     }
 }
-#[napi]
-pub struct NativeShellExecution {
+
+pub struct ShellExecution {
     pub(super) state: Arc<RunState>,
 }
 
@@ -124,11 +124,8 @@ pub struct WaitShellTask {
     state: Arc<RunState>,
 }
 
-impl Task for WaitShellTask {
-    type Output = NativeProcessTermination;
-    type JsValue = NativeProcessTermination;
-
-    fn compute(&mut self) -> napi::Result<Self::Output> {
+impl WaitShellTask {
+    pub fn compute(&mut self) -> std::io::Result<ProcessTermination> {
         let mut completion = lock(&self.state.completion);
         while completion.is_none() {
             completion = self
@@ -139,23 +136,16 @@ impl Task for WaitShellTask {
         }
         match completion.clone() {
             Some(Ok(termination)) => Ok(termination),
-            Some(Err(error)) => Err(Error::new(Status::GenericFailure, error)),
-            None => Err(Error::new(
-                Status::GenericFailure,
+            Some(Err(error)) => Err(Error::other(error)),
+            None => Err(Error::other(
                 "native shell termination was unavailable".to_owned(),
             )),
         }
     }
-
-    fn resolve(&mut self, _env: Env, output: Self::Output) -> napi::Result<Self::JsValue> {
-        Ok(output)
-    }
 }
 
-#[napi]
-impl NativeShellExecution {
-    #[napi(catch_unwind)]
-    pub fn drain(&self) -> Buffer {
+impl ShellExecution {
+    pub fn drain(&self) -> Vec<u8> {
         let mut output = lock(&self.state.output);
         let mut bytes = Vec::with_capacity(output.bytes);
         while let Some(chunk) = output.chunks.pop_front() {
@@ -164,47 +154,40 @@ impl NativeShellExecution {
         output.bytes = 0;
         output.lossy = false;
         self.state.output_changed.notify_all();
-        bytes.into()
+        bytes
     }
 
-    #[napi(catch_unwind)]
     pub fn output_closed(&self) -> bool {
         self.state.done()
     }
 
-    #[napi(catch_unwind)]
-    pub fn wait(&self) -> AsyncTask<WaitShellTask> {
-        AsyncTask::new(WaitShellTask {
+    pub fn wait(&self) -> WaitShellTask {
+        WaitShellTask {
             state: self.state.clone(),
-        })
+        }
     }
 
-    #[napi(catch_unwind)]
     pub fn set_timeout(&self, milliseconds: u32) {
         self.state.set_timeout(milliseconds);
     }
 
-    #[napi(catch_unwind)]
     pub fn clear_timeout(&self) {
         self.state.clear_timeout();
     }
 
-    #[napi(catch_unwind)]
     pub fn timed_out(&self) -> bool {
         self.state.timed_out()
     }
 
-    #[napi(catch_unwind)]
     pub fn terminate(&self) {
         process_signal(&self.state.process, false);
     }
 
-    #[napi(catch_unwind)]
     pub fn kill(&self) {
         process_signal(&self.state.process, true);
     }
 }
-impl Drop for NativeShellExecution {
+impl Drop for ShellExecution {
     fn drop(&mut self) {
         let mut output = lock(&self.state.output);
         output.closed = true;

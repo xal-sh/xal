@@ -1,7 +1,9 @@
 use std::env;
 use std::io;
 
-use xal_host::{Error, JsonObject, Plugin, PolicyDecision, Registration, Result, Tool, ToolResult};
+use xal_host::{
+    Effects, Error, JsonObject, Plugin, PolicyDecision, Registration, Result, Tool, ToolResult,
+};
 use xal_services::config::{Configuration, agent_home};
 use xal_services::credentials::Credentials;
 use xal_services::paths::Paths;
@@ -53,7 +55,8 @@ impl Plugin for Inspect {
             Tool {
                 description: "Read configuration foundations without exposing credentials".into(),
                 parameters: JsonObject::new(),
-                read_only: true,
+                effects: Effects::read,
+                available: |_| true,
                 run: Box::new(|args, context| {
                     Box::pin(async move {
                         context.cancellation.check()?;

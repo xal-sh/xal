@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/xal-host", "crates/xal-native", "crates/xal-plugin-diagnostics", "crates/xal-plugin-inspect", "crates/xal-rust", "crates/xal-services"]
+members = ["crates/xal-host", "crates/xal-native", "crates/xal-plugin-diagnostics", "crates/xal-plugin-inspect", "crates/xal-rust", "crates/xal-plugin-workspace", "crates/xal-plugin-openai", "crates/xal-services"]
 resolver = "3"
 
 [workspace.package]

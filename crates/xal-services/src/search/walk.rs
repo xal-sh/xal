@@ -17,11 +17,11 @@ fn contains_git(path: &Path) -> bool {
         .any(|component| matches!(component, Component::Normal(value) if value == ".git"))
 }
 
-pub(crate) fn walk_files(
+pub fn walk_files(
     root: &Path,
     cancelled: &AtomicBool,
     deadline: Option<Instant>,
-) -> napi::Result<Vec<PathBuf>> {
+) -> std::io::Result<Vec<PathBuf>> {
     if cancelled.load(Ordering::Relaxed) {
         return Ok(Vec::new());
     }
@@ -54,7 +54,7 @@ pub(crate) fn walk_files(
         {
             break;
         }
-        let entry = entry.map_err(|error| Error::new(Status::GenericFailure, error.to_string()))?;
+        let entry = entry.map_err(|error| Error::other(error.to_string()))?;
         if entry
             .file_type()
             .is_some_and(|file_type| file_type.is_file())

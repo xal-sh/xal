@@ -4,10 +4,10 @@ const MAX_EDIT_DEPTH: usize = 1000;
 const MAX_DIFF_LINES: usize = 200;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct DiffOutput {
-    pub(crate) hunks: Vec<u16>,
-    pub(crate) added: u32,
-    pub(crate) removed: u32,
+pub struct DiffOutput {
+    pub hunks: Vec<u16>,
+    pub added: u32,
+    pub removed: u32,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -208,7 +208,7 @@ fn render_hunks(ops: &[DiffOp]) -> DiffOutput {
     }
 }
 
-pub(crate) fn unified_diff(old_text: &[u16], new_text: &[u16]) -> DiffOutput {
+pub fn unified_diff(old_text: &[u16], new_text: &[u16]) -> DiffOutput {
     let old_lines = split_lines(old_text);
     let new_lines = split_lines(new_text);
     let mut prefix = 0;

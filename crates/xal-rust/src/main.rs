@@ -1,3 +1,6 @@
+mod headless;
+mod prompt;
+
 use std::env;
 use std::future::Future;
 use std::io::{self, Write};
@@ -79,7 +82,7 @@ async fn dispatch(host: &Host, args: &[String]) -> Result<String> {
         for (name, description) in host.commands() {
             help.push_str(&format!("  {name}  {description}\n"));
         }
-        help.push_str("\nNo agent loop or TUI yet. Use xal for the current application.\n");
+        help.push_str("  run [options] [prompt]  Run a native OpenAI headless session\n\nNo TUI yet. Use xal for the current application.\n");
         return Ok(help);
     }
     if args == ["host-check"] {
@@ -136,8 +139,11 @@ async fn host_check(host: &Host) -> Result<String> {
     let request = ProviderRequest {
         model: "local-report".into(),
         instructions: host.prompts()?.join("\n"),
-        input: text,
+        input: vec![Item::user(text)],
         profile: None,
+        tools: Vec::new(),
+        thinking: None,
+        cache_key: String::new(),
     };
     let (provider, output) = tokio::join!(
         host.provider("diagnostic", request, &session, sender),
@@ -151,7 +157,8 @@ async fn host_check(host: &Host) -> Result<String> {
                     ProviderEvent::TextDelta(_)
                     | ProviderEvent::Done { .. }
                     | ProviderEvent::ReasoningDelta(_)
-                    | ProviderEvent::ToolCall { .. } => {
+                    | ProviderEvent::Item(_)
+                    | ProviderEvent::ReasoningSummaryDelta(_) => {
                         return Err(Error::Failed("unexpected diagnostic stream event".into()));
                     }
                 }
@@ -183,6 +190,15 @@ async fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    if args.first().is_some_and(|arg| arg == "run") {
+        return match headless::run(&args[1..]).await {
+            Ok(code) => ExitCode::from(code),
+            Err(error) => {
+                eprintln!("xal-rust: {error}");
+                ExitCode::FAILURE
+            }
+        };
+    }
     match run(&args).await {
         Ok(output) => match io::stdout().lock().write_all(output.as_bytes()) {
             Ok(()) => ExitCode::SUCCESS,
@@ -195,9 +211,10 @@ async fn main() -> ExitCode {
             eprintln!("xal-rust: {error}");
             match error {
                 Error::Cancelled => ExitCode::from(130),
-                Error::Failed(_) | Error::Denied(_) | Error::ApprovalRequired(_) => {
-                    ExitCode::FAILURE
-                }
+                Error::Failed(_)
+                | Error::Denied(_)
+                | Error::ApprovalRequired(_)
+                | Error::Provider { .. } => ExitCode::FAILURE,
             }
         }
     }

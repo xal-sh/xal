@@ -60,6 +60,20 @@ impl<T> Sender<T> {
 }
 
 impl<T> Receiver<T> {
+    pub fn close(&mut self) {
+        self.inner.close();
+    }
+
+    pub fn try_recv(&mut self) -> Result<Option<T>> {
+        self.cancellation.check()?;
+        match self.inner.try_recv() {
+            Ok(value) => Ok(Some(value)),
+            Err(mpsc::error::TryRecvError::Empty | mpsc::error::TryRecvError::Disconnected) => {
+                Ok(None)
+            }
+        }
+    }
+
     pub async fn recv(&mut self) -> Result<Option<T>> {
         self.cancellation.check()?;
         tokio::select! {

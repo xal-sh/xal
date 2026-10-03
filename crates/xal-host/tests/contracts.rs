@@ -27,7 +27,8 @@ impl Plugin for Capabilities {
             Tool {
                 description: "read".into(),
                 parameters: JsonObject::new(),
-                read_only: true,
+                effects: Effects::read,
+                available: |_| true,
                 run: Box::new(|args, _| {
                     Box::pin(async move {
                         Ok(ToolResult {
@@ -46,7 +47,8 @@ impl Plugin for Capabilities {
             Tool {
                 description: "write".into(),
                 parameters: JsonObject::new(),
-                read_only: false,
+                effects: Effects::write,
+                available: |_| true,
                 run: Box::new(|_, _| Box::pin(async { panic!("must not execute denied tool") })),
             },
         )?;
@@ -95,13 +97,17 @@ impl Plugin for Capabilities {
                 models: vec!["local".into()],
                 stream: Box::new(|request, _, output| {
                     Box::pin(async move {
-                        output.send(ProviderEvent::TextDelta(request.input)).await?;
                         output
-                            .send(ProviderEvent::Done {
-                                input_tokens: None,
-                                output_tokens: None,
-                            })
-                            .await
+                            .send(ProviderEvent::TextDelta(
+                                request
+                                    .input
+                                    .iter()
+                                    .map(Item::text)
+                                    .collect::<Vec<_>>()
+                                    .join("\n"),
+                            ))
+                            .await?;
+                        output.send(ProviderEvent::Done { usage: None }).await
                     })
                 }),
             },
@@ -222,8 +228,11 @@ async fn provider_stream_backpressure_cancellation_and_session_isolation() {
     let request = ProviderRequest {
         model: "local".into(),
         instructions: host.prompts().unwrap().join("\n"),
-        input: "hello".into(),
+        input: vec![Item::user("hello".into())],
         profile: None,
+        tools: Vec::new(),
+        thinking: None,
+        cache_key: String::new(),
     };
     let (result, events) = tokio::join!(host.provider("local", request, &session, sender), async {
         let first = stream.recv().await.unwrap();
@@ -433,7 +442,10 @@ async fn callback_local_cancellation_cannot_report_success_or_cancel_other_calls
             ProviderRequest {
                 model: "cancel".into(),
                 instructions: String::new(),
-                input: String::new(),
+                input: Vec::new(),
+                tools: Vec::new(),
+                thinking: None,
+                cache_key: String::new(),
                 profile: None
             },
             &session,

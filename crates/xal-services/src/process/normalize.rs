@@ -1,5 +1,3 @@
-use super::*;
-
 fn consume_csi(characters: &[char], mut cursor: usize) -> usize {
     while cursor < characters.len() {
         let character = characters[cursor];
@@ -77,8 +75,7 @@ fn strip_terminal_controls(text: &str) -> String {
     output
 }
 
-#[napi(js_name = "nativeNormalizeProcessOutput", catch_unwind)]
-pub fn native_normalize_process_output(output: Utf16String) -> Utf16String {
+pub fn normalize_process_output(output: Vec<u16>) -> Vec<u16> {
     let source = String::from_utf16_lossy(&output).replace("\r\n", "\n");
     let stripped = strip_terminal_controls(&source);
     stripped
@@ -100,28 +97,29 @@ pub fn native_normalize_process_output(output: Utf16String) -> Utf16String {
         })
         .collect::<Vec<_>>()
         .join("\n")
-        .into()
+        .encode_utf16()
+        .collect()
 }
 #[cfg(test)]
 mod tests {
-    use super::native_normalize_process_output;
+    use super::normalize_process_output;
 
     #[test]
     fn normalizes_terminal_output() {
-        let output = native_normalize_process_output(
+        let output = normalize_process_output(
             "before\rreplace\n\u{001b}[31mred\u{001b}[0m\nab\u{0008}c"
-                .to_owned()
-                .into(),
+                .encode_utf16()
+                .collect(),
         );
         assert_eq!(String::from_utf16_lossy(&output), "replace\nred\nac");
     }
 
     #[test]
     fn strips_extended_terminal_control_families() {
-        let output = native_normalize_process_output(
+        let output = normalize_process_output(
             "a\u{009b}31mb\u{001b}Psecret\u{001b}\\c\u{001b}(0d\u{009d}title\u{009c}e"
-                .to_owned()
-                .into(),
+                .encode_utf16()
+                .collect(),
         );
         assert_eq!(String::from_utf16_lossy(&output), "abcde");
     }

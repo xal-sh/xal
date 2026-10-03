@@ -5,7 +5,7 @@ use std::pin::Pin;
 
 use serde_json::{Map, Value};
 
-use crate::{Cancellation, Result};
+use crate::{Cancellation, Item, Result, ToolDefinition, Usage};
 
 pub type JsonObject = Map<String, Value>;
 pub type Call<'a, T> = Pin<Box<dyn Future<Output = Result<T>> + Send + 'a>>;
@@ -31,6 +31,7 @@ pub struct Session {
 pub struct Context {
     pub session: Session,
     pub cancellation: Cancellation,
+    pub output: Option<crate::Sender<String>>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -71,8 +72,24 @@ pub struct PermissionRequest {
 pub struct Tool {
     pub description: String,
     pub parameters: JsonObject,
-    pub read_only: bool,
+    pub effects: fn(&JsonObject) -> Effects,
+    pub available: fn(&Session) -> bool,
     pub run: Handler<JsonObject, ToolResult>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Effects {
+    Read,
+    Write,
+}
+
+impl Effects {
+    pub fn read(_: &JsonObject) -> Self {
+        Self::Read
+    }
+    pub fn write(_: &JsonObject) -> Self {
+        Self::Write
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -101,23 +118,20 @@ pub enum HookResult {
 pub struct ProviderRequest {
     pub model: String,
     pub instructions: String,
-    pub input: String,
+    pub input: Vec<Item>,
     pub profile: Option<String>,
+    pub tools: Vec<ToolDefinition>,
+    pub thinking: Option<String>,
+    pub cache_key: String,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum ProviderEvent {
     TextDelta(String),
     ReasoningDelta(String),
-    ToolCall {
-        id: String,
-        name: String,
-        args: JsonObject,
-    },
-    Done {
-        input_tokens: Option<u64>,
-        output_tokens: Option<u64>,
-    },
+    ReasoningSummaryDelta(String),
+    Item(Item),
+    Done { usage: Option<Usage> },
 }
 
 pub struct Provider {

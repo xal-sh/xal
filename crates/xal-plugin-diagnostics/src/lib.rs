@@ -41,17 +41,12 @@ impl Plugin for Diagnostics {
                                 request.instructions
                             )))
                             .await?;
-                        for line in request.input.lines() {
+                        for line in request.input.iter().flat_map(|item| item.text().lines()) {
                             sender
                                 .send(ProviderEvent::TextDelta(format!("{line}\n")))
                                 .await?;
                         }
-                        sender
-                            .send(ProviderEvent::Done {
-                                input_tokens: None,
-                                output_tokens: None,
-                            })
-                            .await
+                        sender.send(ProviderEvent::Done { usage: None }).await
                     })
                 }),
             },

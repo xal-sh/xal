@@ -1,41 +1,42 @@
 use super::*;
 
-#[napi(object)]
-pub struct NativeShellRequest {
+pub struct ShellRequest {
     pub session_id: String,
     pub sandbox_id: String,
     pub command: String,
     pub cwd: String,
     pub persistent_launch: Vec<String>,
     pub isolated_launch: Vec<String>,
-    pub environment: Vec<NativeEnvironmentVariable>,
+    pub environment: Vec<EnvironmentVariable>,
 }
 
-#[napi]
-pub struct NativeShellManager {
+pub struct ShellManager {
     entries: Arc<Mutex<HashMap<String, Arc<PersistentEntry>>>>,
 }
 
-#[napi]
-impl NativeShellManager {
-    #[napi(constructor, catch_unwind)]
+impl Default for ShellManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ShellManager {
     pub fn new() -> Self {
         Self {
             entries: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
-    #[napi(catch_unwind)]
-    pub fn execute(&self, request: NativeShellRequest) -> napi::Result<NativeShellExecution> {
+    pub fn execute(&self, request: ShellRequest) -> std::io::Result<ShellExecution> {
         if request.session_id.is_empty() || request.sandbox_id.is_empty() {
             return Err(Error::new(
-                Status::InvalidArg,
+                std::io::ErrorKind::InvalidInput,
                 "native shell identity is required".to_owned(),
             ));
         }
         if request.cwd.is_empty() {
             return Err(Error::new(
-                Status::InvalidArg,
+                std::io::ErrorKind::InvalidInput,
                 "native shell cwd is required".to_owned(),
             ));
         }
@@ -68,7 +69,7 @@ impl NativeShellManager {
         let entry = match entry {
             Some(entry) => entry,
             None => {
-                let process = spawn_process(NativeProcessRequest {
+                let process = spawn_process(ProcessRequest {
                     launch: request.persistent_launch,
                     cwd: request.cwd.clone(),
                     environment: request.environment,
@@ -106,13 +107,13 @@ impl NativeShellManager {
         );
         if let Err(error) = process_write(&entry.process, framed.as_bytes()) {
             *lock(&entry.active) = None;
-            state.fail(error.reason);
+            state.fail(error.to_string());
         }
-        Ok(NativeShellExecution { state })
+        Ok(ShellExecution { state })
     }
 
-    fn execute_isolated(&self, request: NativeShellRequest) -> napi::Result<NativeShellExecution> {
-        let process = spawn_process(NativeProcessRequest {
+    pub fn execute_isolated(&self, request: ShellRequest) -> std::io::Result<ShellExecution> {
+        let process = spawn_process(ProcessRequest {
             launch: request.isolated_launch,
             cwd: request.cwd,
             environment: request.environment,
@@ -121,10 +122,35 @@ impl NativeShellManager {
         let state = RunState::new(process.clone());
         let dispatcher = state.clone();
         thread::spawn(move || dispatch_isolated(process, dispatcher));
-        Ok(NativeShellExecution { state })
+        Ok(ShellExecution { state })
     }
 
-    #[napi(catch_unwind)]
+    pub fn shutdown_session(&self, session_id: &str) -> std::io::Result<()> {
+        let prefix = format!("{session_id}\0");
+        let removed = {
+            let mut entries = lock(&self.entries);
+            let keys = entries
+                .keys()
+                .filter(|key| key.starts_with(&prefix))
+                .cloned()
+                .collect::<Vec<_>>();
+            keys.into_iter()
+                .filter_map(|key| entries.remove(&key))
+                .collect::<Vec<_>>()
+        };
+        let mut errors = Vec::new();
+        for entry in removed {
+            process_signal(&entry.process, true);
+            if let Err(error) = crate::process::wait_process(&entry.process) {
+                errors.push(error.to_string());
+            }
+        }
+        if errors.is_empty() {
+            return Ok(());
+        }
+        Err(std::io::Error::other(errors.join("\n")))
+    }
+
     pub fn dispose_session(&self, session_id: String) {
         let prefix = format!("{session_id}\0");
         let removed = {
@@ -143,7 +169,6 @@ impl NativeShellManager {
         }
     }
 
-    #[napi(catch_unwind)]
     pub fn dispose_all(&self) {
         let removed = {
             let mut entries = lock(&self.entries);
@@ -154,7 +179,7 @@ impl NativeShellManager {
         }
     }
 }
-impl Drop for NativeShellManager {
+impl Drop for ShellManager {
     fn drop(&mut self) {
         let removed = {
             let mut entries = lock(&self.entries);

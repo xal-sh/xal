@@ -53,12 +53,12 @@ fn feed_active(entry: &PersistentEntry, bytes: Vec<u8>) {
     let state = run.state.clone();
     *active = None;
     state.finish(match status {
-        Some(exit_code) => NativeProcessTermination {
+        Some(exit_code) => ProcessTermination {
             status: "exited".to_owned(),
             exit_code: Some(exit_code),
             signal: None,
         },
-        None => NativeProcessTermination {
+        None => ProcessTermination {
             status: "signaled".to_owned(),
             exit_code: None,
             signal: None,
@@ -66,7 +66,7 @@ fn feed_active(entry: &PersistentEntry, bytes: Vec<u8>) {
     });
 }
 
-fn close_active(entry: &PersistentEntry, termination: NativeProcessTermination) {
+fn close_active(entry: &PersistentEntry, termination: ProcessTermination) {
     let active = lock(&entry.active).take();
     let Some(mut run) = active else {
         return;

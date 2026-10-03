@@ -10,5 +10,7 @@ xal-host = { path = "../xal-host" }
 xal-services = { path = "../xal-services" }
 xal-plugin-inspect = { path = "../xal-plugin-inspect" }
 xal-plugin-diagnostics = { path = "../xal-plugin-diagnostics" }
+xal-plugin-openai = { path = "../xal-plugin-openai" }
+xal-plugin-workspace = { path = "../xal-plugin-workspace" }
 serde_json = "=1.0.145"
 tokio = { version = "=1.50.0", features = ["rt", "macros", "signal"] }

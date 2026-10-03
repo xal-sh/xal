@@ -14,7 +14,7 @@ pub(crate) struct ProcessState {
     pub(super) output_changed: Condvar,
     readers: AtomicUsize,
     reader_error: Mutex<Option<String>>,
-    termination: Mutex<Option<NativeProcessTermination>>,
+    termination: Mutex<Option<ProcessTermination>>,
     terminated: Condvar,
     deadline: Mutex<Option<Instant>>,
     timed_out: AtomicBool,
@@ -133,18 +133,18 @@ fn watch_process(state: Arc<ProcessState>) {
     };
     let termination = match status {
         Ok(status) => match status.code() {
-            Some(exit_code) => NativeProcessTermination {
+            Some(exit_code) => ProcessTermination {
                 status: "exited".to_owned(),
                 exit_code: Some(exit_code),
                 signal: None,
             },
-            None => NativeProcessTermination {
+            None => ProcessTermination {
                 status: "signaled".to_owned(),
                 exit_code: None,
                 signal: signal_name(&status),
             },
         },
-        Err(error) => NativeProcessTermination {
+        Err(error) => ProcessTermination {
             status: "launchFailed".to_owned(),
             exit_code: None,
             signal: Some(error.to_string()),
@@ -179,15 +179,20 @@ pub(super) fn signal_process_tree(state: &ProcessState, force: bool) {
     }
 }
 
-pub(crate) fn spawn_process(request: NativeProcessRequest) -> napi::Result<Arc<ProcessState>> {
+pub(crate) fn spawn_process(request: ProcessRequest) -> std::io::Result<Arc<ProcessState>> {
     let executable = request
         .launch
         .first()
         .filter(|value| !value.is_empty())
-        .ok_or_else(|| Error::new(Status::InvalidArg, "process launch is required".to_owned()))?;
+        .ok_or_else(|| {
+            Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "process launch is required".to_owned(),
+            )
+        })?;
     if request.cwd.is_empty() {
         return Err(Error::new(
-            Status::InvalidArg,
+            std::io::ErrorKind::InvalidInput,
             "process cwd is required".to_owned(),
         ));
     }
@@ -214,22 +219,18 @@ pub(crate) fn spawn_process(request: NativeProcessRequest) -> napi::Result<Arc<P
         use std::os::unix::process::CommandExt;
         command.process_group(0);
     }
-    let mut child = command.spawn().map_err(|error| {
-        Error::new(Status::GenericFailure, format!("failed to launch: {error}"))
-    })?;
+    let mut child = command
+        .spawn()
+        .map_err(|error| Error::other(format!("failed to launch: {error}")))?;
     let stdin = child.stdin.take();
-    let stdout = child.stdout.take().ok_or_else(|| {
-        Error::new(
-            Status::GenericFailure,
-            "native process stdout was unavailable".to_owned(),
-        )
-    })?;
-    let stderr = child.stderr.take().ok_or_else(|| {
-        Error::new(
-            Status::GenericFailure,
-            "native process stderr was unavailable".to_owned(),
-        )
-    })?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| Error::other("native process stdout was unavailable".to_owned()))?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| Error::other("native process stderr was unavailable".to_owned()))?;
     let state = Arc::new(ProcessState {
         pid: child.id(),
         child: Mutex::new(Some(child)),
@@ -273,7 +274,7 @@ pub(crate) fn process_output_closed(state: &ProcessState) -> bool {
     state.readers.load(std::sync::atomic::Ordering::Acquire) == 0
 }
 
-pub(crate) fn process_termination(state: &ProcessState) -> Option<NativeProcessTermination> {
+pub(crate) fn process_termination(state: &ProcessState) -> Option<ProcessTermination> {
     lock(&state.termination).clone()
 }
 
@@ -281,20 +282,17 @@ pub(crate) fn process_reader_error(state: &ProcessState) -> Option<String> {
     lock(&state.reader_error).clone()
 }
 
-pub(crate) fn process_write(state: &ProcessState, bytes: &[u8]) -> napi::Result<()> {
+pub(crate) fn process_write(state: &ProcessState, bytes: &[u8]) -> std::io::Result<()> {
     let mut stdin = lock(&state.stdin);
-    let stdin = stdin.as_mut().ok_or_else(|| {
-        Error::new(
-            Status::GenericFailure,
-            "native process stdin is closed".to_owned(),
-        )
-    })?;
+    let stdin = stdin
+        .as_mut()
+        .ok_or_else(|| Error::other("native process stdin is closed".to_owned()))?;
     stdin
         .write_all(bytes)
-        .map_err(|error| Error::new(Status::GenericFailure, error.to_string()))?;
+        .map_err(|error| Error::other(error.to_string()))?;
     stdin
         .flush()
-        .map_err(|error| Error::new(Status::GenericFailure, error.to_string()))
+        .map_err(|error| Error::other(error.to_string()))
 }
 
 pub(super) fn process_set_timeout(state: &ProcessState, milliseconds: u32) {
@@ -330,7 +328,7 @@ pub(crate) fn process_interrupt(state: &ProcessState) -> bool {
     }
 }
 
-pub(super) fn wait_process(state: &ProcessState) -> napi::Result<NativeProcessTermination> {
+pub(crate) fn wait_process(state: &ProcessState) -> std::io::Result<ProcessTermination> {
     let mut termination = lock(&state.termination);
     while termination.is_none() {
         termination = state
@@ -338,12 +336,9 @@ pub(super) fn wait_process(state: &ProcessState) -> napi::Result<NativeProcessTe
             .wait(termination)
             .unwrap_or_else(std::sync::PoisonError::into_inner);
     }
-    let termination = termination.clone().ok_or_else(|| {
-        Error::new(
-            Status::GenericFailure,
-            "native process termination was unavailable".to_owned(),
-        )
-    })?;
+    let termination = termination
+        .clone()
+        .ok_or_else(|| Error::other("native process termination was unavailable".to_owned()))?;
     let mut output = lock(&state.output);
     while !process_output_closed(state) {
         output = state
@@ -353,10 +348,9 @@ pub(super) fn wait_process(state: &ProcessState) -> napi::Result<NativeProcessTe
     }
     drop(output);
     if let Some(error) = process_reader_error(state) {
-        return Err(Error::new(
-            Status::GenericFailure,
-            format!("could not read native process output: {error}"),
-        ));
+        return Err(Error::other(format!(
+            "could not read native process output: {error}"
+        )));
     }
     Ok(termination)
 }

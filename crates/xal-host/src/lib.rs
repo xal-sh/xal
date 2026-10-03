@@ -1,4 +1,13 @@
+pub mod agent;
 mod channel;
+mod conversation;
+pub mod permissions;
+mod tools;
+pub fn sandbox_available() -> bool {
+    cfg!(target_os = "macos") && std::path::Path::new("/usr/bin/sandbox-exec").is_file()
+}
+pub use conversation::*;
+pub use tools::PreparedTool;
 pub mod contracts;
 mod registration;
 
@@ -21,12 +30,18 @@ pub enum Error {
     Denied(String),
     ApprovalRequired(String),
     Failed(String),
+    Provider {
+        message: String,
+        retryable: bool,
+        retry_after_ms: Option<u64>,
+    },
 }
 
 impl fmt::Display for Error {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Cancelled => formatter.write_str("cancelled"),
+            Self::Provider { message, .. } => formatter.write_str(message),
             Self::Denied(reason) | Self::ApprovalRequired(reason) | Self::Failed(reason) => {
                 formatter.write_str(reason)
             }
@@ -162,6 +177,8 @@ pub struct Host {
     cancellation: Cancellation,
     state: State,
     failures: Vec<Failure>,
+    permissions: Option<permissions::Permissions>,
+    output: tools::OutputPolicy,
 }
 
 impl Host {
@@ -179,7 +196,13 @@ impl Host {
             cancellation,
             state: State::Created,
             failures: Vec::new(),
+            permissions: None,
+            output: tools::OutputPolicy::default(),
         }
+    }
+
+    pub fn permissions(&mut self, permissions: permissions::Permissions) {
+        self.permissions = Some(permissions);
     }
 
     pub async fn start(&mut self) -> Result<()> {
@@ -318,6 +341,7 @@ impl Host {
         let context = Context {
             session: session.clone(),
             cancellation: session.cancellation.child(),
+            output: None,
         };
         let cancellation = context.cancellation.clone();
         let _guard = cancellation.0.clone().drop_guard();
@@ -355,86 +379,6 @@ impl Host {
         Ok(input)
     }
 
-    pub async fn tool(
-        &self,
-        name: &str,
-        args: JsonObject,
-        session: &Session,
-    ) -> Result<ToolResult> {
-        self.check()?;
-        for entry in self.ready() {
-            let Some(tool) = entry.registration.tools.get(name) else {
-                continue;
-            };
-            if session.read_only && !tool.read_only {
-                return Err(Error::Denied(
-                    "tool is unavailable in a read-only session".into(),
-                ));
-            }
-            let HookInput::BeforeTool { args, .. } = self
-                .hook(
-                    HookInput::BeforeTool {
-                        tool: name.into(),
-                        args,
-                    },
-                    session,
-                )
-                .await?
-            else {
-                return Err(Error::Failed("invalid before-tool hook result".into()));
-            };
-            let request = PermissionRequest {
-                tool: name.into(),
-                args: args.clone(),
-                read_only: tool.read_only,
-            };
-            let mut decision = PolicyDecision::Abstain;
-            for owner in self.ready() {
-                for policy in owner.registration.policies.values() {
-                    match self.call(owner, policy, request.clone(), session).await? {
-                        PolicyDecision::Deny(reason) => return Err(Error::Denied(reason)),
-                        PolicyDecision::Ask(reason) => decision = PolicyDecision::Ask(reason),
-                        PolicyDecision::Allow if decision == PolicyDecision::Abstain => {
-                            decision = PolicyDecision::Allow
-                        }
-                        PolicyDecision::Allow | PolicyDecision::Abstain => {}
-                    }
-                }
-            }
-            match decision {
-                PolicyDecision::Allow => {}
-                PolicyDecision::Ask(reason) | PolicyDecision::Deny(reason) => {
-                    return Err(Error::ApprovalRequired(reason));
-                }
-                PolicyDecision::Abstain => {
-                    return Err(Error::ApprovalRequired(format!(
-                        "permission required for {name}"
-                    )));
-                }
-            }
-            let result = self.call(entry, &tool.run, args, session).await?;
-            let HookInput::AfterTool { output, .. } = self
-                .hook(
-                    HookInput::AfterTool {
-                        tool: name.into(),
-                        output: result.output,
-                    },
-                    session,
-                )
-                .await?
-            else {
-                return Err(Error::Failed("invalid after-tool hook result".into()));
-            };
-            self.publish(Event::ToolFinished {
-                session: session.id.clone(),
-                tool: name.into(),
-                output: output.clone(),
-            })?;
-            return Ok(ToolResult { output });
-        }
-        Err(Error::Failed(format!("unknown tool: {name}")))
-    }
-
     pub async fn provider(
         &self,
         name: &str,
@@ -451,6 +395,7 @@ impl Host {
                 let context = Context {
                     session: session.clone(),
                     cancellation: session.cancellation.child(),
+                    output: None,
                 };
                 let cancellation = context.cancellation.clone();
                 let _guard = cancellation.0.clone().drop_guard();

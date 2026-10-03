@@ -2714,9 +2714,11 @@ name = "xal-host"
 version = "0.1.0"
 dependencies = [
  "futures-util",
+ "serde",
  "serde_json",
  "tokio",
  "tokio-util",
+ "xal-services",
 ]
 
 [[package]]
@@ -2764,6 +2766,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "xal-plugin-openai"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "reqwest",
+ "serde_json",
+ "xal-host",
+ "xal-services",
+]
+
+[[package]]
+name = "xal-plugin-workspace"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "tokio",
+ "xal-host",
+ "xal-services",
+]
+
+[[package]]
 name = "xal-rust"
 version = "0.1.0"
 dependencies = [
@@ -2772,6 +2795,8 @@ dependencies = [
  "xal-host",
  "xal-plugin-diagnostics",
  "xal-plugin-inspect",
+ "xal-plugin-openai",
+ "xal-plugin-workspace",
  "xal-services",
 ]
 
@@ -2779,8 +2804,16 @@ dependencies = [
 name = "xal-services"
 version = "0.1.0"
 dependencies = [
+ "bytes",
+ "futures-util",
  "getrandom 0.3.4",
+ "globset",
+ "grep-regex",
+ "grep-searcher",
+ "ignore",
+ "jsonschema",
  "libc",
+ "reqwest",
  "serde",
  "serde_json",
  "sha2",

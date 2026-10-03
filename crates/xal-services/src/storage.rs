@@ -133,7 +133,7 @@ fn temporary_file(parent: &Path) -> io::Result<(PathBuf, File)> {
 }
 
 #[cfg(unix)]
-fn create_secure(path: &Path) -> io::Result<File> {
+pub fn create_secure(path: &Path) -> io::Result<File> {
     use std::os::unix::fs::OpenOptionsExt;
     OpenOptions::new()
         .write(true)
@@ -143,7 +143,7 @@ fn create_secure(path: &Path) -> io::Result<File> {
 }
 
 #[cfg(windows)]
-fn create_secure(path: &Path) -> io::Result<File> {
+pub fn create_secure(path: &Path) -> io::Result<File> {
     use std::os::windows::ffi::OsStrExt;
     use std::os::windows::io::FromRawHandle;
     use windows_sys::Win32::Foundation::{GENERIC_WRITE, INVALID_HANDLE_VALUE, LocalFree};
