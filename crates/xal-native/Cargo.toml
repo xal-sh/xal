@@ -9,6 +9,7 @@ rust-version = "1.92"
 crate-type = ["cdylib"]
 
 [dependencies]
+xal-services = { path = "../xal-services" }
 bytes = "=1.12.1"
 futures-util = "=0.3.34"
 globset = "=0.4.20"

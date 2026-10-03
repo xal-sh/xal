@@ -2710,6 +2710,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3ad82d2a33cdc9674dc7465672f271e096168fcdbe0f799d9e6db8c5892679dc"
 
 [[package]]
+name = "xal-host"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "serde_json",
+ "tokio",
+ "tokio-util",
+]
+
+[[package]]
 name = "xal-native"
 version = "0.1.0"
 dependencies = [
@@ -2735,6 +2745,46 @@ dependencies = [
  "sse-stream",
  "tokio",
  "which",
+ "xal-services",
+]
+
+[[package]]
+name = "xal-plugin-diagnostics"
+version = "0.1.0"
+dependencies = [
+ "xal-host",
+]
+
+[[package]]
+name = "xal-plugin-inspect"
+version = "0.1.0"
+dependencies = [
+ "xal-host",
+ "xal-services",
+]
+
+[[package]]
+name = "xal-rust"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "tokio",
+ "xal-host",
+ "xal-plugin-diagnostics",
+ "xal-plugin-inspect",
+ "xal-services",
+]
+
+[[package]]
+name = "xal-services"
+version = "0.1.0"
+dependencies = [
+ "getrandom 0.3.4",
+ "libc",
+ "serde",
+ "serde_json",
+ "sha2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

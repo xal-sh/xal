@@ -1,0 +1,8 @@
+{"type":"meta","meta":{"version":2,"id":"session-fixture","cwd":"/synthetic/workspace","provider":"fixture","profile":"stable-profile","model":"test","mode":"normal","startedAt":1700000000000}}
+{"type":"item","item":{"type":"user_message","text":"Unicode 🔐","images":[],"messageId":"00000000-0000-4000-8000-000000000001"}}
+{"type":"item","item":{"type":"assistant_message","text":"reply","replay":{"provider":"fixture","model":"test","data":{"opaque":[null,{"future":true}],"token":"[REDACTED]"}}}}
+{"type":"item","item":{"type":"tool_call","callId":"call","name":"read","args":{"path":"file","optional":null}}}
+{"type":"item","item":{"type":"tool_result","callId":"call","output":"result"}}
+{"type":"item","item":{"type":"compaction","strategy":"user_messages_v1","summary":"summary","replaced":2,"retained":[{"type":"user_message","text":"original","messageId":"00000000-0000-4000-8000-000000000001","images":[]}]}}
+{"type":"event","event":{"type":"request_measured","legacy":{"unknown":[1,null,"preserved"]}}}
+{"type":"event","event":{"type":"reasoning_routed","model":"historical","payload":{"future":null}}}

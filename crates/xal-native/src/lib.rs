@@ -7,7 +7,6 @@ mod mcp;
 mod memory;
 mod output_contract;
 mod process;
-mod redactor;
 mod search;
 mod shell;
 mod skill;
@@ -19,7 +18,7 @@ mod worktree;
 use napi::bindgen_prelude::Utf16String;
 use napi::{Error, Status};
 use napi_derive::napi;
-use redactor::SecretMatcher;
+use xal_services::redactor::SecretMatcher;
 
 #[napi(js_name = "apiVersion", catch_unwind)]
 pub fn api_version() -> u32 {

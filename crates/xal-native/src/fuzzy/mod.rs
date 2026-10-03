@@ -10,8 +10,8 @@ use std::sync::{
 use napi::bindgen_prelude::{AbortSignal, AsyncTask};
 use napi::{Env, Error, Status, Task};
 use napi_derive::napi;
+use xal_services::redactor::SecretMatcher;
 
-use crate::redactor::SecretMatcher;
 use crate::search::walk_files;
 use crate::tool_contracts::{NativeToolOutcomeKind, cancellation_flag};
 

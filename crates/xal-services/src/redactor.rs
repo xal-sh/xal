@@ -1,5 +1,117 @@
 use std::collections::{HashMap, VecDeque};
 
+pub struct Redactor {
+    matcher: SecretMatcher,
+    protected: Vec<String>,
+}
+
+impl Redactor {
+    pub fn new(mut values: Vec<String>) -> Result<Self, &'static str> {
+        values.retain(|value| !value.is_empty());
+        let marker = ["[REDACTED]", "<hidden>", "***", "•••", "_"]
+            .into_iter()
+            .map(str::to_owned)
+            .chain(
+                (0xe000..=0xf8ff)
+                    .filter_map(char::from_u32)
+                    .map(|value| value.to_string()),
+            )
+            .find(|candidate| {
+                values
+                    .iter()
+                    .all(|value| !candidate.contains(value) && !value.contains(candidate))
+            })
+            .ok_or("secret redaction marker resolution failed")?;
+        Ok(Self {
+            matcher: SecretMatcher::new(
+                values
+                    .iter()
+                    .map(|value| value.encode_utf16().collect())
+                    .collect(),
+                marker.encode_utf16().collect(),
+            )?,
+            protected: values.into_iter().chain(Some(marker)).collect(),
+        })
+    }
+
+    pub fn stream(&self) -> RedactedStream<'_> {
+        RedactedStream {
+            redactor: self,
+            pending: String::new(),
+        }
+    }
+
+    pub fn redact_json(&self, value: &serde_json::Value) -> serde_json::Value {
+        match value {
+            serde_json::Value::String(value) => serde_json::Value::String(self.redact(value)),
+            serde_json::Value::Array(values) => serde_json::Value::Array(
+                values.iter().map(|value| self.redact_json(value)).collect(),
+            ),
+            serde_json::Value::Object(values) => serde_json::Value::Object(
+                values
+                    .iter()
+                    .map(|(key, value)| (self.redact(key), self.redact_json(value)))
+                    .collect(),
+            ),
+            value => value.clone(),
+        }
+    }
+
+    pub fn redact(&self, input: &str) -> String {
+        String::from_utf16(
+            &self
+                .matcher
+                .redact(&input.encode_utf16().collect::<Vec<_>>()),
+        )
+        .expect("redaction of valid Unicode must remain valid Unicode")
+    }
+}
+
+pub struct RedactedStream<'a> {
+    redactor: &'a Redactor,
+    pending: String,
+}
+
+impl RedactedStream<'_> {
+    pub fn write(&mut self, text: &str) -> String {
+        self.pending.push_str(text);
+        let mut boundary = self.pending.len();
+        for value in &self.redactor.protected {
+            for (length, _) in value.char_indices().skip(1) {
+                if self.pending.ends_with(&value[..length]) {
+                    boundary = boundary.min(self.pending.len() - length);
+                }
+            }
+        }
+        loop {
+            let previous = boundary;
+            for value in &self.redactor.protected {
+                for (start, _) in self
+                    .pending
+                    .char_indices()
+                    .take_while(|(start, _)| *start < boundary)
+                {
+                    if self.pending[start..].starts_with(value) && start + value.len() > boundary {
+                        boundary = start;
+                        break;
+                    }
+                }
+            }
+            if previous == boundary {
+                break;
+            }
+        }
+        let tail = self.pending.split_off(boundary);
+        let output = self.redactor.redact(&self.pending);
+        self.pending = tail;
+        output
+    }
+
+    pub fn end(&mut self) -> String {
+        self.redactor.redact(&std::mem::take(&mut self.pending))
+    }
+}
+
 #[derive(Default)]
 struct Node {
     transitions: HashMap<u16, usize>,
@@ -15,13 +127,13 @@ struct Candidate {
     secret_length: usize,
 }
 
-pub(crate) struct SecretMatcher {
+pub struct SecretMatcher {
     marker: Vec<u16>,
     nodes: Vec<Node>,
 }
 
 impl SecretMatcher {
-    pub(crate) fn new(values: Vec<Vec<u16>>, marker: Vec<u16>) -> Result<Self, &'static str> {
+    pub fn new(values: Vec<Vec<u16>>, marker: Vec<u16>) -> Result<Self, &'static str> {
         if marker.is_empty() {
             return Err("redaction marker must not be empty");
         }
@@ -47,7 +159,7 @@ impl SecretMatcher {
         Ok(Self { marker, nodes })
     }
 
-    pub(crate) fn redact(&self, input: &[u16]) -> Vec<u16> {
+    pub fn redact(&self, input: &[u16]) -> Vec<u16> {
         let mut candidates = vec![Candidate::default(); input.len()];
         let mut state = 0;
 
@@ -157,7 +269,52 @@ fn transition(nodes: &[Node], mut state: usize, unit: u16) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::SecretMatcher;
+    use super::{Redactor, SecretMatcher};
+
+    #[test]
+    fn streams_hold_secret_prefixes_and_redact_json_keys_and_values() {
+        let redactor = Redactor::new(vec![
+            "token".into(),
+            "token-value".into(),
+            "🔐secret".into(),
+        ])
+        .unwrap();
+        for text in [
+            "token-value then token",
+            "🔐secret [REDACTED]",
+            "token-valu",
+            "normal text",
+        ] {
+            for (boundary, _) in text.char_indices().chain(Some((text.len(), '\0'))) {
+                let mut stream = redactor.stream();
+                let mut output = stream.write(&text[..boundary]);
+                output.push_str(&stream.write(&text[boundary..]));
+                output.push_str(&stream.end());
+                assert_eq!(output, redactor.redact(text));
+            }
+        }
+        let mut stream = redactor.stream();
+        assert_eq!(stream.write("prefix to"), "prefix ");
+        assert_eq!(stream.write("ken-val"), "");
+        assert_eq!(stream.write("ue."), "[REDACTED].");
+        assert_eq!(stream.end(), "");
+        assert_eq!(
+            redactor.redact_json(&serde_json::json!({"token":["🔐secret",null,1]})),
+            serde_json::json!({"[REDACTED]":["[REDACTED]",null,1]})
+        );
+    }
+
+    #[test]
+    fn native_strings_select_safe_markers_and_preserve_unicode() {
+        let redactor =
+            Redactor::new(vec!["[REDACTED]".into(), "🔐token".into(), "".into()]).unwrap();
+        assert_eq!(
+            redactor.redact("🔐token [REDACTED] <hidden>"),
+            "<hidden> <hidden> <hidden>"
+        );
+        let redactor = Redactor::new(vec![]).unwrap();
+        assert_eq!(redactor.redact("unchanged 🔐"), "unchanged 🔐");
+    }
 
     fn units(value: &str) -> Vec<u16> {
         value.encode_utf16().collect()

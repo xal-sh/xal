@@ -58,6 +58,8 @@ bun install
 bun dev
 ```
 
+The side-by-side Rust rewrite starts at Phase 1; Phase 0 is not needed and is skipped/retired. Try `cargo run -p xal-rust -- --help` without Bun. This development host is not yet an agent or TUI replacement; see [native Rust development](docs/rust-development.md) for implemented foundations, checks, and remaining work.
+
 ## License
 
 Xal is available under the [MIT License](LICENSE).

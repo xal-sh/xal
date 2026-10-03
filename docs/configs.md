@@ -2,6 +2,8 @@
 
 Configure Xal globally for your user or locally for one project. This page explains configuration files, merge behavior, and the top-level schema. Follow the links in the option table for detailed behavior and examples.
 
+The side-by-side `xal-rust config-check` development command reads and merges these files, applies the exact-root trust gate, validates the core settings schema and stored credential profiles, and redacts its report. It never saves preferences, migrates data, loads external plugins, or validates feature-specific plugin settings. See [native Rust development](/docs/rust-development). The rest of this page describes the released `xal` application.
+
 ## File locations
 
 The app name comes from `apps/cli/package.json`. In the paths and commands below, `<name>` means that package name. The app home defaults to `~/.<name>` and can be overridden with the environment variable formed by upper-casing the package name, replacing non-alphanumeric characters with underscores, and appending `_HOME`.
