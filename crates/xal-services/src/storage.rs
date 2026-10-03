@@ -149,7 +149,9 @@ pub fn create_secure(path: &Path) -> io::Result<File> {
     use windows_sys::Win32::Foundation::{GENERIC_WRITE, INVALID_HANDLE_VALUE, LocalFree};
     use windows_sys::Win32::Security::Authorization::ConvertStringSecurityDescriptorToSecurityDescriptorW;
     use windows_sys::Win32::Security::SECURITY_ATTRIBUTES;
-    use windows_sys::Win32::Storage::FileSystem::{CREATE_NEW, CreateFileW, FILE_ATTRIBUTE_NORMAL};
+    use windows_sys::Win32::Storage::FileSystem::{
+        CREATE_NEW, CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ,
+    };
 
     let descriptor: Vec<u16> = "D:P(A;;FA;;;OW)(A;;FA;;;SY)\0".encode_utf16().collect();
     let mut security = std::ptr::null_mut();
@@ -176,7 +178,7 @@ pub fn create_secure(path: &Path) -> io::Result<File> {
         CreateFileW(
             path.as_ptr(),
             GENERIC_WRITE,
-            0,
+            FILE_SHARE_READ,
             &attributes,
             CREATE_NEW,
             FILE_ATTRIBUTE_NORMAL,

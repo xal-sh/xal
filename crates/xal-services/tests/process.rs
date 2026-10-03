@@ -317,7 +317,15 @@ fn detached_pipes_do_not_block_process_wait_or_global_shell_shutdown() {
         let mut wait = child.wait();
         let (sender, receiver) = mpsc::channel();
         let worker = std::thread::spawn(move || sender.send(wait.compute()).unwrap());
-        let result = receiver.recv_timeout(Duration::from_secs(2));
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let result = loop {
+            child.drain();
+            let result = receiver.recv_timeout(Duration::from_millis(10));
+            if !matches!(result, Err(mpsc::RecvTimeoutError::Timeout)) || Instant::now() >= deadline
+            {
+                break result;
+            }
+        };
         fixture.stop_detached();
         worker.join().unwrap();
         result.unwrap().unwrap();

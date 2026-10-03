@@ -30,6 +30,31 @@ fn key(value: &str) -> Credential {
 }
 
 #[test]
+fn secure_files_remain_readable_while_the_writer_is_open() {
+    use std::io::Write;
+
+    let fixture = Fixture::new();
+    let path = fixture.0.join("active.jsonl");
+    let mut writer = xal_services::storage::create_secure(&path).unwrap();
+    writer.write_all(b"first\n").unwrap();
+    writer.sync_data().unwrap();
+    assert_eq!(
+        xal_services::storage::read_text(&path).unwrap().as_deref(),
+        Some("first\n")
+    );
+    #[cfg(windows)]
+    {
+        assert!(fs::OpenOptions::new().write(true).open(&path).is_err());
+        assert!(fs::remove_file(&path).is_err());
+    }
+    writer.write_all(b"second\n").unwrap();
+    writer.sync_data().unwrap();
+    assert_eq!(fs::read_to_string(&path).unwrap(), "first\nsecond\n");
+    drop(writer);
+    assert_eq!(fs::read_to_string(&path).unwrap(), "first\nsecond\n");
+}
+
+#[test]
 fn settings_schema_and_secure_round_trip_preserve_unknown_fields_and_trust() {
     let fixture = Fixture::new();
     let home = fixture.0.join("home");

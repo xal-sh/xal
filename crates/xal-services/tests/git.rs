@@ -471,10 +471,17 @@ fn cancellation_kills_git_hook_descendants_and_rolls_back_creation() {
     )
     .unwrap();
     fs::set_permissions(&hook, fs::Permissions::from_mode(0o700)).unwrap();
-    let begin = Instant::now();
-    let error = create_managed_worktree(&fixture.request(), &|| started.exists()).unwrap_err();
+    let begin = std::cell::Cell::new(None);
+    let error = create_managed_worktree(&fixture.request(), &|| {
+        if !started.exists() {
+            return false;
+        }
+        begin.set(Some(begin.get().unwrap_or_else(Instant::now)));
+        true
+    })
+    .unwrap_err();
     assert_eq!(error.kind(), std::io::ErrorKind::Interrupted, "{error}");
-    assert!(begin.elapsed() < Duration::from_secs(2));
+    assert!(begin.get().unwrap().elapsed() < Duration::from_secs(2));
     std::thread::sleep(Duration::from_millis(2100));
     assert!(!leaked.exists());
     assert!(git(&fixture.root, &["branch", "--list", "xal/*"]).is_empty());
