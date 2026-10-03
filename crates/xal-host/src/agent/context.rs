@@ -1,13 +1,13 @@
 use serde_json::json;
 
-use super::{Agent, AgentEvent, AgentState, stream};
+use super::{Agent, AgentEvent, AgentState, history, intelligence, jev, stream};
 use crate::*;
 
-pub(super) fn tokens(text: &str) -> u64 {
+pub(crate) fn tokens(text: &str) -> u64 {
     (text.encode_utf16().count() as u64).div_ceil(4)
 }
 
-pub(super) fn item_tokens(item: &Item) -> u64 {
+pub(crate) fn item_tokens(item: &Item) -> u64 {
     let replay = match item {
         Item::AssistantMessage { replay, .. }
         | Item::Reasoning { replay, .. }
@@ -31,7 +31,7 @@ pub(super) fn item_tokens(item: &Item) -> u64 {
     text.max(replay)
 }
 
-fn estimate(request: &ProviderRequest) -> u64 {
+pub(crate) fn estimate(request: &ProviderRequest) -> u64 {
     tokens(&request.instructions)
         + tokens(&json!(request.tools).to_string())
         + request.input.iter().map(item_tokens).sum::<u64>()
@@ -45,34 +45,28 @@ fn truncate(text: &str, maximum: u64) -> Option<String> {
     if tokens(marker) > maximum {
         return None;
     }
-    let budget = maximum
-        .saturating_mul(4)
-        .saturating_sub(marker.encode_utf16().count() as u64);
-    let head = text
-        .chars()
-        .scan(budget.div_ceil(2), |remaining, ch| {
-            *remaining = remaining.checked_sub(ch.len_utf16() as u64)?;
-            Some(ch)
-        })
-        .collect::<String>();
-    let tail = text
-        .chars()
-        .rev()
-        .scan(budget / 2, |remaining, ch| {
-            *remaining = remaining.checked_sub(ch.len_utf16() as u64)?;
-            Some(ch)
-        })
-        .collect::<Vec<_>>()
-        .into_iter()
-        .rev()
-        .collect::<String>();
-    Some(format!("{head}{marker}{tail}"))
+    let mut low = 0usize;
+    let mut high = usize::try_from(maximum.saturating_mul(4)).unwrap_or(usize::MAX);
+    let mut result = marker.into();
+    while low < high {
+        let middle = low + (high - low).div_ceil(2);
+        let candidate = intelligence::middle(text, middle, marker);
+        if tokens(&candidate) <= maximum {
+            low = middle;
+            result = candidate;
+        } else {
+            high = middle - 1;
+        }
+    }
+    Some(result)
 }
 
 fn retained_users(items: &[Item], maximum: u64) -> Vec<Item> {
     let mut retained = Vec::new();
     let mut available = maximum;
-    for item in items.iter().rev() {
+    for original in items.iter().rev() {
+        let portable = history::omit_images(original);
+        let item = &portable;
         let Item::UserMessage {
             text,
             model_text,
@@ -134,19 +128,182 @@ impl Agent<'_> {
         if admitted < limit {
             return Ok(request);
         }
-        if !self
+        if self
             .history
             .iter()
-            .any(|item| !matches!(item, Item::UserMessage { .. }))
+            .all(|i| matches!(i, Item::UserMessage { .. }))
+            && admitted >= self.options.context_window
         {
             return Err(Error::Failed(format!(
-                "context overflow: request requires {admitted} tokens; compaction limit is {limit}"
+                "context overflow: request requires {admitted} tokens; context window is {}",
+                self.options.context_window
             )));
         }
+        self.compact_with(active, "auto", None, admitted).await?;
+        let request = self.request()?;
+        if estimate(&request) >= self.options.context_window {
+            return Err(Error::Failed(
+                "context overflow: replacement exceeds the context window".into(),
+            ));
+        }
+        Ok(request)
+    }
+
+    pub async fn compact(&mut self, focus: Option<&str>) -> Result<bool> {
+        let active = self.session.clone();
+        self.compact_with(&active, "manual", focus, estimate(&self.request()?))
+            .await
+    }
+
+    async fn compact_with(
+        &mut self,
+        active: &Session,
+        trigger: &'static str,
+        focus: Option<&str>,
+        admitted: u64,
+    ) -> Result<bool> {
+        active.cancellation.check()?;
+        if self.history.is_empty() || self.summarized {
+            return Ok(false);
+        }
+        self.state(AgentState::Compacting)?;
+        let before = self.history.clone();
+        let estimated = estimate(&self.request()?);
+        let service = self.host.decision_service();
+        if !matches!(service, Ok(None)) {
+            let result = async {
+                let service = service?.ok_or_else(|| Error::Failed("TypeSafe AI is off".into()))?;
+                let retained = tokio::time::timeout(
+                    std::time::Duration::from_secs(60),
+                    jev::prune(&before, &service, active, focus),
+                )
+                .await
+                .map_err(|_| Error::Failed("Jev timed out after 60 seconds".into()))??;
+                let mut next = self.request()?;
+                next.input = history::prepare(
+                    &retained,
+                    &self.options.provider,
+                    &self.options.model,
+                    self.options.image_input,
+                );
+                let limit = self
+                    .options
+                    .compaction_limit
+                    .unwrap_or(u64::MAX)
+                    .min(self.options.context_window.saturating_mul(4) / 5);
+                let after = estimate(&next);
+                if after as f64 >= estimated as f64 * 0.75 || after as f64 >= limit as f64 * 0.9 {
+                    return Err(Error::Failed("Jev did not free enough context".into()));
+                }
+                active.cancellation.check()?;
+                Ok(retained)
+            }
+            .await;
+            if let Err(error) = &result {
+                self.observe_compaction(trigger, "jev_v1", &Err(error.clone()), &before, admitted)?;
+            }
+            match result {
+                Ok(retained) => {
+                    self.commit_compaction(
+                        "jev_v1",
+                        "Jev pruned stale tool history; retained conversation text is unchanged.",
+                        before.len() - retained.len(),
+                        admitted,
+                        retained,
+                        &active.cancellation,
+                    )?;
+                    self.observe_compaction(trigger, "jev_v1", &Ok(()), &before, admitted)?;
+                    return Ok(true);
+                }
+                Err(error) => {
+                    active.cancellation.check()?;
+                    self.sink.emit(AgentEvent::Error { message: format!("Jev compaction: {error}; falling back to summary compaction. No Jev edits were applied.") })?;
+                }
+            }
+        }
+        let result = self.compact_summary(active, trigger, focus, admitted).await;
+        self.observe_compaction(trigger, "user_messages_v1", &result, &before, admitted)?;
+        result.map(|()| true)
+    }
+
+    fn observe_compaction(
+        &self,
+        trigger: &'static str,
+        strategy: &'static str,
+        result: &Result<()>,
+        before: &[Item],
+        admitted: u64,
+    ) -> Result<()> {
+        if let Some(recorder) = &self.host.recorder {
+            let retained = self
+                .history
+                .iter()
+                .filter(|i| {
+                    matches!(
+                        i,
+                        Item::UserMessage {
+                            message_id: Some(_),
+                            ..
+                        }
+                    )
+                })
+                .collect::<Vec<_>>();
+            let mut removed = std::collections::BTreeMap::new();
+            if result.is_ok() {
+                for item in before.iter().filter(|i| !self.history.contains(i)) {
+                    let key = match item {
+                        Item::UserMessage { .. } => "user_message",
+                        Item::AssistantMessage { .. } => "assistant_message",
+                        Item::Reasoning { .. } => "reasoning",
+                        Item::ToolCall { .. } => "tool_call",
+                        Item::ToolResult { .. } => "tool_result",
+                    };
+                    *removed.entry(key).or_insert(0) += 1;
+                }
+            }
+            recorder.compaction(
+                &self.session,
+                recording::CompactionShape {
+                    trigger,
+                    strategy,
+                    outcome: recording::Outcome::of(result),
+                    tokens_before: admitted,
+                    estimated_before: before.iter().map(item_tokens).sum(),
+                    estimated_after: self.history.iter().map(item_tokens).sum(),
+                    retained_authored_users: retained.len(),
+                    retained_authored_user_tokens: retained.iter().map(|i| item_tokens(i)).sum(),
+                    summary_estimated_tokens: if strategy == "user_messages_v1" && result.is_ok() {
+                        self.history.last().map_or(0, item_tokens)
+                    } else {
+                        0
+                    },
+                    removed,
+                },
+            )?;
+        }
+        Ok(())
+    }
+
+    async fn compact_summary(
+        &mut self,
+        active: &Session,
+        trigger: &str,
+        focus: Option<&str>,
+        admitted: u64,
+    ) -> Result<()> {
+        let request = self.request()?;
+        let estimated = estimate(&request);
         self.state(AgentState::Compacting)?;
         let mut summary_request = request.clone();
         summary_request.instructions = "You summarize coding session transcripts. Follow the instructions in the final user message and output only the summary.".into();
         summary_request.tools.clear();
+        let target = self.options.summary_target.as_ref();
+        if let Some(target) = target {
+            summary_request.model = target.model.clone();
+            summary_request.thinking = target.thinking.clone();
+        }
+        summary_request.cache_key =
+            history::cache_key(&self.options.model, &summary_request.instructions, &[]);
         summary_request.input = self
             .history
             .iter()
@@ -174,7 +331,20 @@ impl Agent<'_> {
             })
             .collect();
         summary_request.input.push(Item::user("Summarize this coding session transcript so the assistant can keep working after the older messages are dropped.\n\nWrite a dense, factual summary that lets the assistant continue without re-reading the removed history. Cover:\n\n1. What the user asked for, in their own terms, including every explicit instruction, constraint, and preference.\n2. What has been done so far, in order: files created, read, or modified with their paths, and the shape of each change.\n3. Commands that were run and what they revealed — test results, build failures, error messages worth remembering.\n4. Decisions that were made and why, including approaches that were rejected.\n5. The current state: what works, what is broken, what is half-finished.\n6. What comes next: the immediate task and any user request that has not been answered yet.\n\nRules:\n- Preserve exact identifiers: file paths, function and symbol names, command lines, error strings, and versions.\n- Do not invent anything that is not in the transcript, and do not soften or drop bad news.\n- Omit pleasantries and narration; write for a reader who must resume work immediately.\n- Output the summary only, with no preamble.".into()));
-        if estimate(&summary_request) >= self.options.context_window {
+        if let Some(focus) = focus
+            && let Some(Item::UserMessage { text, .. }) = summary_request.input.last_mut()
+        {
+            text.push_str(&format!("\n\nFocus the summary on: {focus}"));
+        }
+        summary_request.input = history::prepare(
+            &summary_request.input,
+            &self.options.provider,
+            &summary_request.model,
+            target.map_or(self.options.image_input, |t| t.image_input),
+        );
+        if estimate(&summary_request)
+            >= target.map_or(self.options.context_window, |t| t.context_window)
+        {
             return Err(Error::Failed(
                 "context overflow: transcript is too large for safe summary compaction".into(),
             ));
@@ -186,9 +356,16 @@ impl Agent<'_> {
             active,
             &self.control,
             &mut self.sink,
-            false,
+            if trigger == "auto" {
+                stream::Mode::AutoSummary
+            } else {
+                stream::Mode::ManualSummary
+            },
         )
         .await?;
+        if let Some(usage) = &summary.usage {
+            self.usage.get_or_insert_default().add(usage);
+        }
         summary.result?;
         active.cancellation.check()?;
         if summary
@@ -204,9 +381,7 @@ impl Agent<'_> {
         if summary.is_empty() {
             return Err(Error::Failed("provider returned an empty summary".into()));
         }
-        let checkpoint = Item::user(format!(
-            "The retained user requests and authoritative state summary below describe the coding work to continue.\n\n<conversation-summary>\n{summary}\n</conversation-summary>"
-        ));
+        let checkpoint = history::summary_message(&summary);
         let mut next = request;
         next.input = vec![checkpoint.clone()];
         let base = estimate(&next);
@@ -226,18 +401,40 @@ impl Agent<'_> {
         }
         active.cancellation.check()?;
         let replaced = self.history.iter().filter(|item| !matches!(item, Item::UserMessage { message_id: Some(id), .. } if retained.iter().any(|item| matches!(item, Item::UserMessage { message_id: Some(retained), .. } if id == retained)))).count();
-        if let Some(journal) = &mut self.sink.journal {
-            journal.append(&json!({"type":"item","item":{"type":"compaction","strategy":"user_messages_v1","summary":summary,"replaced":replaced,"tokensBefore":admitted,"retained":retained}}))?;
-        }
+        self.commit_compaction(
+            "user_messages_v1",
+            &summary,
+            replaced,
+            admitted,
+            replacement,
+            &active.cancellation,
+        )
+    }
+
+    fn commit_compaction(
+        &mut self,
+        strategy: &str,
+        summary: &str,
+        replaced: usize,
+        admitted: u64,
+        replacement: Vec<Item>,
+        cancellation: &Cancellation,
+    ) -> Result<()> {
+        let retained = if strategy == "user_messages_v1" {
+            &replacement[..replacement.len() - 1]
+        } else {
+            replacement.as_slice()
+        };
+        self.sink.checkpoint(
+            json!({"type":"item","item":{"type":"compaction","strategy":strategy,"summary":summary,"replaced":replaced,"tokensBefore":admitted,"retained":retained}}),
+            AgentEvent::Compacted { summary: summary.into(), replaced, tokens_before: admitted },
+            cancellation,
+        )?;
         self.history = replacement;
+        self.summarized = strategy == "user_messages_v1";
         self.context = None;
         self.measured_items = 0;
-        self.sink.emit(AgentEvent::Compacted {
-            summary,
-            replaced,
-            tokens_before: admitted,
-        })?;
-        Ok(next)
+        Ok(())
     }
 }
 

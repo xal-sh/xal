@@ -2,9 +2,12 @@ use tokio::sync::mpsc;
 
 use crate::{Cancellation, Error, Result};
 
+type Observer<T> = std::sync::Arc<dyn Fn(&T) -> Result<()> + Send + Sync>;
+
 pub struct Sender<T> {
     inner: mpsc::Sender<T>,
     cancellation: Cancellation,
+    observer: Option<Observer<T>>,
 }
 
 pub struct Receiver<T> {
@@ -21,6 +24,7 @@ pub fn channel<T>(capacity: usize, cancellation: Cancellation) -> Result<(Sender
         Sender {
             inner: sender,
             cancellation: cancellation.clone(),
+            observer: None,
         },
         Receiver {
             inner: receiver,
@@ -34,12 +38,20 @@ impl<T> Clone for Sender<T> {
         Self {
             inner: self.inner.clone(),
             cancellation: self.cancellation.clone(),
+            observer: self.observer.clone(),
         }
     }
 }
 
 impl<T> Sender<T> {
+    pub(crate) fn observe(mut self, observer: Observer<T>) -> Self {
+        self.observer = Some(observer);
+        self
+    }
     pub async fn send(&self, value: T) -> Result<()> {
+        if let Some(observer) = &self.observer {
+            observer(&value)?;
+        }
         self.cancellation.check()?;
         tokio::select! {
             biased;
@@ -49,6 +61,9 @@ impl<T> Sender<T> {
     }
 
     pub fn try_send(&self, value: T) -> Result<()> {
+        if let Some(observer) = &self.observer {
+            observer(&value)?;
+        }
         self.cancellation.check()?;
         self.inner.try_send(value).map_err(|error| match error {
             mpsc::error::TrySendError::Full(_) => Error::Failed("event queue full".into()),

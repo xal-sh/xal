@@ -147,6 +147,8 @@ impl Permissions {
                 .unwrap_or("")
                 .trim()
                 .to_owned()
+        } else if request.tool == "classify" {
+            "https://api.typesafe.ai/v1/systemone".into()
         } else if let Some(path) = request.args.get("file_path").and_then(Value::as_str) {
             display_path(&logical_path(cwd, path)?, cwd)
         } else {
@@ -253,7 +255,7 @@ fn matches(rule: &str, tool: &str, subject: &str) -> bool {
     !rule.contains(')') && wildcard(rule, tool)
 }
 
-fn logical_path(cwd: &Path, path: &str) -> Result<PathBuf> {
+pub(crate) fn logical_path(cwd: &Path, path: &str) -> Result<PathBuf> {
     let expanded = if path == "~" || path.starts_with("~/") {
         std::env::home_dir()
             .ok_or_else(|| Error::Failed("home directory unavailable".into()))?

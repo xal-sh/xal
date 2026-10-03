@@ -1,12 +1,16 @@
 use std::collections::{HashMap, VecDeque};
 
 pub struct Redactor {
+    state: std::sync::RwLock<Snapshot>,
+}
+
+struct Snapshot {
     matcher: SecretMatcher,
     protected: Vec<String>,
 }
 
-impl Redactor {
-    pub fn new(mut values: Vec<String>) -> Result<Self, &'static str> {
+impl Snapshot {
+    fn new(mut values: Vec<String>) -> Result<Self, &'static str> {
         values.retain(|value| !value.is_empty());
         let marker = ["[REDACTED]", "<hidden>", "***", "•••", "_"]
             .into_iter()
@@ -32,6 +36,24 @@ impl Redactor {
             )?,
             protected: values.into_iter().chain(Some(marker)).collect(),
         })
+    }
+}
+
+impl Redactor {
+    pub fn new(values: Vec<String>) -> Result<Self, &'static str> {
+        Ok(Self {
+            state: std::sync::RwLock::new(Snapshot::new(values)?),
+        })
+    }
+
+    pub fn protect(&self, values: Vec<String>) -> Result<(), &'static str> {
+        let mut state = self.state.write().map_err(|_| "redaction state poisoned")?;
+        let mut combined = state.protected[..state.protected.len().saturating_sub(1)].to_vec();
+        combined.extend(values);
+        combined.sort();
+        combined.dedup();
+        *state = Snapshot::new(combined)?;
+        Ok(())
     }
 
     pub fn stream(&self) -> RedactedStream<'_> {
@@ -60,6 +82,9 @@ impl Redactor {
     pub fn redact(&self, input: &str) -> String {
         String::from_utf16(
             &self
+                .state
+                .read()
+                .expect("redaction state poisoned")
                 .matcher
                 .redact(&input.encode_utf16().collect::<Vec<_>>()),
         )
@@ -75,8 +100,13 @@ pub struct RedactedStream<'a> {
 impl RedactedStream<'_> {
     pub fn write(&mut self, text: &str) -> String {
         self.pending.push_str(text);
+        let state = self
+            .redactor
+            .state
+            .read()
+            .expect("redaction state poisoned");
         let mut boundary = self.pending.len();
-        for value in &self.redactor.protected {
+        for value in &state.protected {
             for (length, _) in value.char_indices().skip(1) {
                 if self.pending.ends_with(&value[..length]) {
                     boundary = boundary.min(self.pending.len() - length);
@@ -85,7 +115,7 @@ impl RedactedStream<'_> {
         }
         loop {
             let previous = boundary;
-            for value in &self.redactor.protected {
+            for value in &state.protected {
                 for (start, _) in self
                     .pending
                     .char_indices()
@@ -102,7 +132,12 @@ impl RedactedStream<'_> {
             }
         }
         let tail = self.pending.split_off(boundary);
-        let output = self.redactor.redact(&self.pending);
+        let output = String::from_utf16(
+            &state
+                .matcher
+                .redact(&self.pending.encode_utf16().collect::<Vec<_>>()),
+        )
+        .expect("valid redacted Unicode");
         self.pending = tail;
         output
     }

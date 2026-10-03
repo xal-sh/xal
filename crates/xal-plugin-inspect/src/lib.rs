@@ -56,7 +56,8 @@ impl Plugin for Inspect {
                 description: "Read configuration foundations without exposing credentials".into(),
                 parameters: JsonObject::new(),
                 effects: Effects::read,
-                available: |_| true,
+                redact: None,
+                available: Box::new(|_| Ok(true)),
                 run: Box::new(|args, context| {
                     Box::pin(async move {
                         context.cancellation.check()?;

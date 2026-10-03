@@ -42,7 +42,7 @@ impl Plugin for Shell {
             description: "Execute foreground commands in a persistent shell without interactive rc files. cwd, exported variables and functions persist. Default timeout 120 seconds, maximum 600. On macOS sandbox read prevents writes, workspace permits workspace/temp writes, and both deny network. Read-sandbox calls may run concurrently in isolated shells. Background jobs are not available in this native phase.".into(),
             parameters: schema(parameters),
             effects: |args| if sandbox_available() && args.get("sandbox").and_then(Value::as_str) == Some("read") && args.get("background").and_then(Value::as_bool) != Some(true) { Effects::Read } else { Effects::Write },
-            available: |_| true,
+            redact: None, available: Box::new(|_| Ok(true)),
             run: Box::new(move |args, context| {
                 let manager = manager.clone();
                 Box::pin(async move {

@@ -28,7 +28,7 @@ impl Plugin for Search {
             }
             registration.tool(name, Tool {
                 description: if name == "grep" { "Search files with a Rust regular expression, honoring ignore rules. Returns up to 250 matching lines or file paths." } else { "List files matching a glob, honoring ignore rules. Up to 100 files, newest first." }.into(),
-                parameters: schema(parameters), effects: Effects::read, available: |_| true,
+                parameters: schema(parameters), effects: Effects::read, redact: None, available: Box::new(|_| Ok(true)),
                 run: Box::new(move |args, context| Box::pin(async move {
                     let cancelled = Arc::new(AtomicBool::new(false));
                     let flag = cancelled.clone();

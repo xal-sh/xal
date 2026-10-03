@@ -9,6 +9,8 @@ pub fn sandbox_available() -> bool {
 pub use conversation::*;
 pub use tools::PreparedTool;
 pub mod contracts;
+pub mod decisions;
+pub mod recording;
 mod registration;
 
 use std::collections::HashSet;
@@ -179,6 +181,8 @@ pub struct Host {
     failures: Vec<Failure>,
     permissions: Option<permissions::Permissions>,
     output: tools::OutputPolicy,
+    decision_settings: Option<decisions::Settings>,
+    pub recorder: Option<std::sync::Arc<recording::Recorder>>,
 }
 
 impl Host {
@@ -198,6 +202,8 @@ impl Host {
             failures: Vec::new(),
             permissions: None,
             output: tools::OutputPolicy::default(),
+            decision_settings: None,
+            recorder: None,
         }
     }
 
@@ -342,6 +348,9 @@ impl Host {
             session: session.clone(),
             cancellation: session.cancellation.child(),
             output: None,
+            speculative: false,
+            decisions: self.decision_service()?,
+            observation: None,
         };
         let cancellation = context.cancellation.clone();
         let _guard = cancellation.0.clone().drop_guard();
@@ -392,20 +401,65 @@ impl Host {
                 if !provider.models.contains(&request.model) {
                     return Err(Error::Failed("unknown provider model".into()));
                 }
+                let observation = self
+                    .recorder
+                    .as_ref()
+                    .map(|recorder| {
+                        recorder.start(
+                            name,
+                            &request.model,
+                            session,
+                            request.phase,
+                            request.thinking.as_deref(),
+                            request.attempt,
+                        )
+                    })
+                    .transpose()?;
+                let sender = if let Some(observation) = &observation {
+                    observation.shape(&request)?;
+                    let observation = observation.clone();
+                    sender.observe(std::sync::Arc::new(move |event| observation.event(event)))
+                } else {
+                    sender
+                };
                 let context = Context {
                     session: session.clone(),
                     cancellation: session.cancellation.child(),
                     output: None,
+                    speculative: false,
+                    decisions: None,
+                    observation: observation.clone(),
                 };
                 let cancellation = context.cancellation.clone();
                 let _guard = cancellation.0.clone().drop_guard();
-                run(
+                let result = run(
                     &entry.registration.cancellation,
                     run(&cancellation, async {
                         (provider.stream)(request, context, sender).await
                     }),
                 )
-                .await?;
+                .await;
+                let result = if let Some(settle) = &provider.settle {
+                    let settled = AssertUnwindSafe(async { settle().await })
+                        .catch_unwind()
+                        .await
+                        .unwrap_or_else(|_| {
+                            Err(Error::Failed("provider settlement panicked".into()))
+                        });
+                    match (result, settled) {
+                        (result, Ok(())) => result,
+                        (Ok(()), Err(error)) => Err(error),
+                        (Err(error), Err(settlement)) => Err(Error::Failed(format!(
+                            "{error}; provider settlement failed: {settlement}"
+                        ))),
+                    }
+                } else {
+                    result
+                };
+                if let Some(observation) = observation {
+                    observation.finish(&result)?;
+                }
+                result?;
                 return self.publish(Event::ProviderFinished {
                     session: session.id.clone(),
                     provider: name.into(),
@@ -421,6 +475,13 @@ impl Host {
         request: DecisionRequest,
         session: &Session,
     ) -> Result<DecisionResponse> {
+        if name == "typesafe" {
+            return self
+                .decision_service()?
+                .ok_or_else(|| Error::Failed("TypeSafe AI is off".into()))?
+                .evaluate(request, session)
+                .await;
+        }
         for entry in self.ready() {
             if let Some(handler) = entry.registration.decisions.get(name) {
                 return self.call(entry, handler, request, session).await;

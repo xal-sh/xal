@@ -113,7 +113,10 @@ impl Fixture {
             }
         }
         let mut result = Vec::new();
-        visit(&self.home, &mut result);
+        let sessions = self.home.join("sessions");
+        if sessions.exists() {
+            visit(&sessions, &mut result);
+        }
         result
     }
 }
@@ -260,6 +263,45 @@ fn events(output: &Output) -> Vec<Value> {
         .lines()
         .map(|line| serde_json::from_str(line).unwrap())
         .collect()
+}
+
+#[test]
+fn thinking_preferences_round_trip_the_selected_alias() {
+    let fixture = Fixture::new();
+    xal_services::storage::write_json(
+        &fixture.home.join("config.json"),
+        &json!({"provider":"openai","profile":"fixture","model":"gpt-5.6-1m"}),
+    )
+    .unwrap();
+    xal_services::storage::write_json(
+        &fixture.home.join("cache/openai-models-fixture.json"),
+        &json!({"version":1,"models":["gpt-5.6"]}),
+    )
+    .unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_xal-rust"))
+        .args(["thinking", "high"])
+        .env("XAL_HOME", &fixture.home)
+        .env("HOME", &fixture.home)
+        .current_dir(&fixture.cwd)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let saved = xal_services::storage::read_json(&fixture.home.join("config.json"))
+        .unwrap()
+        .unwrap();
+    assert_eq!(saved["thinking"]["openai"], json!({"gpt-5.6-1m":"high"}));
+    let server = Server::new(vec![answer("selected effort")]);
+    let output = fixture.run(&server, &["--model", "gpt-5.6-1m", "fixture prompt"], "");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(server.requests()[0]["reasoning"]["effort"], "high");
 }
 
 #[test]
@@ -474,7 +516,7 @@ fn context_overflow_refuses_before_provider_request() {
     let fixture = Fixture::new();
     fs::write(
         fixture.home.join("config.json"),
-        json!({"contextWindows":{"openai":{"gpt-4.1":100}}}).to_string(),
+        json!({"pluginConfig":{"openai":{"contextWindow":100}}}).to_string(),
     )
     .unwrap();
     let server = Server::new(Vec::new());

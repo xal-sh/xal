@@ -722,7 +722,7 @@ async function projectSession(file: string, contextWindow: number): Promise<Proj
   return { kind, events, toolTokens, automaticCompactions, emptyReplacementBoundaries }
 }
 
-async function profilerTurnObservations(path: string): Promise<ProfilerTurnObservation[]> {
+export async function profilerTurnObservations(path: string): Promise<ProfilerTurnObservation[]> {
   const observations: ProfilerTurnObservation[] = []
   for (const file of await jsonlFiles(path)) {
     const requests = new Map<string, { session: string; kind: SessionKind; phase: string }>()

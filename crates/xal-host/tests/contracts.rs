@@ -28,7 +28,8 @@ impl Plugin for Capabilities {
                 description: "read".into(),
                 parameters: JsonObject::new(),
                 effects: Effects::read,
-                available: |_| true,
+                redact: None,
+                available: Box::new(|_| Ok(true)),
                 run: Box::new(|args, _| {
                     Box::pin(async move {
                         Ok(ToolResult {
@@ -48,7 +49,8 @@ impl Plugin for Capabilities {
                 description: "write".into(),
                 parameters: JsonObject::new(),
                 effects: Effects::write,
-                available: |_| true,
+                redact: None,
+                available: Box::new(|_| Ok(true)),
                 run: Box::new(|_, _| Box::pin(async { panic!("must not execute denied tool") })),
             },
         )?;
@@ -94,6 +96,7 @@ impl Plugin for Capabilities {
         registration.provider(
             "local",
             Provider {
+                settle: None,
                 models: vec!["local".into()],
                 stream: Box::new(|request, _, output| {
                     Box::pin(async move {
@@ -114,7 +117,7 @@ impl Plugin for Capabilities {
         )?;
         registration.decision(
             "local",
-            Box::new(|_, _| Box::pin(async { Ok(DecisionResponse::new()) })),
+            Box::new(|_, _| Box::pin(async { Ok(DecisionResponse::default()) })),
         )?;
         if self.fail {
             panic!("registration failure")
@@ -233,6 +236,9 @@ async fn provider_stream_backpressure_cancellation_and_session_isolation() {
         tools: Vec::new(),
         thinking: None,
         cache_key: String::new(),
+        session_id: String::new(),
+        phase: xal_host::recording::Phase::Turn,
+        attempt: 1,
     };
     let (result, events) = tokio::join!(host.provider("local", request, &session, sender), async {
         let first = stream.recv().await.unwrap();
@@ -407,6 +413,7 @@ impl Plugin for CancelCallback {
         registration.provider(
             "cancel",
             Provider {
+                settle: None,
                 models: vec!["cancel".into()],
                 stream: Box::new(|_, context, _| {
                     Box::pin(async move {
@@ -446,6 +453,9 @@ async fn callback_local_cancellation_cannot_report_success_or_cancel_other_calls
                 tools: Vec::new(),
                 thinking: None,
                 cache_key: String::new(),
+                session_id: String::new(),
+                phase: xal_host::recording::Phase::Turn,
+                attempt: 1,
                 profile: None
             },
             &session,

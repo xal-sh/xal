@@ -178,6 +178,8 @@ impl Agent<'_> {
         let (updates, mut receiver) = channel(32, Cancellation::default())?;
         let mut results = Vec::new();
         let mut failure = None;
+        let mut sources = Vec::new();
+        let mut finished = Vec::new();
         for (index, call) in calls.into_iter().enumerate() {
             let title = call.title();
             let read_only = call.read_only();
@@ -233,6 +235,7 @@ impl Agent<'_> {
                     result = running.next(), if !running.is_empty() => {
                         let Some((index, id, name, args, title, read_only, result)) = result else { continue; };
                         while let Some(event) = receiver.try_recv()? { self.sink.emit(event)?; }
+                        let succeeded = result.is_ok();
                         let (output, denial) = match result {
                             Ok(result) => (result.output, None),
                             Err(Error::ApprovalRequired(_)) => ("This action needed approval but the session is headless, so it was not run.".into(), Some("policy".into())),
@@ -247,7 +250,10 @@ impl Agent<'_> {
                         self.loops.record(&name, &args, &output);
                         let output = storage::bound_output(&self.options.artifacts, &output, if name == "bash" { 20 * 1024 } else { 50 * 1024 })
                             .map_err(|error| Error::Failed(format!("Tool completed, but its output could not be saved: {error}")))?;
-                        self.sink.emit(AgentEvent::ToolFinished { call_id: id.clone(), tool: name, title, read_only, output: output.clone(), denial })?;
+                        let bounded = output.lines().any(|line| line.starts_with("... output truncated (") && line.ends_with(" bytes) ..."))
+                            && output.lines().last().is_some_and(|line| line.starts_with("Full output saved to: "));
+                        if succeeded && ["read", "grep", "glob"].contains(&name.as_str()) && !bounded && !output.starts_with("Tool failed: ") && !output.starts_with("Tool completed, but its output could not be saved: ") { sources.push((index, id.clone(), name.clone(), args, output.clone())); }
+                        finished.push((index, AgentEvent::ToolFinished { call_id: id.clone(), tool: name, title, read_only, output: output.clone(), denial }));
                         results.push((index, Item::ToolResult { call_id: id, output }));
                     }
                     () = self.control.changed.notified() => stream::queue_changed(&self.control, &mut self.sink)?,
@@ -261,6 +267,37 @@ impl Agent<'_> {
             while running.next().await.is_some() {}
         }
         observed?;
+        sources.sort_by_key(|(index, ..)| *index);
+        if let Some((_, target, ..)) = sources.last() {
+            let target = target.clone();
+            let trigger = super::read_ahead::Trigger::Tools(
+                sources
+                    .into_iter()
+                    .map(|(_, _, name, args, output)| (name, args, output))
+                    .collect(),
+            );
+            if let Some(text) = self.read_ahead(trigger, active).await? {
+                for (_, item) in &mut results {
+                    if let Item::ToolResult { call_id, output } = item
+                        && *call_id == target
+                    {
+                        output.push_str(&format!("\n\n{text}"));
+                    }
+                }
+                for (_, event) in &mut finished {
+                    if let AgentEvent::ToolFinished {
+                        call_id, output, ..
+                    } = event
+                        && *call_id == target
+                    {
+                        output.push_str(&format!("\n\n{text}"));
+                    }
+                }
+            }
+        }
+        for (_, event) in finished {
+            self.sink.emit(event)?;
+        }
         results.sort_by_key(|(index, _)| *index);
         for (_, item) in results {
             self.push(item)?;

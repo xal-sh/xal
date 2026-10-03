@@ -16,11 +16,11 @@ ignore = "=0.4.25"
 jsonschema = { version = "=0.37.4", default-features = false }
 getrandom = "=0.3.4"
 serde = { version = "=1.0.229", features = ["derive"] }
-serde_json = "=1.0.145"
+serde_json = { version = "=1.0.145", features = ["float_roundtrip"] }
 sha2 = "=0.10.9"
 
 [target.'cfg(unix)'.dependencies]
 libc = "=0.2.189"
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_Storage_FileSystem"] }
+windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_Storage_FileSystem", "Win32_System_Console", "Win32_System_Threading", "Win32_System_IO", "Win32_System_Pipes"] }

@@ -71,6 +71,72 @@ impl Sse {
     }
 }
 
+pub fn retry_after(value: &str, now: std::time::SystemTime) -> Option<u64> {
+    if let Ok(seconds) = value.trim().parse::<f64>() {
+        return (seconds.is_finite() && seconds >= 0.0)
+            .then(|| (seconds.min(120.0) * 1000.0).round() as u64);
+    }
+    let parts = value.split_whitespace().collect::<Vec<_>>();
+    let [_, day, month, year, time, "GMT"] = parts.as_slice() else {
+        return None;
+    };
+    let day = day.parse::<u64>().ok()?;
+    let month = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ]
+    .iter()
+    .position(|m| m == month)?;
+    let year = year
+        .parse::<u64>()
+        .ok()
+        .filter(|y| (1970..=9999).contains(y))?;
+    let leap = |year: u64| {
+        year.is_multiple_of(4) && (!year.is_multiple_of(100) || year.is_multiple_of(400))
+    };
+    let months = [
+        31,
+        if leap(year) { 29 } else { 28 },
+        31,
+        30,
+        31,
+        30,
+        31,
+        31,
+        30,
+        31,
+        30,
+        31,
+    ];
+    if day == 0 || day > months[month] {
+        return None;
+    }
+    let clock = time
+        .split(':')
+        .map(str::parse::<u64>)
+        .collect::<Result<Vec<_>, _>>()
+        .ok()?;
+    let [hour, minute, second] = clock.as_slice() else {
+        return None;
+    };
+    if *hour > 23 || *minute > 59 || *second > 59 {
+        return None;
+    }
+    let days = (1970..year)
+        .map(|y| if leap(y) { 366 } else { 365 })
+        .sum::<u64>()
+        + months[..month].iter().sum::<u64>()
+        + day
+        - 1;
+    let at = std::time::UNIX_EPOCH
+        + Duration::from_secs(days * 86400 + hour * 3600 + minute * 60 + second);
+    Some(
+        at.duration_since(now)
+            .unwrap_or_default()
+            .as_millis()
+            .min(120_000) as u64,
+    )
+}
+
 pub async fn json(mut response: Response, maximum: usize) -> io::Result<serde_json::Value> {
     let mut bytes = Vec::new();
     while let Some(chunk) = response.chunk().await.map_err(io::Error::other)? {
@@ -116,6 +182,21 @@ mod tests {
                 Some("final".into())
             );
             assert_eq!(stream.next().now_or_never().unwrap().unwrap(), None);
+        }
+    }
+
+    #[test]
+    fn retry_after_accepts_seconds_and_http_dates_with_a_bound() {
+        let now = std::time::UNIX_EPOCH + Duration::from_secs(784_111_777);
+        assert_eq!(retry_after("1.5", now), Some(1500));
+        assert_eq!(retry_after("900", now), Some(120000));
+        assert_eq!(
+            retry_after("Sun, 06 Nov 1994 08:49:38 GMT", now),
+            Some(1000)
+        );
+        assert_eq!(retry_after("Sun, 06 Nov 1994 08:49:36 GMT", now), Some(0));
+        for value in ["NaN", "-1", "invalid", "Sun, 31 Feb 1994 08:49:37 GMT"] {
+            assert_eq!(retry_after(value, now), None);
         }
     }
 

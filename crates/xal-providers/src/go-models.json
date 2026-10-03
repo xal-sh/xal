@@ -1,0 +1,56 @@
+[
+  {
+    "kind": "text",
+    "id": "glm-5",
+    "name": "GLM-5",
+    "contextWindow": 204800,
+    "inputModalities": ["text"],
+    "endpoint": "/chat/completions",
+    "maxTokens": 131072
+  },
+  {
+    "kind": "text",
+    "id": "kimi-k2.5",
+    "name": "Kimi K2.5",
+    "contextWindow": 262144,
+    "inputModalities": ["text"],
+    "endpoint": "/chat/completions",
+    "maxTokens": 262144
+  },
+  {
+    "kind": "text",
+    "id": "mimo-v2-pro",
+    "name": "MiMo-V2-Pro",
+    "contextWindow": 1048576,
+    "inputModalities": ["text"],
+    "endpoint": "/chat/completions",
+    "maxTokens": 131072
+  },
+  {
+    "kind": "text",
+    "id": "mimo-v2-omni",
+    "name": "MiMo-V2-Omni",
+    "contextWindow": 262144,
+    "inputModalities": ["text"],
+    "endpoint": "/chat/completions",
+    "maxTokens": 131072
+  },
+  {
+    "kind": "text",
+    "id": "hy3-preview",
+    "name": "Hy3 Preview",
+    "contextWindow": 256000,
+    "inputModalities": ["text"],
+    "endpoint": "/chat/completions",
+    "maxTokens": 64000
+  },
+  {
+    "kind": "text",
+    "id": "qwen3.5-plus",
+    "name": "Qwen3.5 Plus",
+    "contextWindow": 1000000,
+    "inputModalities": ["text"],
+    "endpoint": "/messages",
+    "maxTokens": 65536
+  }
+]

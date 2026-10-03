@@ -23,7 +23,7 @@ fn replay(redactor: &Redactor, value: &mut Option<Replay>) {
     }
 }
 
-pub(super) fn item(redactor: &Redactor, mut item: Item) -> Item {
+pub(super) fn item(host: &crate::Host, redactor: &Redactor, mut item: Item) -> crate::Result<Item> {
     match &mut item {
         Item::UserMessage {
             text, model_text, ..
@@ -51,8 +51,8 @@ pub(super) fn item(redactor: &Redactor, mut item: Item) -> Item {
             replay: data,
         } => {
             *call_id = redactor.redact(call_id);
+            *args = host.redact_arguments(name, args, redactor)?;
             *name = redactor.redact(name);
-            *args = object(redactor, args);
             replay(redactor, data);
         }
         Item::ToolResult { call_id, output } => {
@@ -60,7 +60,7 @@ pub(super) fn item(redactor: &Redactor, mut item: Item) -> Item {
             *output = redactor.redact(output);
         }
     }
-    item
+    Ok(item)
 }
 
 pub(super) fn event(redactor: &Redactor, mut event: AgentEvent) -> AgentEvent {

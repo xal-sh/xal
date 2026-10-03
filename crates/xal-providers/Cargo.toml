@@ -1,0 +1,21 @@
+[package]
+name = "xal-providers"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version = "1.92"
+
+[dependencies]
+xal-host = { path = "../xal-host" }
+xal-services = { path = "../xal-services" }
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.145"
+reqwest13 = { package = "reqwest", version = "=0.13.2", default-features = false, features = ["json", "rustls", "stream", "form"] }
+tokio = { version = "=1.50.0", features = ["rt", "time", "sync", "macros", "net", "io-util"] }
+futures-util = "=0.3.34"
+sha2 = "=0.10.9"
+base64 = "=0.22.1"
+getrandom = "=0.3.4"
+icu_collator = "=2.3.0"
+icu_locale_core = "=2.3.0"
+sys-locale = "=0.3.2"

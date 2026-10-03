@@ -50,7 +50,7 @@ impl Host {
             .ready()
             .flat_map(|entry| entry.registration.tools.iter())
         {
-            if !guarded(|| Ok((tool.available)(session)))? {
+            if !guarded(|| (tool.available)(session))? {
                 continue;
             }
             tools.push(ToolDefinition {
@@ -62,11 +62,40 @@ impl Host {
         Ok(tools)
     }
 
+    pub(crate) fn redact_arguments(
+        &self,
+        name: &str,
+        args: &JsonObject,
+        redactor: &xal_services::redactor::Redactor,
+    ) -> Result<JsonObject> {
+        if let Some(redact) = self
+            .ready()
+            .find_map(|entry| entry.registration.tools.get(name))
+            .and_then(|tool| tool.redact)
+        {
+            return guarded(|| redact(args, redactor));
+        }
+        Ok(args
+            .iter()
+            .map(|(key, value)| (redactor.redact(key), redactor.redact_json(value)))
+            .collect())
+    }
+
     pub async fn prepare_tool(
         &self,
         name: &str,
         args: JsonObject,
         session: &Session,
+    ) -> Result<PreparedTool> {
+        self.prepare_tool_with(name, args, session, false).await
+    }
+
+    async fn prepare_tool_with(
+        &self,
+        name: &str,
+        args: JsonObject,
+        session: &Session,
+        speculative: bool,
     ) -> Result<PreparedTool> {
         self.check()?;
         session.cancellation.check()?;
@@ -74,32 +103,29 @@ impl Host {
             .ready()
             .find_map(|entry| entry.registration.tools.get(name))
             .ok_or_else(|| Error::Failed(format!("unknown tool: {name}")))?;
-        if !guarded(|| Ok((tool.available)(session)))? {
+        if !guarded(|| (tool.available)(session))? {
             return Err(Error::Denied(format!(
                 "{name} is known but unavailable in this session"
             )));
         }
-        let HookInput::BeforeTool { args, .. } = self
-            .hook(
-                HookInput::BeforeTool {
-                    tool: name.into(),
-                    args,
-                },
-                session,
-            )
-            .await?
-        else {
-            return Err(Error::Failed("invalid before-tool hook result".into()));
-        };
-        let args = args
-            .iter()
-            .map(|(key, value)| {
-                (
-                    self.output.redactor.redact(key),
-                    self.output.redactor.redact_json(value),
+        let args = if speculative {
+            args
+        } else {
+            let HookInput::BeforeTool { args, .. } = self
+                .hook(
+                    HookInput::BeforeTool {
+                        tool: name.into(),
+                        args,
+                    },
+                    session,
                 )
-            })
-            .collect::<JsonObject>();
+                .await?
+            else {
+                return Err(Error::Failed("invalid before-tool hook result".into()));
+            };
+            args
+        };
+        let args = self.redact_arguments(name, &args, &self.output.redactor)?;
         xal_services::schema::validate(
             &Value::Object(tool.parameters.clone()),
             &Value::Object(args.clone()),
@@ -195,6 +221,17 @@ impl Host {
         session: &Session,
         output: Option<Sender<String>>,
     ) -> Result<ToolResult> {
+        self.execute_tool_with(prepared, session, output, false)
+            .await
+    }
+
+    async fn execute_tool_with(
+        &self,
+        prepared: PreparedTool,
+        session: &Session,
+        output: Option<Sender<String>>,
+        speculative: bool,
+    ) -> Result<ToolResult> {
         self.check()?;
         self.authorize_tool(&prepared, session).await?;
         session.cancellation.check()?;
@@ -209,6 +246,9 @@ impl Host {
             session: session.clone(),
             cancellation: cancellation.clone(),
             output: output.as_ref().map(|_| sender),
+            speculative,
+            decisions: self.decision_service()?,
+            observation: None,
         };
         let operation = async {
             AssertUnwindSafe(async { (tool.run)(prepared.args, context).await })
@@ -271,6 +311,11 @@ impl Host {
         let result = settled.ok_or_else(|| Error::Failed("tool result missing".into()))??;
         cancellation.check()?;
         cancellation.cancel();
+        if speculative {
+            return Ok(ToolResult {
+                output: self.output.redactor.redact(&result.output),
+            });
+        }
         self.finish_tool(&prepared.name, result, session).await
     }
 
@@ -382,6 +427,42 @@ impl Host {
             .await
     }
 
+    pub async fn prefetch_file(
+        &self,
+        path: &std::path::Path,
+        session: &Session,
+    ) -> Result<Option<String>> {
+        self.check()?;
+        session.cancellation.check()?;
+        let Some(tool) = self
+            .ready()
+            .find_map(|entry| entry.registration.tools.get("read"))
+        else {
+            return Ok(None);
+        };
+        if !guarded(|| (tool.available)(session))? {
+            return Ok(None);
+        }
+        let args = JsonObject::from_iter([(
+            "file_path".into(),
+            Value::String(path.to_string_lossy().into_owned()),
+        )]);
+        let prepared = self.prepare_tool_with("read", args, session, true).await?;
+        if prepared.effects != Effects::Read {
+            return Ok(None);
+        }
+        match self.authorize_tool(&prepared, session).await {
+            Err(Error::Denied(_) | Error::ApprovalRequired(_)) => return Ok(None),
+            result => result?,
+        }
+        match self.execute_tool_with(prepared, session, None, true).await {
+            Ok(result) => Ok(Some(result.output)),
+            Err(Error::Cancelled) => Err(Error::Cancelled),
+            Err(_) if session.cancellation.check().is_err() => Err(Error::Cancelled),
+            Err(_) => Ok(None),
+        }
+    }
+
     pub async fn dispose_session(&self, session: &Session) -> Result<()> {
         session.cancellation.cancel();
         let mut errors = Vec::new();
@@ -391,6 +472,9 @@ impl Host {
                     session: session.clone(),
                     cancellation: Cancellation::default(),
                     output: None,
+                    speculative: false,
+                    decisions: None,
+                    observation: None,
                 };
                 if let Err(error) = bounded_cleanup(async { dispose((), context).await }).await {
                     errors.push(error.to_string());

@@ -1,5 +1,5 @@
 use std::fs::File;
-use std::io::Write;
+use std::io::{Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 use serde_json::Value;
@@ -25,6 +25,35 @@ impl Journal {
         };
         journal.append(meta)?;
         Ok(journal)
+    }
+
+    pub(super) fn append_with(
+        &mut self,
+        values: &[Value],
+        deliver: impl FnOnce() -> Result<()>,
+    ) -> Result<()> {
+        let offset = self.file.stream_position().map_err(failure)?;
+        let result = (|| {
+            for value in values {
+                self.append(value)?;
+            }
+            deliver()
+        })();
+        if let Err(error) = result {
+            let rollback = (|| {
+                self.file.set_len(offset)?;
+                self.file.seek(SeekFrom::Start(offset))?;
+                self.file.sync_data()
+            })();
+            if let Err(rollback) = rollback {
+                self.failed = true;
+                return Err(failure(format!(
+                    "{error}; checkpoint rollback failed: {rollback}"
+                )));
+            }
+            return Err(error);
+        }
+        Ok(())
     }
 
     pub fn append(&mut self, value: &Value) -> Result<()> {
@@ -86,7 +115,7 @@ pub fn bound_output(directory: &Path, output: &str, maximum_bytes: usize) -> Res
     Ok(format!("{head}\n\n{notice}\n\n{tail}\n\n{recovery}"))
 }
 
-fn secure_directory(path: &Path) -> Result<()> {
+pub(crate) fn secure_directory(path: &Path) -> Result<()> {
     let mut builder = std::fs::DirBuilder::new();
     builder.recursive(true);
     #[cfg(unix)]

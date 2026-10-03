@@ -1,5 +1,5 @@
 [package]
-name = "xal-plugin-openai"
+name = "xal-plugin-providers"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -8,6 +8,5 @@ rust-version = "1.92"
 [dependencies]
 xal-host = { path = "../xal-host" }
 xal-services = { path = "../xal-services" }
+xal-providers = { path = "../xal-providers" }
 serde_json = "=1.0.145"
-futures-util = "=0.3.34"
-reqwest13 = { package = "reqwest", version = "=0.13.2", default-features = false, features = ["json", "rustls", "stream"] }

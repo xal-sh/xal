@@ -31,6 +31,7 @@ impl Plugin for Diagnostics {
         registration.provider(
             "diagnostic",
             Provider {
+                settle: None,
                 models: vec!["local-report".into()],
                 stream: Box::new(|request, context, sender| {
                     Box::pin(async move {
@@ -54,14 +55,14 @@ impl Plugin for Diagnostics {
         registration.decision("diagnostic", Box::new(|request, context| Box::pin(async move {
             context.cancellation.check()?;
             if request.model != "local-report" { return Err(Error::Failed("unknown diagnostic decision model".into())) }
-            let mut answers = DecisionResponse::new();
+            let mut answers = std::collections::BTreeMap::new();
             for (id, question) in request.questions {
                 match question {
-                    DecisionQuestion::Noul { .. } => { answers.insert(id, DecisionAnswer::Noul(if request.state.is_null() { 0.0 } else { 1.0 })); }
+                    DecisionQuestion::Noul { .. } => { answers.insert(id, DecisionAnswer::Noul { noul: if request.state.is_null() { 0.0 } else { 1.0 } }); }
                     DecisionQuestion::Choice { .. } | DecisionQuestion::Score { .. } => return Err(Error::Failed("local diagnostics only support availability decisions, not AI classification".into())),
                 }
             }
-            Ok(answers)
+            Ok(DecisionResponse { model: request.model, answers, usage: Usage::default() })
         })))?;
         registration.ui(
             "plain",

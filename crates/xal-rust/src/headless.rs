@@ -1,13 +1,19 @@
 use std::env;
-use std::io::{self, IsTerminal, Read, Write};
+use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 
 use serde_json::json;
 use xal_host::agent::{self, Agent, AgentEvent, Input, Journal, Options, Outcome};
 use xal_host::permissions::Permissions;
 use xal_host::*;
+use xal_providers::{
+    Id,
+    catalog::{self, Model},
+    client::Account,
+    profiles,
+};
 use xal_services::config::{Configuration, agent_home};
-use xal_services::credentials::{Credential, Credentials, Profile, new_id};
+use xal_services::credentials::{Credentials, new_id};
 use xal_services::paths::Paths;
 use xal_services::redactor::Redactor;
 use xal_services::settings::{Settings, ThinkingEffort, TypeSafeSettings};
@@ -28,6 +34,10 @@ struct Arguments {
     schema: Option<PathBuf>,
     prompt: Vec<String>,
     help: bool,
+    profile: bool,
+    continue_from: Option<PathBuf>,
+    compact: bool,
+    focus: Option<String>,
 }
 
 impl Arguments {
@@ -41,18 +51,24 @@ impl Arguments {
             schema: None,
             prompt: Vec::new(),
             help: false,
+            profile: false,
+            continue_from: None,
+            compact: false,
+            focus: None,
         };
         let mut index = 0;
         while index < args.len() {
             let arg = &args[index];
             match arg.as_str() {
                 "--help" | "-h" => options.help = true,
+                "--profile" => options.profile = true,
+                "--compact" => options.compact = true,
                 "--" => {
                     options.prompt.extend_from_slice(&args[index + 1..]);
                     break;
                 }
                 "--format" | "--mode" | "--provider" | "--connection" | "--model"
-                | "--output-schema" => {
+                | "--output-schema" | "--continue-from" | "--focus" => {
                     let value = args
                         .get(index + 1)
                         .filter(|value| !value.is_empty() && !value.starts_with("--"))
@@ -75,6 +91,8 @@ impl Arguments {
                         "--connection" => options.connection = Some(value.clone()),
                         "--model" => options.model = Some(value.clone()),
                         "--output-schema" => options.schema = Some(value.into()),
+                        "--continue-from" => options.continue_from = Some(value.into()),
+                        "--focus" => options.focus = Some(value.clone()),
                         _ => unreachable!(),
                     }
                     index += 1;
@@ -86,6 +104,12 @@ impl Arguments {
             }
             index += 1;
         }
+        if options.focus.is_some() && !options.compact {
+            return Err(failure("--focus requires --compact"));
+        }
+        if options.compact && options.continue_from.is_none() {
+            return Err(failure("--compact requires --continue-from"));
+        }
         Ok(options)
     }
 }
@@ -94,7 +118,7 @@ pub async fn run(args: &[String]) -> Result<u8> {
     let args = Arguments::parse(args)?;
     if args.help {
         print(
-            "usage: xal-rust run [--format text|json|jsonl] [--mode normal|plan|yolo|custom] [--provider openai] [--connection name] [--model id] [--output-schema file] [prompt]\n\nRun one prompt without the TUI. When prompt is omitted, read standard input.\nUses existing OpenAI API-key connections. Goals, background jobs, other providers and the TUI remain in later native phases.",
+            "usage: xal-rust run [--format text|json|jsonl] [--mode normal|plan|yolo|custom] [--provider id] [--connection name] [--model id] [--output-schema file] [--continue-from journal] [--compact [--focus text]] [--profile] [prompt]\n\nRun one prompt without the TUI. When prompt is omitted, read standard input.\nUses named API-key and OAuth connections. TypeSafe is a decision provider, not a text model. Goals, background jobs and the TUI remain in later native phases.",
         )?;
         return Ok(0);
     }
@@ -112,7 +136,28 @@ pub async fn run(args: &[String]) -> Result<u8> {
     let mut secrets = credentials.secrets();
     secrets.extend(config.redaction_values().map_err(failure)?);
     let redactor = std::sync::Arc::new(Redactor::new(secrets).map_err(failure)?);
-    let result = execute(&args, &config, &credentials, &home, &cwd, &redactor).await;
+    let cancellation = Cancellation::default();
+    let operation = execute(
+        &args,
+        &config,
+        &credentials,
+        &home,
+        &cwd,
+        &redactor,
+        &cancellation,
+    );
+    tokio::pin!(operation);
+    let result = tokio::select! {
+        biased;
+        signal = termination() => {
+            cancellation.cancel();
+            match operation.await {
+                Ok(_) | Err(Error::Cancelled) => Ok(signal?),
+                Err(error) => Err(error),
+            }
+        }
+        result = &mut operation => result,
+    };
     match result {
         Ok(code) => Ok(code),
         Err(error) => setup_failure(args.format, &redactor.redact(&error.to_string())),
@@ -126,15 +171,10 @@ async fn execute(
     home: &Path,
     cwd: &Path,
     redactor: &std::sync::Arc<Redactor>,
+    cancellation: &Cancellation,
 ) -> Result<u8> {
     if config.has_external_plugins() {
         return Err(Error::Failed("configured external plugins are unavailable in the native development executable; use xal until P07".into()));
-    }
-    if matches!(
-        config.settings.typesafe_ai,
-        TypeSafeSettings::Enabled { .. }
-    ) {
-        return Err(Error::Failed("TypeSafe context behavior is unavailable in the native headless phase; use xal until P03".into()));
     }
     let schema = args
         .schema
@@ -160,8 +200,7 @@ async fn execute(
                 "usage: xal-rust run [options] [prompt]".into(),
             ));
         }
-        let mut prompt = String::new();
-        io::stdin().read_to_string(&mut prompt).map_err(failure)?;
+        let prompt = crate::accounts::input(xal_services::secret::Mode::Text, cancellation).await?;
         if prompt.trim().is_empty() {
             return Err(Error::Failed("prompt from standard input was empty".into()));
         }
@@ -172,36 +211,94 @@ async fn execute(
             "headless /goal workflows are unavailable in the native executable until P05".into(),
         ));
     }
-    let profile = profile(args, &config.settings, credentials)?;
-    let key = match credentials
-        .credential("openai", &profile.id)
-        .map_err(failure)?
-    {
-        Some(Credential::ApiKey { key }) => key.clone(),
-        _ => {
-            return Err(Error::Failed(
-                "OpenAI API requires an API-key connection; OAuth providers are part of P03".into(),
-            ));
-        }
-    };
-    let endpoint =
-        env::var("XAL_OPENAI_BASE_URL").unwrap_or_else(|_| "https://api.openai.com/v1".into());
+    let profile = profiles::select(
+        &config.settings,
+        credentials,
+        args.provider.as_deref(),
+        args.connection.as_deref(),
+    )?;
+    let provider = Id::parse(&profile.provider)?;
+    if provider == Id::TypeSafe {
+        return Err(failure(
+            "TypeSafe is a decision provider, not a harness model",
+        ));
+    }
+    let client = crate::accounts::client(
+        provider,
+        Account::Profile {
+            home: home.into(),
+            id: profile.id.clone(),
+        },
+        &config.settings,
+        redactor.clone(),
+    )?;
     let configured_model = if args.provider.is_none() && args.connection.is_none() {
         config.settings.model.clone()
     } else {
         None
     };
-    let model = match args.model.clone().or(configured_model) {
-        Some(model) if !model.trim().is_empty() => model,
-        Some(_) => return Err(Error::Failed("model must not be empty".into())),
-        None => {
-            let (model, warning) =
-                xal_plugin_openai::default_model(&key, &endpoint, home, &profile.id).await?;
-            if let Some(warning) = warning {
-                diagnostic(&redactor.redact(&warning))?;
-            }
-            model
+    let selected = args.model.clone().or(configured_model);
+    let mut models = if selected.is_some() && provider != Id::Copilot {
+        let catalog = client.local_catalog(home, &profile.id)?;
+        if let Some(warning) = catalog.warning {
+            diagnostic(&redactor.redact(&warning))?;
         }
+        catalog.models
+    } else {
+        let catalog = client
+            .catalog(home, &profile.id, false, cancellation)
+            .await?;
+        if let Some(warning) = catalog.warning {
+            diagnostic(&redactor.redact(&warning))?;
+        }
+        catalog.models
+    };
+    let model = match selected {
+        Some(model) => model,
+        None => catalog::default_model(provider, &models, env::var("XAL_MODEL").ok().as_deref())?,
+    };
+    if model.trim().is_empty() {
+        return Err(failure("model must not be empty"));
+    }
+    let info = catalog::configured(
+        provider,
+        &models,
+        &model,
+        client.context_cap,
+        &config.settings,
+    )?;
+    let thinking = thinking(&config.settings, provider, &info);
+    let compaction_limit = info.auto_compact_token_limit;
+    if !models.iter().any(|m| m.id == model) {
+        models.push(info.clone());
+    }
+    let summary_info =
+        if provider == Id::ChatGpt && info.supports_fast == Some(true) && !model.ends_with("-fast")
+        {
+            catalog::configured(
+                provider,
+                &models,
+                &format!("{model}-fast"),
+                client.context_cap,
+                &config.settings,
+            )?
+        } else {
+            info.clone()
+        };
+    if !models.iter().any(|m| m.id == summary_info.id) {
+        models.push(summary_info.clone());
+    }
+    let summary_target = agent::SummaryTarget {
+        model: summary_info.id.clone(),
+        thinking: summary_info.thinking.as_ref().map(|t| {
+            if t.options.iter().any(|o| o == "low") {
+                "low".into()
+            } else {
+                t.default.clone()
+            }
+        }),
+        image_input: summary_info.input_modalities.iter().any(|m| m == "image"),
+        context_window: summary_info.context_window.unwrap_or(u64::MAX / 5),
     };
     let mode = args
         .mode
@@ -211,20 +308,44 @@ async fn execute(
     let permissions = Permissions::load(&config.settings, home, cwd, mode)?;
     let read_only = permissions.read_only;
     let guidance = permissions.guidance.clone();
-    let cancellation = Cancellation::default();
-    let mut host = Host::new(
-        vec![
-            Box::new(xal_plugin_workspace::Files),
-            Box::new(xal_plugin_workspace::Search),
-            Box::new(xal_plugin_workspace::Shell),
-            Box::new(xal_plugin_openai::OpenAi::new(
-                key,
-                model.clone(),
-                endpoint,
-            )?),
-        ],
-        cancellation.clone(),
-    );
+    let mut plugins: Vec<Box<dyn Plugin>> = vec![
+        Box::new(xal_plugin_workspace::Files),
+        Box::new(xal_plugin_workspace::Search),
+        Box::new(xal_plugin_workspace::Shell),
+        Box::new(xal_plugin_providers::TextProvider { client, models }),
+        Box::new(xal_plugin_classify::Classify {
+            home: home.into(),
+            cwd: cwd.into(),
+        }),
+    ];
+    let decision_profile = match &config.settings.typesafe_ai {
+        TypeSafeSettings::Enabled { profile } => Some(profile.clone()),
+        TypeSafeSettings::Disabled { profile } => profile.clone(),
+    };
+    if let Some(profile) = &decision_profile {
+        plugins.push(Box::new(xal_plugin_providers::TypeSafe(
+            crate::accounts::client(
+                Id::TypeSafe,
+                Account::Profile {
+                    home: home.into(),
+                    id: profile.clone(),
+                },
+                &config.settings,
+                redactor.clone(),
+            )?,
+        )));
+    }
+    let mut host = Host::new(plugins, cancellation.clone());
+    let recorder = recording::Recorder::new(home, args.profile, redactor.clone())?;
+    host.recorder = Some(recorder.clone());
+    if let Some(profile) = decision_profile {
+        host.decision_policy(decisions::Settings {
+            home: home.into(),
+            cwd: cwd.into(),
+            profile,
+            redactor: redactor.clone(),
+        });
+    }
     host.permissions(permissions);
     host.output_policy(
         redactor.clone(),
@@ -238,11 +359,12 @@ async fn execute(
         let directory = Paths { home: home.into() }.project_sessions(cwd, redactor).map_err(failure)?;
         let session = host.session(id.clone(), cwd.into(), SessionKind::Headless, read_only)?;
         let options = Options {
-            provider: "openai".into(), profile: Some(profile.id.clone()), model: model.clone(), mode: mode.into(),
+            provider: provider.as_str().into(), profile: Some(profile.id.clone()), model: model.clone(), mode: mode.into(),
             instructions: crate::prompt::instructions(cwd, mode, read_only, &guidance),
-            thinking: thinking(&config.settings, &model),
-            context_window: configured_count(&config.settings.context_windows, &model).unwrap_or_else(|| xal_plugin_openai::context_window(&model)),
-            compaction_limit: configured_count(&config.settings.compaction_limits, &model), output_schema: schema, artifacts: directory.join(&id),
+            thinking,
+            context_window: info.context_window.unwrap_or(u64::MAX / 5),
+            image_input: info.input_modalities.iter().any(|m| m == "image"), summary_target: Some(summary_target),
+            compaction_limit, output_schema: schema, artifacts: directory.join(&id),
         };
         let journal = Journal::create(&directory.join(format!("{id}.jsonl")), &agent::metadata(&session, &options, redactor)?)?;
         let mut receive = |event: AgentEvent| -> Result<()> {
@@ -255,21 +377,13 @@ async fn execute(
             }
         };
         let mut agent = Agent::new(&host, session, options, redactor, Some(journal), &mut receive)?;
-        let control = agent.control();
-        let operation = agent.run(Input { text: prompt, images: Vec::new() });
-        tokio::pin!(operation);
-        let (outcome, exit) = tokio::select! {
-            biased;
-            signal = termination() => {
-                control.interrupt();
-                let result = operation.await;
-                (result?, Some(signal?))
-            }
-            result = &mut operation => (result?, None),
-        };
-        Ok((id, outcome, exit))
+        if let Some(path) = &args.continue_from { agent.restore(&xal_services::records::read_journal(path).map_err(failure)?)?; }
+        if args.compact { agent.compact(args.focus.as_deref()).await?; }
+        let outcome = agent.run(Input { text: prompt, images: Vec::new() }).await?;
+        Ok((id, outcome))
     }.await;
     host.shutdown().await;
+    recorder.flush()?;
     let failures = host
         .failures()
         .iter()
@@ -279,12 +393,12 @@ async fn execute(
     if !failures.is_empty() {
         return Err(Error::Failed(redactor.redact(&failures)));
     }
-    let (id, outcome, exit) = result?;
+    let (id, outcome) = result?;
     match args.format {
         Format::Json => {
             let mut value = serde_json::to_value(&outcome).map_err(failure)?;
             value["sessionId"] = json!(id);
-            value["provider"] = json!("openai");
+            value["provider"] = json!(provider);
             value["model"] = json!(redactor.redact(&model));
             print(&value.to_string())?;
         }
@@ -298,11 +412,11 @@ async fn execute(
             Outcome::Interrupted { .. } => {}
         },
     }
-    Ok(exit.unwrap_or_else(|| outcome.exit_code()))
+    Ok(outcome.exit_code())
 }
 
 #[cfg(unix)]
-async fn termination() -> Result<u8> {
+pub(crate) async fn termination() -> Result<u8> {
     use tokio::signal::unix::{SignalKind, signal};
     let mut interrupt = signal(SignalKind::interrupt()).map_err(failure)?;
     let mut terminate = signal(SignalKind::terminate()).map_err(failure)?;
@@ -317,89 +431,16 @@ async fn termination() -> Result<u8> {
 }
 
 #[cfg(not(unix))]
-async fn termination() -> Result<u8> {
+pub(crate) async fn termination() -> Result<u8> {
     tokio::signal::ctrl_c().await.map_err(failure)?;
     Ok(130)
 }
 
-fn profile(args: &Arguments, settings: &Settings, credentials: &Credentials) -> Result<Profile> {
-    let profiles = credentials.profiles();
-    let named = args
-        .connection
-        .as_ref()
-        .map(|name| {
-            profiles
-                .iter()
-                .find(|profile| profile.name.to_lowercase() == name.trim().to_lowercase())
-                .cloned()
-                .ok_or_else(|| Error::Failed(format!("unknown connection: {name}")))
-        })
-        .transpose()?;
-    if let Some(profile) = &named
-        && args
-            .provider
-            .as_ref()
-            .is_some_and(|provider| provider != &profile.provider)
-    {
-        return Err(Error::Failed(format!(
-            "connection {} belongs to {}, not {}",
-            profile.name,
-            profile.provider,
-            args.provider.as_deref().unwrap_or("")
-        )));
-    }
-    let configured = profiles
-        .iter()
-        .find(|profile| Some(&profile.id) == settings.profile.as_ref());
-    let provider = args
-        .provider
-        .as_deref()
-        .or_else(|| named.as_ref().map(|profile| profile.provider.as_str()))
-        .or_else(|| configured.map(|profile| profile.provider.as_str()))
-        .or(settings.provider.as_deref())
-        .unwrap_or("openai");
-    if provider != "openai" {
-        return Err(Error::Failed(format!(
-            "provider {provider} is unavailable in the native headless phase; only OpenAI API Responses is implemented"
-        )));
-    }
-    if let Some(profile) = named {
-        return Ok(profile);
-    }
-    if let Some(profile) = configured.filter(|profile| profile.provider == provider) {
-        return Ok(profile.clone());
-    }
-    let available = profiles
-        .iter()
-        .filter(|profile| profile.provider == provider)
-        .cloned()
-        .collect::<Vec<_>>();
-    match available.as_slice() {
-        [profile] => Ok(profile.clone()),
-        [] => Err(Error::Failed(
-            "OpenAI is not connected; connect an API-key profile with xal first".into(),
-        )),
-        _ => Err(Error::Failed(
-            "OpenAI has multiple connections; select one with --connection".into(),
-        )),
-    }
-}
-
-fn configured_count(
-    values: &std::collections::BTreeMap<String, std::collections::BTreeMap<String, f64>>,
-    model: &str,
-) -> Option<u64> {
-    values
-        .get("openai")
-        .and_then(|models| models.get(model))
-        .map(|value| *value as u64)
-}
-
-fn thinking(settings: &Settings, model: &str) -> Option<String> {
+fn thinking(settings: &Settings, provider: Id, model: &Model) -> Option<String> {
     settings
         .thinking
-        .get("openai")
-        .and_then(|models| models.get(model))
+        .get(provider.as_str())
+        .and_then(|models| models.get(&model.id))
         .map(|effort| {
             match effort {
                 ThinkingEffort::None => "none",
@@ -411,7 +452,13 @@ fn thinking(settings: &Settings, model: &str) -> Option<String> {
             }
             .into()
         })
-        .or_else(|| xal_plugin_openai::default_thinking(model).map(str::to_owned))
+        .filter(|effort| {
+            model
+                .thinking
+                .as_ref()
+                .is_some_and(|t| t.options.contains(effort))
+        })
+        .or_else(|| model.thinking.as_ref().map(|t| t.default.clone()))
 }
 
 fn setup_failure(format: Format, message: &str) -> Result<u8> {

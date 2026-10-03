@@ -3,6 +3,8 @@ import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { isRecord } from "../../apps/cli/src/lib/json"
 import { loadSession } from "../../apps/cli/src/sessions/store"
+import { readProviderUsageSummary } from "../../apps/cli/src/usage/summary"
+import { profilerTurnObservations } from "../context-efficiency"
 
 const binary = resolve(process.argv[2] ?? "target/debug/xal-rust")
 const root = await mkdtemp(join(tmpdir(), "xal-native-headless-"))
@@ -94,18 +96,21 @@ try {
       },
     })
     try {
-      const child = Bun.spawn([binary, "run", "--format", "jsonl", "--model", "gpt-4.1", "fixture prompt"], {
-        cwd: workspace,
-        env: {
-          ...process.env,
-          HOME: home,
-          XAL_HOME: home,
-          XAL_OPENAI_BASE_URL: `http://127.0.0.1:${server.port}/v1`,
-          NO_PROXY: "*",
+      const child = Bun.spawn(
+        [binary, "run", "--profile", "--format", "jsonl", "--model", "gpt-4.1", "fixture prompt"],
+        {
+          cwd: workspace,
+          env: {
+            ...process.env,
+            HOME: home,
+            XAL_HOME: home,
+            XAL_OPENAI_BASE_URL: `http://127.0.0.1:${server.port}/v1`,
+            NO_PROXY: "*",
+          },
+          stdout: "pipe",
+          stderr: "pipe",
         },
-        stdout: "pipe",
-        stderr: "pipe",
-      })
+      )
       const timeout = setTimeout(() => child.kill("SIGKILL"), 20000)
       let stdout: string
       let stderr: string
@@ -138,9 +143,11 @@ try {
       }
       if (rounds !== (compact ? 2 : 4) || tools !== (compact ? 1 : 3) || outputTokens !== rounds * 5)
         throw new Error("eval usage observation did not match")
-      const journals = (await readdir(home, { recursive: true })).filter((name) => name.endsWith(".jsonl"))
+      const journals = (await readdir(join(home, "sessions"), { recursive: true })).filter((name) =>
+        name.endsWith(".jsonl"),
+      )
       if (journals.length !== 1) throw new Error("missing native session journal")
-      const path = join(home, journals[0]!)
+      const path = join(home, "sessions", journals[0]!)
       const before = await readFile(path, "utf8")
       const session = await loadSession(path)
       if (
@@ -150,6 +157,17 @@ try {
         session.items.at(-1)?.type !== "assistant_message"
       )
         throw new Error("legacy reader rejected native session")
+      const profile = await profilerTurnObservations(join(home, "profiler"))
+      if (profile.length !== 1 || profile[0]?.kind !== "primary" || profile[0].turns[0]?.length !== rounds)
+        throw new Error("legacy profiler reader rejected native request/turn boundaries")
+      const usage = await readProviderUsageSummary(join(home, "usage"), session.meta.id)
+      if (
+        usage.session.outputTokens !== replies.length * 5 ||
+        usage.allTime.totalInputTokens !== replies.length * 100 ||
+        usage.weekly.requests !== replies.length ||
+        usage.daily.reduce((total, day) => total + day.requests, 0) !== replies.length
+      )
+        throw new Error("legacy usage reader rejected native accounting or calendar attribution")
       if (before !== (await readFile(path, "utf8"))) throw new Error("legacy reader repaired a native journal")
       if (before.includes("synthetic-key")) throw new Error("credential leaked to journal")
       if (!compact && (await readFile(join(workspace, "sample.txt"), "utf8")) !== "after\n")
@@ -158,7 +176,9 @@ try {
       await server.stop(true)
     }
   }
-  console.log("Native read/edit/verify, compaction, eval JSONL, and legacy session reader passed with synthetic homes")
+  console.log(
+    "Native read/edit/verify, compaction, eval JSONL, and legacy session/usage/profiler readers passed with synthetic homes",
+  )
 } finally {
   await rm(root, { recursive: true, force: true })
 }

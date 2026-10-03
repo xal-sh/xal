@@ -9,6 +9,7 @@ pub mod records;
 pub mod redactor;
 pub mod schema;
 pub mod search;
+pub mod secret;
 pub mod settings;
 pub mod shell;
 pub mod storage;

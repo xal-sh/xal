@@ -1,7 +1,11 @@
-mod context;
+pub(crate) mod context;
 mod control;
 mod events;
+pub mod history;
+mod intelligence;
+mod jev;
 mod loops;
+mod read_ahead;
 mod redaction;
 mod sink;
 pub(crate) mod storage;
@@ -23,6 +27,13 @@ pub use storage::Journal;
 use crate::*;
 use sink::{Sink, failure};
 
+pub struct SummaryTarget {
+    pub model: String,
+    pub thinking: Option<String>,
+    pub image_input: bool,
+    pub context_window: u64,
+}
+
 pub struct Options {
     pub provider: String,
     pub profile: Option<String>,
@@ -31,6 +42,8 @@ pub struct Options {
     pub instructions: String,
     pub thinking: Option<String>,
     pub context_window: u64,
+    pub image_input: bool,
+    pub summary_target: Option<SummaryTarget>,
     pub compaction_limit: Option<u64>,
     pub output_schema: Option<JsonObject>,
     pub artifacts: PathBuf,
@@ -47,6 +60,7 @@ pub struct Agent<'a> {
     usage: Option<Usage>,
     context: Option<Usage>,
     measured_items: usize,
+    summarized: bool,
     loops: loops::ToolLoops,
 }
 
@@ -78,6 +92,7 @@ impl<'a> Agent<'a> {
             session,
             options,
             sink: Sink {
+                host,
                 redactor,
                 journal,
                 receive,
@@ -88,6 +103,7 @@ impl<'a> Agent<'a> {
             usage: None,
             context: None,
             measured_items: 0,
+            summarized: false,
             loops: loops::ToolLoops::default(),
         })
     }
@@ -98,6 +114,40 @@ impl<'a> Agent<'a> {
 
     pub fn history(&self) -> &[Item] {
         &self.history
+    }
+
+    pub fn restore(&mut self, records: &[xal_services::records::Record]) -> Result<()> {
+        if !self.history.is_empty() {
+            return Err(failure("cannot replace an active conversation"));
+        }
+        let items = history::active(records)?;
+        let checkpoint = records
+            .iter()
+            .rev()
+            .find(|r| r.kind() == xal_services::records::RecordKind::Item)
+            .filter(|r| {
+                r.payload()["item"]["type"] == "compaction"
+                    && r.payload()["item"]["strategy"] == "user_messages_v1"
+            });
+        if let Some(checkpoint) = checkpoint {
+            let items = items
+                .into_iter()
+                .map(|item| redaction::item(self.host, self.sink.redactor, item))
+                .collect::<Result<Vec<_>>>()?;
+            let mut checkpoint = checkpoint.payload()["item"].clone();
+            checkpoint["retained"] = json!(&items[..items.len() - 1]);
+            checkpoint["summary"] = self.sink.redactor.redact_json(&checkpoint["summary"]);
+            if let Some(journal) = &mut self.sink.journal {
+                journal.append(&json!({"type":"item","item":checkpoint}))?;
+            }
+            self.history = items;
+            self.summarized = true;
+            return Ok(());
+        }
+        for item in items {
+            self.push(item)?;
+        }
+        Ok(())
     }
 
     pub async fn run(&mut self, input: Input) -> Result<Outcome> {
@@ -125,6 +175,9 @@ impl<'a> Agent<'a> {
                 .redact_json(&serde_json::from_str(&value).map_err(failure)?),
             None => Value::String(self.sink.response.clone()),
         };
+        if let Some(recorder) = &self.host.recorder {
+            recorder.turn(&self.session, &result, self.context.as_ref())?;
+        }
         let outcome = match result {
             Ok(()) => {
                 self.sink.emit(AgentEvent::TurnEnded {
@@ -165,7 +218,7 @@ impl<'a> Agent<'a> {
         self.sink.emit(AgentEvent::SessionStarted {
             id: self.session.id.clone(),
             cwd: self.session.cwd.to_string_lossy().into_owned(),
-            resumed: false,
+            resumed: !self.history.is_empty(),
             provider: self.options.provider.clone(),
             profile: self.options.profile.clone(),
             model: self.options.model.clone(),
@@ -206,7 +259,7 @@ impl<'a> Agent<'a> {
                 &active,
                 &self.control,
                 &mut self.sink,
-                true,
+                stream::Mode::Turn,
             )
             .await?;
             let calls = round
@@ -281,13 +334,12 @@ impl<'a> Agent<'a> {
     }
 
     async fn input(&mut self, input: Input) -> Result<()> {
-        if !input.images.is_empty() {
-            return Err(Error::Failed(
-                "image input is unavailable in the native headless phase".into(),
-            ));
+        if !input.images.is_empty() && !self.options.image_input {
+            return Err(failure("selected model does not support image input"));
         }
+        xal_services::records::Record::parse(&json!({"type":"item","item":{"type":"user_message","text":input.text,"images":input.images}}).to_string()).map_err(failure)?;
         self.state(AgentState::RunningHook)?;
-        let HookInput::Prompt { text } = self
+        let HookInput::Prompt { mut text } = self
             .host
             .hook(
                 HookInput::Prompt {
@@ -299,23 +351,33 @@ impl<'a> Agent<'a> {
         else {
             return Err(Error::Failed("invalid prompt hook result".into()));
         };
+        if let Some(prefetched) = self
+            .read_ahead(
+                read_ahead::Trigger::Prompt(text.clone()),
+                &self.session.clone(),
+            )
+            .await?
+        {
+            text = format!("{text}\n\n{prefetched}");
+        }
         let message_id = new_id().map_err(failure)?;
         self.sink.emit(AgentEvent::UserMessage {
             message_id: message_id.clone(),
             text: input.text.clone(),
-            image_count: 0,
+            image_count: input.images.len().try_into().map_err(failure)?,
             sent_at: now()?,
         })?;
         self.push(Item::UserMessage {
             model_text: (text != input.text).then_some(text),
             text: input.text,
             message_id: Some(message_id),
-            images: Vec::new(),
+            images: input.images,
         })
     }
 
     fn push(&mut self, item: Item) -> Result<()> {
         self.history.push(self.sink.item(item)?);
+        self.summarized = false;
         Ok(())
     }
 
@@ -343,14 +405,24 @@ impl<'a> Agent<'a> {
             self.options.instructions,
             self.host.prompts()?.join("\n\n")
         );
+        let instructions = self.sink.redactor.redact(&instructions);
+        let cache_key = history::cache_key(&self.options.model, &instructions, &tools);
         Ok(ProviderRequest {
             model: self.options.model.clone(),
-            instructions: self.sink.redactor.redact(&instructions),
-            input: self.history.clone(),
+            instructions,
+            input: history::prepare(
+                &self.history,
+                &self.options.provider,
+                &self.options.model,
+                self.options.image_input,
+            ),
             profile: self.options.profile.clone(),
             tools,
             thinking: self.options.thinking.clone(),
-            cache_key: self.session.id.clone(),
+            cache_key,
+            session_id: self.session.id.clone(),
+            phase: crate::recording::Phase::Turn,
+            attempt: 1,
         })
     }
 }

@@ -1,0 +1,712 @@
+{
+  "anthropic": [
+    {
+      "kind": "text",
+      "id": "claude-opus-5",
+      "thinkingMode": "adaptive",
+      "name": "Claude Opus 5",
+      "contextWindow": 1000000,
+      "maxOutputTokens": 128000,
+      "inputModalities": ["text", "image"],
+      "thinking": {
+        "options": ["none", "low", "medium", "high", "xhigh", "max"],
+        "default": "high"
+      }
+    },
+    {
+      "kind": "text",
+      "id": "claude-sonnet-5",
+      "thinkingMode": "adaptive",
+      "name": "Claude Sonnet 5",
+      "contextWindow": 1000000,
+      "maxOutputTokens": 128000,
+      "inputModalities": ["text", "image"],
+      "thinking": {
+        "options": ["none", "low", "medium", "high", "xhigh", "max"],
+        "default": "high"
+      }
+    },
+    {
+      "kind": "text",
+      "id": "claude-fable-5",
+      "thinkingMode": "adaptive",
+      "name": "Claude Fable 5",
+      "contextWindow": 1000000,
+      "maxOutputTokens": 128000,
+      "inputModalities": ["text", "image"],
+      "thinking": {
+        "options": ["low", "medium", "high", "xhigh", "max"],
+        "default": "high"
+      }
+    },
+    {
+      "kind": "text",
+      "id": "claude-opus-4-8",
+      "thinkingMode": "adaptive",
+      "name": "Claude Opus 4.8",
+      "contextWindow": 1000000,
+      "maxOutputTokens": 128000,
+      "inputModalities": ["text", "image"],
+      "thinking": {
+        "options": ["none", "low", "medium", "high", "xhigh", "max"],
+        "default": "high"
+      }
+    },
+    {
+      "kind": "text",
+      "id": "claude-haiku-4-5",
+      "thinkingMode": "budget",
+      "name": "Claude Haiku 4.5",
+      "contextWindow": 200000,
+      "maxOutputTokens": 64000,
+      "inputModalities": ["text", "image"],
+      "thinking": {
+        "options": ["none", "low", "medium", "high", "xhigh", "max"],
+        "default": "medium"
+      }
+    }
+  ],
+  "google": [
+    {
+      "kind": "text",
+      "id": "gemini-3.1-pro-preview",
+      "name": "Gemini 3.1 Pro",
+      "contextWindow": 1048576,
+      "inputModalities": ["text", "image"],
+      "thinking": {
+        "options": ["none", "low", "medium", "high", "xhigh", "max"],
+        "default": "high"
+      }
+    },
+    {
+      "kind": "text",
+      "id": "gemini-3.6-flash",
+      "name": "Gemini 3.6 Flash",
+      "contextWindow": 1048576,
+      "inputModalities": ["text", "image"],
+      "thinking": {
+        "options": ["none", "low", "medium", "high", "xhigh", "max"],
+        "default": "high"
+      }
+    },
+    {
+      "kind": "text",
+      "id": "gemini-3.5-flash",
+      "name": "Gemini 3.5 Flash",
+      "contextWindow": 1048576,
+      "inputModalities": ["text", "image"],
+      "thinking": {
+        "options": ["none", "low", "medium", "high", "xhigh", "max"],
+        "default": "high"
+      }
+    },
+    {
+      "kind": "text",
+      "id": "gemini-3-pro-preview",
+      "name": "Gemini 3 Pro",
+      "contextWindow": 1048576,
+      "inputModalities": ["text", "image"],
+      "thinking": {
+        "options": ["none", "low", "medium", "high", "xhigh", "max"],
+        "default": "high"
+      }
+    }
+  ],
+  "deepseek": [
+    {
+      "kind": "text",
+      "id": "deepseek-v4-flash",
+      "name": "DeepSeek V4 Flash",
+      "contextWindow": 1000000,
+      "inputModalities": ["text"],
+      "thinking": {
+        "options": ["none", "low", "high", "max"],
+        "default": "high"
+      }
+    },
+    {
+      "kind": "text",
+      "id": "deepseek-v4-pro",
+      "name": "DeepSeek V4 Pro",
+      "contextWindow": 1000000,
+      "inputModalities": ["text"],
+      "thinking": {
+        "options": ["none", "high", "max"],
+        "default": "high"
+      }
+    }
+  ],
+  "alibaba-cloud": [
+    {
+      "kind": "text",
+      "id": "qwen3.7-plus",
+      "name": "Qwen 3.7 Plus",
+      "contextWindow": 1000000,
+      "inputModalities": ["text"],
+      "thinking": {
+        "options": ["none", "high"],
+        "default": "high"
+      }
+    },
+    {
+      "kind": "text",
+      "id": "qwen3.6-plus",
+      "name": "Qwen 3.6 Plus",
+      "contextWindow": 1000000,
+      "inputModalities": ["text"],
+      "thinking": {
+        "options": ["none", "high"],
+        "default": "high"
+      }
+    },
+    {
+      "kind": "text",
+      "id": "qwen3.5-plus",
+      "name": "Qwen 3.5 Plus",
+      "contextWindow": 1000000,
+      "inputModalities": ["text"],
+      "thinking": {
+        "options": ["none", "high"],
+        "default": "high"
+      }
+    },
+    {
+      "kind": "text",
+      "id": "qwen3-coder-plus",
+      "name": "Qwen 3 Coder Plus",
+      "contextWindow": 1000000,
+      "inputModalities": ["text"]
+    }
+  ],
+  "minimax": [
+    {
+      "kind": "text",
+      "id": "MiniMax-M3",
+      "name": "MiniMax M3",
+      "contextWindow": 1000000,
+      "maxOutputTokens": 128000,
+      "inputModalities": ["text", "image"],
+      "thinking": {
+        "options": ["none", "high"],
+        "default": "high"
+      }
+    },
+    {
+      "kind": "text",
+      "id": "MiniMax-M2.7",
+      "name": "MiniMax M2.7",
+      "contextWindow": 204800,
+      "maxOutputTokens": 131072,
+      "inputModalities": ["text"]
+    },
+    {
+      "kind": "text",
+      "id": "MiniMax-M2.7-highspeed",
+      "name": "MiniMax M2.7 Highspeed",
+      "contextWindow": 204800,
+      "maxOutputTokens": 131072,
+      "inputModalities": ["text"]
+    },
+    {
+      "kind": "text",
+      "id": "MiniMax-M2.5",
+      "name": "MiniMax M2.5",
+      "contextWindow": 204800,
+      "maxOutputTokens": 131072,
+      "inputModalities": ["text"]
+    },
+    {
+      "kind": "text",
+      "id": "MiniMax-M2.5-highspeed",
+      "name": "MiniMax M2.5 Highspeed",
+      "contextWindow": 204800,
+      "maxOutputTokens": 131072,
+      "inputModalities": ["text"]
+    },
+    {
+      "kind": "text",
+      "id": "MiniMax-M2.1",
+      "name": "MiniMax M2.1",
+      "contextWindow": 204800,
+      "maxOutputTokens": 131072,
+      "inputModalities": ["text"]
+    },
+    {
+      "kind": "text",
+      "id": "MiniMax-M2",
+      "name": "MiniMax M2",
+      "contextWindow": 196608,
+      "maxOutputTokens": 128000,
+      "inputModalities": ["text"]
+    }
+  ],
+  "openrouter": [
+    {
+      "kind": "text",
+      "id": "anthropic/claude-opus-5",
+      "name": "Claude Opus 5",
+      "contextWindow": 1000000,
+      "inputModalities": ["text", "image"],
+      "thinking": {
+        "options": ["none", "low", "medium", "high"],
+        "default": "high"
+      }
+    },
+    {
+      "kind": "text",
+      "id": "anthropic/claude-sonnet-5",
+      "name": "Claude Sonnet 5",
+      "contextWindow": 1000000,
+      "inputModalities": ["text", "image"],
+      "thinking": {
+        "options": ["none", "low", "medium", "high"],
+        "default": "high"
+      }
+    },
+    {
+      "kind": "text",
+      "id": "google/gemini-3-pro-preview",
+      "name": "Gemini 3 Pro",
+      "contextWindow": 1048576,
+      "inputModalities": ["text", "image"],
+      "thinking": {
+        "options": ["none", "low", "medium", "high"],
+        "default": "high"
+      }
+    },
+    {
+      "kind": "text",
+      "id": "openai/gpt-5.5",
+      "name": "GPT-5.5",
+      "contextWindow": 400000,
+      "inputModalities": ["text", "image"],
+      "thinking": {
+        "options": ["none", "low", "medium", "high"],
+        "default": "high"
+      }
+    }
+  ],
+  "opencode-go": [
+    {
+      "kind": "text",
+      "id": "grok-4.5",
+      "name": "Grok 4.5",
+      "contextWindow": 500000,
+      "inputModalities": ["text"],
+      "thinking": {
+        "options": ["low", "medium", "high", "xhigh"],
+        "default": "high"
+      },
+      "endpoint": "/responses",
+      "maxTokens": 131072
+    },
+    {
+      "kind": "text",
+      "id": "gpt-5.6-luna",
+      "name": "GPT-5.6 Luna",
+      "contextWindow": 1050000,
+      "inputModalities": ["text"],
+      "thinking": {
+        "options": ["none", "low", "medium", "high", "xhigh", "max"],
+        "default": "medium"
+      },
+      "endpoint": "/responses",
+      "maxTokens": 128000
+    },
+    {
+      "kind": "text",
+      "id": "muse-spark-1.2-contributor",
+      "name": "Muse Spark 1.2 Contributor",
+      "contextWindow": 1048576,
+      "inputModalities": ["text"],
+      "endpoint": "/responses",
+      "maxTokens": 131072
+    },
+    {
+      "kind": "text",
+      "id": "glm-5.3",
+      "name": "GLM-5.3",
+      "contextWindow": 1000000,
+      "inputModalities": ["text"],
+      "endpoint": "/chat/completions",
+      "maxTokens": 131072
+    },
+    {
+      "kind": "text",
+      "id": "glm-5.2",
+      "name": "GLM-5.2",
+      "contextWindow": 1000000,
+      "inputModalities": ["text"],
+      "endpoint": "/chat/completions",
+      "maxTokens": 131072
+    },
+    {
+      "kind": "text",
+      "id": "glm-5.1",
+      "name": "GLM-5.1",
+      "contextWindow": 200000,
+      "inputModalities": ["text"],
+      "endpoint": "/chat/completions",
+      "maxTokens": 131072
+    },
+    {
+      "kind": "text",
+      "id": "kimi-k3",
+      "name": "Kimi K3",
+      "contextWindow": 1048576,
+      "inputModalities": ["text"],
+      "endpoint": "/chat/completions",
+      "maxTokens": 131072
+    },
+    {
+      "kind": "text",
+      "id": "kimi-k2.7-code",
+      "name": "Kimi K2.7 Code",
+      "contextWindow": 262144,
+      "inputModalities": ["text"],
+      "endpoint": "/chat/completions",
+      "maxTokens": 262144
+    },
+    {
+      "kind": "text",
+      "id": "kimi-k2.6",
+      "name": "Kimi K2.6",
+      "contextWindow": 262144,
+      "inputModalities": ["text"],
+      "endpoint": "/chat/completions",
+      "maxTokens": 262144
+    },
+    {
+      "kind": "text",
+      "id": "mimo-v2.5",
+      "name": "MiMo-V2.5",
+      "contextWindow": 1048576,
+      "inputModalities": ["text"],
+      "endpoint": "/chat/completions",
+      "maxTokens": 131072
+    },
+    {
+      "kind": "text",
+      "id": "mimo-v2.5-pro",
+      "name": "MiMo-V2.5-Pro",
+      "contextWindow": 1048576,
+      "inputModalities": ["text"],
+      "endpoint": "/chat/completions",
+      "maxTokens": 131072
+    },
+    {
+      "kind": "text",
+      "id": "minimax-m3",
+      "name": "MiniMax M3",
+      "contextWindow": 512000,
+      "inputModalities": ["text", "image"],
+      "thinking": {
+        "options": ["none", "high"],
+        "default": "high"
+      },
+      "endpoint": "/messages",
+      "maxTokens": 128000
+    },
+    {
+      "kind": "text",
+      "id": "minimax-m2.7",
+      "name": "MiniMax M2.7",
+      "contextWindow": 204800,
+      "inputModalities": ["text"],
+      "endpoint": "/messages",
+      "maxTokens": 131072
+    },
+    {
+      "kind": "text",
+      "id": "minimax-m2.5",
+      "name": "MiniMax M2.5",
+      "contextWindow": 204800,
+      "inputModalities": ["text"],
+      "endpoint": "/messages",
+      "maxTokens": 131072
+    },
+    {
+      "kind": "text",
+      "id": "qwen3.8-max",
+      "name": "Qwen3.8 Max",
+      "contextWindow": 1000000,
+      "inputModalities": ["text"],
+      "endpoint": "/messages",
+      "maxTokens": 131072
+    },
+    {
+      "kind": "text",
+      "id": "qwen3.7-max",
+      "name": "Qwen3.7 Max",
+      "contextWindow": 1000000,
+      "inputModalities": ["text"],
+      "endpoint": "/messages",
+      "maxTokens": 65536
+    },
+    {
+      "kind": "text",
+      "id": "qwen3.7-plus",
+      "name": "Qwen3.7 Plus",
+      "contextWindow": 1000000,
+      "inputModalities": ["text"],
+      "endpoint": "/messages",
+      "maxTokens": 64000
+    },
+    {
+      "kind": "text",
+      "id": "qwen3.6-plus",
+      "name": "Qwen3.6 Plus",
+      "contextWindow": 1000000,
+      "inputModalities": ["text"],
+      "endpoint": "/messages",
+      "maxTokens": 65536
+    },
+    {
+      "kind": "text",
+      "id": "deepseek-v4-pro",
+      "name": "DeepSeek V4 Pro",
+      "contextWindow": 1000000,
+      "inputModalities": ["text"],
+      "endpoint": "/chat/completions",
+      "maxTokens": 131072
+    },
+    {
+      "kind": "text",
+      "id": "deepseek-v4-flash",
+      "name": "DeepSeek V4 Flash",
+      "contextWindow": 1000000,
+      "inputModalities": ["text"],
+      "endpoint": "/chat/completions",
+      "maxTokens": 131072
+    },
+    {
+      "kind": "text",
+      "id": "deepseek-v4-flash-vision-exp",
+      "name": "DeepSeek V4 Flash Vision Exp",
+      "contextWindow": 1000000,
+      "inputModalities": ["text", "image"],
+      "endpoint": "/chat/completions",
+      "maxTokens": 131072
+    },
+    {
+      "kind": "text",
+      "id": "hy3",
+      "name": "Hy3",
+      "contextWindow": 256000,
+      "inputModalities": ["text"],
+      "endpoint": "/chat/completions",
+      "maxTokens": 64000
+    },
+    {
+      "kind": "text",
+      "id": "ox-alpha-free",
+      "name": "Ox Alpha Free",
+      "inputModalities": ["text"],
+      "endpoint": "/chat/completions",
+      "maxTokens": 131072
+    }
+  ],
+  "xai": [
+    {
+      "kind": "text",
+      "id": "grok-4.5",
+      "name": "Grok 4.5",
+      "contextWindow": 500000,
+      "inputModalities": ["text", "image"],
+      "thinking": {
+        "options": ["low", "medium", "high", "xhigh"],
+        "default": "high"
+      }
+    },
+    {
+      "kind": "text",
+      "id": "grok-4.6",
+      "name": "Grok 4.6",
+      "contextWindow": 500000,
+      "inputModalities": ["text", "image"],
+      "thinking": {
+        "options": ["low", "medium", "high", "xhigh"],
+        "default": "high"
+      }
+    },
+    {
+      "kind": "text",
+      "id": "grok-4.3",
+      "name": "Grok 4.3",
+      "contextWindow": 1000000,
+      "inputModalities": ["text", "image"],
+      "thinking": {
+        "options": ["low", "medium", "high", "xhigh"],
+        "default": "high"
+      }
+    },
+    {
+      "kind": "text",
+      "id": "grok-4.20-multi-agent-0309",
+      "name": "Grok 4.20 (Multi-Agent)",
+      "contextWindow": 2000000,
+      "inputModalities": ["text"],
+      "thinking": {
+        "options": ["low", "medium", "high", "xhigh"],
+        "default": "high"
+      }
+    },
+    {
+      "kind": "text",
+      "id": "grok-4.20-0309-reasoning",
+      "name": "Grok 4.20 (Reasoning)",
+      "contextWindow": 1000000,
+      "inputModalities": ["text", "image"]
+    },
+    {
+      "kind": "text",
+      "id": "grok-4.20-0309-non-reasoning",
+      "name": "Grok 4.20 (Non-Reasoning)",
+      "contextWindow": 1000000,
+      "inputModalities": ["text", "image"]
+    },
+    {
+      "kind": "text",
+      "id": "grok-4-fast",
+      "name": "Grok 4 Fast",
+      "contextWindow": 2000000,
+      "inputModalities": ["text", "image"],
+      "thinking": {
+        "options": ["low", "medium", "high", "xhigh"],
+        "default": "high"
+      }
+    },
+    {
+      "kind": "text",
+      "id": "grok-build",
+      "name": "Grok Build",
+      "contextWindow": 512000,
+      "inputModalities": ["text", "image"]
+    },
+    {
+      "kind": "text",
+      "id": "grok-build-0.1",
+      "name": "Grok Build 0.1",
+      "contextWindow": 256000,
+      "inputModalities": ["text", "image"]
+    },
+    {
+      "kind": "text",
+      "id": "grok-code-fast-1",
+      "name": "Grok Code Fast 1",
+      "contextWindow": 256000,
+      "inputModalities": ["text"],
+      "thinking": {
+        "options": ["low", "medium", "high", "xhigh"],
+        "default": "high"
+      }
+    },
+    {
+      "kind": "text",
+      "id": "grok-composer-2.5-fast",
+      "name": "Grok Composer 2.5 Fast",
+      "contextWindow": 200000,
+      "inputModalities": ["text"]
+    },
+    {
+      "kind": "text",
+      "id": "grok-3-mini",
+      "name": "Grok 3 Mini",
+      "contextWindow": 131072,
+      "inputModalities": ["text"],
+      "thinking": {
+        "options": ["low", "medium", "high", "xhigh"],
+        "default": "high"
+      }
+    }
+  ],
+  "openai-chatgpt": [
+    {
+      "kind": "text",
+      "id": "gpt-5.6-luna",
+      "name": "GPT-5.6-Luna",
+      "contextWindow": 272000,
+      "maxContextWindow": 872000,
+      "inputModalities": ["text", "image"],
+      "thinking": {
+        "options": ["low", "medium", "high", "xhigh", "max"],
+        "default": "medium"
+      },
+      "supportsFast": true
+    },
+    {
+      "kind": "text",
+      "id": "gpt-5.6-sol",
+      "name": "GPT-5.6-Sol",
+      "contextWindow": 272000,
+      "maxContextWindow": 872000,
+      "inputModalities": ["text", "image"],
+      "thinking": {
+        "options": ["low", "medium", "high", "xhigh", "max"],
+        "default": "low"
+      },
+      "supportsFast": true
+    },
+    {
+      "kind": "text",
+      "id": "gpt-5.6-terra",
+      "name": "GPT-5.6-Terra",
+      "contextWindow": 272000,
+      "maxContextWindow": 872000,
+      "inputModalities": ["text", "image"],
+      "thinking": {
+        "options": ["low", "medium", "high", "xhigh", "max"],
+        "default": "medium"
+      },
+      "supportsFast": true
+    },
+    {
+      "kind": "text",
+      "id": "gpt-5.5",
+      "name": "GPT-5.5",
+      "contextWindow": 272000,
+      "inputModalities": ["text", "image"],
+      "thinking": {
+        "options": ["low", "medium", "high", "xhigh"],
+        "default": "medium"
+      },
+      "supportsFast": true
+    },
+    {
+      "kind": "text",
+      "id": "gpt-5.4",
+      "name": "GPT-5.4",
+      "contextWindow": 272000,
+      "inputModalities": ["text", "image"],
+      "thinking": {
+        "options": ["low", "medium", "high", "xhigh"],
+        "default": "medium"
+      },
+      "supportsFast": true
+    },
+    {
+      "kind": "text",
+      "id": "gpt-5.4-mini",
+      "name": "GPT-5.4-Mini",
+      "contextWindow": 272000,
+      "inputModalities": ["text", "image"],
+      "thinking": {
+        "options": ["low", "medium", "high", "xhigh"],
+        "default": "medium"
+      },
+      "supportsFast": false
+    },
+    {
+      "kind": "text",
+      "id": "gpt-5.3-codex-spark",
+      "name": "GPT-5.3-Codex-Spark",
+      "contextWindow": 128000,
+      "inputModalities": ["text"],
+      "thinking": {
+        "options": ["low", "medium", "high", "xhigh"],
+        "default": "high"
+      },
+      "supportsFast": false
+    }
+  ]
+}

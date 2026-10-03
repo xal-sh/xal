@@ -51,7 +51,7 @@ impl Plugin for Fixture {
         let started = self.started.clone();
         let release = self.release.clone();
         let pause = self.pause;
-        registration.provider("fixture", Provider { models: vec!["fixture".into()], stream: Box::new(move |request, context, sender| {
+        registration.provider("fixture", Provider { settle: None, models: vec!["fixture".into()], stream: Box::new(move |request, context, sender| {
             let rounds = rounds.clone();
             let requests = requests.clone();
             let started = started.clone();
@@ -101,7 +101,7 @@ impl Plugin for Fixture {
             let maximum = self.maximum.clone();
             let started = self.started.clone();
             let pause_tool = self.pause_tool;
-            registration.tool(name, Tool { description: name.into(), parameters: json!({"type":"object","properties":{"effective":{"const":true}},"required":["effective"]}).as_object().unwrap().clone(), effects, available: |_| true, run: Box::new(move |args, context| {
+            registration.tool(name, Tool { description: name.into(), parameters: json!({"type":"object","properties":{"effective":{"const":true}},"required":["effective"]}).as_object().unwrap().clone(), effects, redact: None, available: Box::new(|_| Ok(true)), run: Box::new(move |args, context| {
                 let calls = calls.clone(); let active = active.clone(); let maximum = maximum.clone(); let started = started.clone();
                 Box::pin(async move {
                     assert_eq!(args["effective"], true);
@@ -142,6 +142,8 @@ fn options() -> Options {
         instructions: "instructions".into(),
         thinking: None,
         context_window: 10000,
+        image_input: false,
+        summary_target: None,
         compaction_limit: None,
         output_schema: None,
         artifacts: std::env::temp_dir().join("unused-agent-test-artifacts"),
@@ -222,7 +224,7 @@ async fn effective_hooks_concurrent_reads_exclusive_writes_and_redacted_output()
     {
         let requests = requests.lock().unwrap();
         assert!(
-            matches!(&requests[0].input[0], Item::UserMessage { text, model_text: Some(effective), .. } if text == "authored" && effective == "effective authored")
+            matches!(&requests[0].input[0], Item::UserMessage { text, model_text: None, .. } if text == "effective authored")
         );
         for item in &requests[1].input {
             if let Item::ToolCall { args, replay, .. } = item {
@@ -434,7 +436,8 @@ impl Plugin for Loud {
                 description: "loud".into(),
                 parameters: JsonObject::new(),
                 effects: Effects::read,
-                available: |_| true,
+                redact: None,
+                available: Box::new(|_| Ok(true)),
                 run: Box::new(|_, context| {
                     Box::pin(async move {
                         let output = context.output.unwrap();
@@ -500,7 +503,8 @@ impl Plugin for Stuck {
                 description: "stuck".into(),
                 parameters: JsonObject::new(),
                 effects: Effects::read,
-                available: |_| true,
+                redact: None,
+                available: Box::new(|_| Ok(true)),
                 run: Box::new(|_, context| {
                     Box::pin(async move {
                         context.cancellation.cancelled().await;

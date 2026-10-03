@@ -1,3 +1,4 @@
+mod accounts;
 mod headless;
 mod prompt;
 
@@ -82,7 +83,7 @@ async fn dispatch(host: &Host, args: &[String]) -> Result<String> {
         for (name, description) in host.commands() {
             help.push_str(&format!("  {name}  {description}\n"));
         }
-        help.push_str("  run [options] [prompt]  Run a native OpenAI headless session\n\nNo TUI yet. Use xal for the current application.\n");
+        help.push_str("  run [options] [prompt]  Run a native headless session\n  connect / connections / profiles / rename / logout  Manage named connections\n  usage  Read provider request usage totals\n  models / model / thinking / context-window / compaction-limit  Configure text models\n  typesafe on|off  Configure decision inference\n\nUse <command> --help for account options. No TUI yet. Use xal for the current application.\n");
         return Ok(help);
     }
     if args == ["host-check"] {
@@ -125,6 +126,7 @@ async fn host_check(host: &Host) -> Result<String> {
                     "available".into(),
                     DecisionQuestion::Noul {
                         instructions: serde_json::Value::Null,
+                        criteria: None,
                     },
                 )]
                 .into(),
@@ -132,7 +134,7 @@ async fn host_check(host: &Host) -> Result<String> {
             &session,
         )
         .await?;
-    if decisions.get("available") != Some(&DecisionAnswer::Noul(1.0)) {
+    if decisions.answers.get("available") != Some(&DecisionAnswer::Noul { noul: 1.0 }) {
         return Err(Error::Failed("diagnostic report unavailable".into()));
     }
     let (sender, mut receiver) = channel(2, session.cancellation.clone())?;
@@ -144,6 +146,9 @@ async fn host_check(host: &Host) -> Result<String> {
         tools: Vec::new(),
         thinking: None,
         cache_key: String::new(),
+        session_id: String::new(),
+        phase: xal_host::recording::Phase::Turn,
+        attempt: 1,
     };
     let (provider, output) = tokio::join!(
         host.provider("diagnostic", request, &session, sender),
@@ -155,6 +160,7 @@ async fn host_check(host: &Host) -> Result<String> {
                     ProviderEvent::TextDelta(delta) if !finished => text.push_str(&delta),
                     ProviderEvent::Done { .. } if !finished => finished = true,
                     ProviderEvent::TextDelta(_)
+                    | ProviderEvent::Usage(_)
                     | ProviderEvent::Done { .. }
                     | ProviderEvent::ReasoningDelta(_)
                     | ProviderEvent::Item(_)
@@ -190,8 +196,15 @@ async fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    if args.first().is_some_and(|arg| arg == "run") {
-        return match headless::run(&args[1..]).await {
+    if args
+        .first()
+        .is_some_and(|arg| arg == "run" || accounts::handles(arg))
+    {
+        return match if args[0] == "run" {
+            headless::run(&args[1..]).await
+        } else {
+            accounts::run(&args).await
+        } {
             Ok(code) => ExitCode::from(code),
             Err(error) => {
                 eprintln!("xal-rust: {error}");

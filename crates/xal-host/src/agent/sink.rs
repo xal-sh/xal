@@ -5,6 +5,7 @@ use super::{AgentEvent, Journal};
 use crate::{Error, Item, Result};
 
 pub(super) struct Sink<'a> {
+    pub host: &'a crate::Host,
     pub redactor: &'a Redactor,
     pub journal: Option<Journal>,
     pub receive: &'a mut dyn FnMut(AgentEvent) -> Result<()>,
@@ -22,6 +23,26 @@ impl Sink<'_> {
         self.deliver(event)
     }
 
+    pub fn checkpoint(
+        &mut self,
+        item: serde_json::Value,
+        event: AgentEvent,
+        cancellation: &crate::Cancellation,
+    ) -> Result<()> {
+        let event = super::redaction::event(self.redactor, event);
+        cancellation.check()?;
+        if let Some(journal) = &mut self.journal {
+            let values = [item, json!({"type":"event","event":event})];
+            let receive = &mut self.receive;
+            return journal.append_with(&values, || {
+                receive(event)?;
+                cancellation.check()
+            });
+        }
+        self.deliver(event)?;
+        cancellation.check()
+    }
+
     pub fn live(&mut self, event: AgentEvent) -> Result<()> {
         self.deliver(super::redaction::event(self.redactor, event))
     }
@@ -34,7 +55,7 @@ impl Sink<'_> {
     }
 
     pub fn item(&mut self, item: Item) -> Result<Item> {
-        let item = super::redaction::item(self.redactor, item);
+        let item = super::redaction::item(self.host, self.redactor, item)?;
         let value = serde_json::to_value(&item).map_err(failure)?;
         if let Some(journal) = &mut self.journal {
             journal.append(&json!({"type":"item","item":value}))?;

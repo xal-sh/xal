@@ -63,8 +63,8 @@ jobs:
           echo 'RUSTFLAGS=-C linker=musl-gcc' >> "$GITHUB_ENV"
 
       - run: cargo fmt --all -- --check
-      - run: cargo test -p xal-host -p xal-services -p xal-rust -p xal-plugin-inspect -p xal-plugin-diagnostics -p xal-plugin-workspace -p xal-plugin-openai --target ${{ matrix.target }} --locked
-      - run: cargo clippy -p xal-host -p xal-services -p xal-rust -p xal-plugin-inspect -p xal-plugin-diagnostics -p xal-plugin-workspace -p xal-plugin-openai --all-targets --target ${{ matrix.target }} --locked -- -D warnings
+      - run: cargo test -p xal-host -p xal-services -p xal-rust -p xal-plugin-inspect -p xal-plugin-diagnostics -p xal-plugin-workspace -p xal-providers -p xal-plugin-providers -p xal-plugin-classify --target ${{ matrix.target }} --locked
+      - run: cargo clippy -p xal-host -p xal-services -p xal-rust -p xal-plugin-inspect -p xal-plugin-diagnostics -p xal-plugin-workspace -p xal-providers -p xal-plugin-providers -p xal-plugin-classify --all-targets --target ${{ matrix.target }} --locked -- -D warnings
       - run: cargo build -p xal-rust --release --target ${{ matrix.target }} --locked
 
       - uses: oven-sh/setup-bun@v2
@@ -84,4 +84,5 @@ jobs:
           "$binary" --version
           "$binary" --help
           bun scripts/rust/check-headless.ts "$binary"
+          if [[ "$RUNNER_OS" != Windows ]]; then python3 scripts/rust/check-terminal.py "$binary"; fi
           wc -c < "$binary"

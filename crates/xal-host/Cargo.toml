@@ -10,5 +10,9 @@ xal-services = { path = "../xal-services" }
 serde = { version = "=1.0.229", features = ["derive"] }
 futures-util = "=0.3.34"
 serde_json = "=1.0.145"
-tokio = { version = "=1.50.0", features = ["rt", "time", "sync", "macros"] }
+sha2 = "=0.10.9"
+tokio = { version = "=1.50.0", features = ["rt", "time", "sync", "macros", "process"] }
 tokio-util = "=0.7.19"
+
+[dev-dependencies]
+tokio = { version = "=1.50.0", features = ["test-util"] }

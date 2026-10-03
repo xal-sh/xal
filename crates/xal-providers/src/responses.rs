@@ -1,16 +1,19 @@
 use serde_json::{Value, json};
 use xal_host::*;
 
-use super::provider_error;
+use super::{Id, count, provider_error};
 
-pub(super) fn body(request: &ProviderRequest) -> Result<Value> {
+pub fn body(id: Id, request: &ProviderRequest) -> Result<Value> {
     let mut input = Vec::new();
     for item in &request.input {
+        if id == Id::Xai && matches!(item, Item::Reasoning { .. }) {
+            continue;
+        }
         let replay = match item {
             Item::AssistantMessage { replay, .. }
             | Item::Reasoning { replay, .. }
             | Item::ToolCall { replay, .. } => replay.as_ref().filter(|replay| {
-                replay.provider == "openai"
+                replay.provider == id.as_str()
                     && replay
                         .model
                         .as_deref()
@@ -25,8 +28,12 @@ pub(super) fn body(request: &ProviderRequest) -> Result<Value> {
         match item {
             Item::UserMessage { text, images, model_text, .. } => {
                 let text = model_text.as_ref().unwrap_or(text);
-                if !images.is_empty() { return Err(Error::Failed("native OpenAI image input belongs to P03".into())); }
-                input.push(json!({"role":"user","content":[{"type":"input_text","text":text}]}));
+                let mut content = vec![json!({"type":"input_text","text":text})];
+                for attachment in images {
+                    let (media, data) = super::image(attachment)?;
+                    content.push(json!({"type":"input_image","image_url":format!("data:{media};base64,{data}")}));
+                }
+                input.push(json!({"role":"user","content":content}));
             }
             Item::AssistantMessage { text, .. } => input.push(json!({"type":"message","role":"assistant","content":[{"type":"output_text","text":text}]})),
             Item::Reasoning { .. } => {},
@@ -50,6 +57,66 @@ pub(super) fn body(request: &ProviderRequest) -> Result<Value> {
         body["tool_choice"] = json!("auto");
         body["parallel_tool_calls"] = json!(true);
     }
+    match id {
+        Id::ChatGpt => {
+            let model = request
+                .model
+                .strip_suffix("-fast")
+                .unwrap_or(&request.model);
+            body["model"] = json!(model.strip_suffix("-1m").unwrap_or(model));
+            if request.model.ends_with("-fast") {
+                body["service_tier"] = json!("priority");
+            }
+            body["reasoning"] =
+                json!({"effort":request.thinking.as_deref().unwrap_or("medium"),"summary":"auto"});
+            body["include"] = json!(["reasoning.encrypted_content"]);
+        }
+        Id::OpenAi => {
+            body["model"] = json!(request.model.strip_suffix("-1m").unwrap_or(&request.model));
+        }
+        Id::Xai => {
+            let map = body
+                .as_object_mut()
+                .ok_or_else(|| super::invalid("invalid request body"))?;
+            map.remove("include");
+            map.remove("parallel_tool_calls");
+            if request.thinking.as_deref().is_none_or(|v| v == "none")
+                || !super::catalog::xai_effort(&request.model)
+            {
+                map.remove("reasoning");
+            } else {
+                map.insert("reasoning".into(), json!({"effort":if request.thinking.as_deref() == Some("max") { "xhigh" } else { request.thinking.as_deref().unwrap_or("high") }}));
+            }
+            if let Some(Value::Array(tools)) = map.get_mut("tools") {
+                for tool in tools {
+                    if let Some(map) = tool.as_object_mut() {
+                        map.remove("strict");
+                    }
+                }
+            }
+        }
+        Id::Copilot => {
+            body["reasoning"] =
+                json!({"effort":request.thinking.as_deref().unwrap_or("medium"),"summary":"auto"});
+            body["include"] = json!(["reasoning.encrypted_content"]);
+            body.as_object_mut()
+                .ok_or_else(|| super::invalid("invalid request body"))?
+                .remove("prompt_cache_key");
+        }
+        Id::Go => {
+            body.as_object_mut()
+                .ok_or_else(|| super::invalid("invalid request body"))?
+                .remove("prompt_cache_key");
+        }
+        Id::Anthropic
+        | Id::Google
+        | Id::DeepSeek
+        | Id::Alibaba
+        | Id::OpenRouter
+        | Id::MiniMax
+        | Id::MiniMaxPlan
+        | Id::TypeSafe => return Err(super::invalid("provider does not use Responses")),
+    }
     Ok(body)
 }
 
@@ -57,7 +124,7 @@ fn string<'a>(value: &'a Value, field: &str) -> Result<&'a str> {
     value
         .get(field)
         .and_then(Value::as_str)
-        .ok_or_else(|| provider_error(format!("OpenAI response has invalid {field}"), false))
+        .ok_or_else(|| provider_error(format!("provider response has invalid {field}"), false))
 }
 
 fn blocks(value: &Value, field: &str, kind: &str) -> Result<String> {
@@ -77,12 +144,12 @@ fn blocks(value: &Value, field: &str, kind: &str) -> Result<String> {
     Ok(text)
 }
 
-pub(super) fn event(data: &str, model: &str) -> Result<Option<ProviderEvent>> {
+pub fn event(id: Id, data: &str, model: &str) -> Result<Option<ProviderEvent>> {
     if data == "[DONE]" {
         return Ok(None);
     }
     let raw: Value = serde_json::from_str(data)
-        .map_err(|_| provider_error("OpenAI SSE event was not valid JSON".into(), false))?;
+        .map_err(|_| provider_error("provider SSE event was not valid JSON".into(), false))?;
     match string(&raw, "type")? {
         "response.output_text.delta" => Ok(Some(ProviderEvent::TextDelta(
             string(&raw, "delta")?.into(),
@@ -90,9 +157,11 @@ pub(super) fn event(data: &str, model: &str) -> Result<Option<ProviderEvent>> {
         "response.reasoning_summary_text.delta" => Ok(Some(ProviderEvent::ReasoningSummaryDelta(
             string(&raw, "delta")?.into(),
         ))),
-        "response.reasoning_text.delta" => Ok(Some(ProviderEvent::ReasoningDelta(
-            string(&raw, "delta")?.into(),
-        ))),
+        "response.reasoning_text.delta" => Ok(Some(if id == Id::Xai {
+            ProviderEvent::ReasoningSummaryDelta(string(&raw, "delta")?.into())
+        } else {
+            ProviderEvent::ReasoningDelta(string(&raw, "delta")?.into())
+        })),
         "response.output_item.done" => {
             let data = raw
                 .get("item")
@@ -101,7 +170,7 @@ pub(super) fn event(data: &str, model: &str) -> Result<Option<ProviderEvent>> {
                 .clone();
             let value = Value::Object(data.clone());
             let replay = Some(Replay {
-                provider: "openai".into(),
+                provider: id.as_str().into(),
                 model: Some(model.into()),
                 data,
             });
@@ -120,7 +189,7 @@ pub(super) fn event(data: &str, model: &str) -> Result<Option<ProviderEvent>> {
                 }
                 "reasoning" => Item::Reasoning {
                     summary: blocks(&value, "summary", "summary_text")?,
-                    replay,
+                    replay: if id == Id::Xai { None } else { replay },
                 },
                 "function_call" => {
                     let call_id = string(&value, "call_id")?.to_owned();
@@ -134,7 +203,7 @@ pub(super) fn event(data: &str, model: &str) -> Result<Option<ProviderEvent>> {
                     let args = serde_json::from_str::<JsonObject>(string(&value, "arguments")?)
                         .map_err(|_| {
                             provider_error(
-                                format!("OpenAI tool call {name} had invalid JSON arguments"),
+                                format!("provider tool call {name} had invalid JSON arguments"),
                                 false,
                             )
                         })?;
@@ -150,13 +219,13 @@ pub(super) fn event(data: &str, model: &str) -> Result<Option<ProviderEvent>> {
             Ok(Some(ProviderEvent::Item(item)))
         }
         "response.completed" | "response.done" => {
-            let response = raw
-                .get("response")
-                .ok_or_else(|| provider_error("OpenAI completion has no response".into(), false))?;
+            let response = raw.get("response").ok_or_else(|| {
+                provider_error("provider completion has no response".into(), false)
+            })?;
             let status = string(response, "status")?;
             if status != "completed" {
                 return Err(provider_error(
-                    format!("OpenAI response did not complete ({status})"),
+                    format!("provider response did not complete ({status})"),
                     false,
                 ));
             }
@@ -167,15 +236,6 @@ pub(super) fn event(data: &str, model: &str) -> Result<Option<ProviderEvent>> {
                     false,
                 ));
             }
-            let count = |value: Option<&Value>| -> Result<Option<u64>> {
-                value
-                    .map(|value| {
-                        value.as_u64().ok_or_else(|| {
-                            provider_error("invalid provider usage count".into(), false)
-                        })
-                    })
-                    .transpose()
-            };
             let usage = usage
                 .map(|usage| -> Result<Usage> {
                     Ok(Usage {
@@ -209,7 +269,7 @@ pub(super) fn event(data: &str, model: &str) -> Result<Option<ProviderEvent>> {
             let message = error
                 .get("message")
                 .and_then(Value::as_str)
-                .unwrap_or("OpenAI stream error");
+                .unwrap_or("provider stream error");
             let code = error.get("code").and_then(Value::as_str).unwrap_or("");
             let transient = format!("{code} {message}").to_lowercase();
             Err(provider_error(
@@ -238,7 +298,7 @@ mod tests {
 
     #[test]
     fn reasoning_replay_is_model_bound_and_requests_remain_responses_native() {
-        let item = event(&json!({"type":"response.output_item.done","item":{"type":"reasoning","id":"reason","summary":[{"type":"summary_text","text":"thought"}],"encrypted_content":"opaque"}}).to_string(), "gpt-5").unwrap().unwrap();
+        let item = event(Id::OpenAi, &json!({"type":"response.output_item.done","item":{"type":"reasoning","id":"reason","summary":[{"type":"summary_text","text":"thought"}],"encrypted_content":"opaque"}}).to_string(), "gpt-5").unwrap().unwrap();
         let ProviderEvent::Item(item) = item else {
             panic!("missing reasoning item");
         };
@@ -251,14 +311,17 @@ mod tests {
             tools: Vec::new(),
             thinking: Some("high".into()),
             cache_key: "session".into(),
+            session_id: String::new(),
+            phase: xal_host::recording::Phase::Turn,
+            attempt: 1,
         };
-        let wire = body(&request).unwrap();
+        let wire = body(Id::OpenAi, &request).unwrap();
         assert_eq!(wire["input"][0]["encrypted_content"], "opaque");
         assert_eq!(wire["include"], json!(["reasoning.encrypted_content"]));
         assert_eq!(wire["store"], false);
         request.model = "gpt-4.1".into();
         request.thinking = None;
-        let wire = body(&request).unwrap();
+        let wire = body(Id::OpenAi, &request).unwrap();
         assert_eq!(wire["input"], json!([]));
         assert!(wire.get("reasoning").is_none());
     }
@@ -273,8 +336,11 @@ mod tests {
             json!({"type":"response.completed","response":{"status":"completed","usage":[]}}),
             json!({"type":"response.completed"}),
         ] {
-            assert!(event(&raw.to_string(), "gpt-4.1").is_err(), "{raw}");
+            assert!(
+                event(Id::OpenAi, &raw.to_string(), "gpt-4.1").is_err(),
+                "{raw}"
+            );
         }
-        assert!(matches!(event(&json!({"type":"response.failed","response":{"error":{"code":"server_error","message":"retry"}}}).to_string(), "gpt-4.1"), Err(Error::Provider { retryable: true, .. })));
+        assert!(matches!(event(Id::OpenAi, &json!({"type":"response.failed","response":{"error":{"code":"server_error","message":"retry"}}}).to_string(), "gpt-4.1"), Err(Error::Provider { retryable: true, .. })));
     }
 }

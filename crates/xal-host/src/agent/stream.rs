@@ -91,6 +91,12 @@ pub(super) fn queue_changed(control: &Control, sink: &mut Sink<'_>) -> Result<()
     })
 }
 
+pub(super) enum Mode {
+    Turn,
+    ManualSummary,
+    AutoSummary,
+}
+
 pub(super) async fn run(
     host: &Host,
     provider: &str,
@@ -98,9 +104,13 @@ pub(super) async fn run(
     session: &Session,
     control: &Control,
     sink: &mut Sink<'_>,
-    visible: bool,
+    mode: Mode,
 ) -> Result<Round> {
-    let max_attempts = if visible { 6 } else { 2 };
+    let (visible, max_attempts) = match mode {
+        Mode::Turn => (true, 6),
+        Mode::ManualSummary => (false, 1),
+        Mode::AutoSummary => (false, 2),
+    };
     for attempt in 1..=max_attempts {
         let mut items = Vec::new();
         let mut usage = None;
@@ -113,7 +123,14 @@ pub(super) async fn run(
         let mut streamed_summary = false;
         let mut bytes = 0usize;
         let (sender, mut receiver) = channel(32, Cancellation::default())?;
-        let operation = host.provider(provider, request.clone(), session, sender);
+        let mut request = request.clone();
+        request.attempt = attempt;
+        request.phase = if visible {
+            recording::Phase::Turn
+        } else {
+            recording::Phase::Compaction
+        };
+        let operation = host.provider(provider, request, session, sender);
         tokio::pin!(operation);
         let mut settled = None;
         let consumed: Result<()> = async {
@@ -142,7 +159,7 @@ pub(super) async fn run(
                                 if visible { let text = raw.write(&delta); if !text.is_empty() { sink.emit(AgentEvent::ReasoningDelta { text })?; } }
                             }
                             ProviderEvent::Item(item) => {
-                                let item = super::redaction::item(sink.redactor, item);
+                                let item = super::redaction::item(host, sink.redactor, item)?;
                                 bytes = bytes.saturating_add(serde_json::to_vec(&item).map_err(super::sink::failure)?.len());
                                 match &item {
                                     Item::AssistantMessage { text: content, .. } => {
@@ -171,7 +188,8 @@ pub(super) async fn run(
                                 }
                                 items.push(item);
                             }
-                            ProviderEvent::Done { usage: value } => { done = true; usage = value; }
+                            ProviderEvent::Usage(value) => { usage = Some(value); }
+                            ProviderEvent::Done { usage: value } => { done = true; if value.is_some() { usage = value; } }
                         }
                         if bytes > 16 * 1024 * 1024 { return Err(Error::Failed("provider output exceeds 16 MiB".into())); }
                     }

@@ -18,6 +18,7 @@ pub enum Item {
         text: String,
         #[serde(rename = "messageId", skip_serializing_if = "Option::is_none")]
         message_id: Option<String>,
+        #[serde(default)]
         images: Vec<Value>,
         #[serde(rename = "modelText", skip_serializing_if = "Option::is_none")]
         model_text: Option<String>,

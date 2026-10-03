@@ -15,7 +15,8 @@ pub struct Registration {
     pub(crate) commands: BTreeMap<String, Command>,
     pub(crate) tools: BTreeMap<String, Tool>,
     pub(crate) providers: BTreeMap<String, Provider>,
-    pub(crate) decisions: BTreeMap<String, Handler<DecisionRequest, DecisionResponse>>,
+    pub(crate) decisions:
+        BTreeMap<String, std::sync::Arc<Handler<DecisionRequest, DecisionResponse>>>,
     pub(crate) hooks: Vec<(String, Handler<HookInput, HookResult>)>,
     pub(crate) policies: BTreeMap<String, Handler<PermissionRequest, PolicyDecision>>,
     pub(crate) ui: BTreeMap<String, Handler<UiContribution, String>>,
@@ -98,7 +99,7 @@ impl Registration {
         handler: Handler<DecisionRequest, DecisionResponse>,
     ) -> Result<()> {
         self.cancellation.check()?;
-        insert(&mut self.decisions, name, handler)
+        insert(&mut self.decisions, name, std::sync::Arc::new(handler))
     }
 
     pub fn hook(&mut self, name: &str, handler: Handler<HookInput, HookResult>) -> Result<()> {

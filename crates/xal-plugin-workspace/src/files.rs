@@ -57,11 +57,8 @@ impl Plugin for Files {
                     } else {
                         Effects::write
                     },
-                    available: if name == "read" {
-                        |_| true
-                    } else {
-                        |session| !session.read_only
-                    },
+                    redact: None,
+                    available: Box::new(move |session| Ok(name == "read" || !session.read_only)),
                     run: Box::new(move |args, context| {
                         let state = state.clone();
                         Box::pin(async move {
@@ -131,10 +128,14 @@ impl Plugin for Files {
                                     }
                                 })?;
                                 context.cancellation.check()?;
-                                state
-                                    .lock()
-                                    .map_err(|_| Error::Failed("file state lock poisoned".into()))?
-                                    .insert(key, result.content_hash);
+                                if !context.speculative {
+                                    state
+                                        .lock()
+                                        .map_err(|_| {
+                                            Error::Failed("file state lock poisoned".into())
+                                        })?
+                                        .insert(key, result.content_hash);
+                                }
                                 Ok(ToolResult {
                                     output: String::from_utf16_lossy(&result.output),
                                 })
