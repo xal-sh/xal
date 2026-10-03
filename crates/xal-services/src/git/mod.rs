@@ -9,6 +9,7 @@ mod repository;
 mod snapshot;
 mod support;
 
+pub(crate) use command::path_argument;
 pub use command::{GitOutput, run_git};
 pub use repository::Repository;
 use snapshot::*;

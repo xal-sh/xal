@@ -18,6 +18,7 @@ impl Fixture {
         ));
         fs::create_dir_all(root.join("home/commands")).unwrap();
         fs::create_dir_all(root.join("workspace/.xal/commands")).unwrap();
+        #[cfg(unix)]
         let root = root.canonicalize().unwrap();
         let home = root.join("home");
         let cwd = root.join("workspace");

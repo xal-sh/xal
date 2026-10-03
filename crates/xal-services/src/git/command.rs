@@ -1,4 +1,5 @@
 use std::io::{self, Read, Write};
+use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::thread;
 use std::time::Duration;
@@ -21,6 +22,66 @@ fn kill_tree(_child: &mut Child, tree: &crate::process::ProcessTree) -> io::Resu
     tree.terminate()
 }
 
+pub(crate) fn path_argument(path: &Path) -> io::Result<String> {
+    let text = path
+        .to_str()
+        .ok_or_else(|| io::Error::other("Git path is not Unicode"))?;
+    #[cfg(windows)]
+    {
+        if let Some(text) = text.strip_prefix(r"\\?\") {
+            if path.components().any(|component| {
+                let std::path::Component::Normal(name) = component else {
+                    return matches!(
+                        component,
+                        std::path::Component::CurDir | std::path::Component::ParentDir
+                    );
+                };
+                let name = name.to_string_lossy();
+                let stem = name.split('.').next().unwrap_or("").to_ascii_uppercase();
+                name.ends_with(['.', ' '])
+                    || name.contains([':', '/', '<', '>', '"', '|', '?', '*'])
+                    || name.chars().any(|ch| ch.is_control())
+                    || ["CON", "PRN", "AUX", "NUL"].contains(&stem.as_str())
+                    || ["COM", "LPT"].iter().any(|prefix| {
+                        stem.strip_prefix(prefix).is_some_and(|suffix| {
+                            matches!(
+                                suffix,
+                                "1" | "2"
+                                    | "3"
+                                    | "4"
+                                    | "5"
+                                    | "6"
+                                    | "7"
+                                    | "8"
+                                    | "9"
+                                    | "¹"
+                                    | "²"
+                                    | "³"
+                            )
+                        })
+                    })
+            }) {
+                return Err(io::Error::other(
+                    "Git cannot represent this verbatim Windows path",
+                ));
+            }
+            return match path.components().next() {
+                Some(std::path::Component::Prefix(prefix)) => match prefix.kind() {
+                    std::path::Prefix::VerbatimDisk(_) => Ok(text.replace('\\', "/")),
+                    std::path::Prefix::VerbatimUNC(_, _) => {
+                        Ok(format!("//{}", text[4..].replace('\\', "/")))
+                    }
+                    _ => Err(io::Error::other("Git requires a disk or UNC path")),
+                },
+                _ => Err(io::Error::other("Git requires a disk or UNC path")),
+            };
+        }
+        Ok(text.replace('\\', "/"))
+    }
+    #[cfg(not(windows))]
+    Ok(text.to_owned())
+}
+
 pub fn run_git(
     cwd: &str,
     args: &[String],
@@ -39,7 +100,7 @@ pub fn run_git(
     let mut command = Command::new("git");
     command
         .arg("-C")
-        .arg(cwd)
+        .arg(path_argument(Path::new(cwd))?)
         .arg("--literal-pathspecs")
         .args(["-c", "core.autocrlf=false"])
         .args(["-c", "core.longpaths=true"])
@@ -49,7 +110,7 @@ pub fn run_git(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     if let Some(index_file) = index_file {
-        command.env("GIT_INDEX_FILE", index_file);
+        command.env("GIT_INDEX_FILE", path_argument(Path::new(index_file))?);
     }
     #[cfg(unix)]
     {
@@ -158,4 +219,31 @@ pub fn run_git(
             .unwrap_or(if interrupted { 130 } else { 1 }),
         interrupted,
     })
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn git_paths_preserve_disk_and_unc_locations_without_device_aliases() {
+        for (input, expected) in [
+            (r"C:\workspace\nested", "C:/workspace/nested"),
+            (r"\\?\C:\workspace\nested", "C:/workspace/nested"),
+            (r"\\?\UNC\server\share\nested", "//server/share/nested"),
+        ] {
+            assert_eq!(path_argument(Path::new(input)).unwrap(), expected);
+        }
+        for input in [
+            r"\\?\C:\workspace\trailing.",
+            r"\\?\C:\workspace\space ",
+            r"\\?\C:\workspace\NUL.txt",
+            r"\\?\C:\workspace\COM1",
+            r"\\?\C:\workspace\LPT³",
+            r"\\?\C:\workspace\stream:name",
+            r"\\?\Volume{fixture}\nested",
+        ] {
+            assert!(path_argument(Path::new(input)).is_err(), "{input}");
+        }
+    }
 }

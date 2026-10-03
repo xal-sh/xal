@@ -34,7 +34,7 @@ pub(super) struct RpcClient {
     settings: Option<Value>,
     sync: TextDocumentSync,
     documents: HashMap<PathBuf, OpenDocument>,
-    pub(super) diagnostics: HashMap<PathBuf, (Option<i64>, Vec<Value>)>,
+    pub(super) diagnostics: HashMap<String, (Option<i64>, Vec<Value>)>,
     pub(super) pull_diagnostics: HashMap<PathBuf, (String, Vec<Value>)>,
 }
 
@@ -422,7 +422,7 @@ impl RpcClient {
             if let Some((path, version)) = diagnostic_path
                 && self
                     .diagnostics
-                    .get(path)
+                    .get(&file_uri(path)?)
                     .is_some_and(|(published, _)| published.is_none_or(|value| value == version))
             {
                 return Ok(true);
@@ -470,7 +470,7 @@ impl RpcClient {
                 ))
             })?;
         let version = params.get("version").and_then(Value::as_i64);
-        self.diagnostics.insert(path, (version, items));
+        self.diagnostics.insert(file_uri(&path)?, (version, items));
         Ok(())
     }
 
@@ -503,7 +503,7 @@ impl RpcClient {
         let previous = self.documents.remove(path);
         let version = previous.as_ref().map_or(0, |document| document.version + 1);
         let opened = self.sync.open_close;
-        self.diagnostics.remove(path);
+        self.diagnostics.remove(&uri);
         self.pull_diagnostics.remove(path);
         if previous
             .as_ref()

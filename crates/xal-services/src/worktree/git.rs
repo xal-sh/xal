@@ -21,12 +21,7 @@ pub(super) fn checked_git(
             .map(|text| text.trim_end_matches(['\r', '\n']).to_owned())
             .map_err(|error| failed(format!("Git returned non-UTF-8 output: {error}")));
     }
-    let detail = String::from_utf8_lossy(&output.stderr)
-        .trim()
-        .lines()
-        .next()
-        .unwrap_or("")
-        .to_owned();
+    let detail = String::from_utf8_lossy(&output.stderr).trim().to_owned();
     Err(failed(if detail.is_empty() {
         format!(
             "git {} failed with exit code {}",
@@ -60,7 +55,7 @@ pub(super) fn rollback_created(
     base: &str,
 ) -> Vec<String> {
     let result = (|| {
-        let path_text = path_text(path)?;
+        let path_text = crate::git::path_argument(path)?;
         let listing = checked_git(
             repository_root,
             &["worktree", "list", "--porcelain", "-z"],
@@ -68,7 +63,8 @@ pub(super) fn rollback_created(
         )?;
         let registered = listing
             .split('\0')
-            .any(|entry| entry.strip_prefix("worktree ") == Some(&path_text));
+            .filter_map(|entry| entry.strip_prefix("worktree "))
+            .any(|entry| Path::new(entry) == Path::new(&path_text));
         if registered {
             let head = checked_git(path, &["rev-parse", "HEAD"], &|| false)?;
             let status = checked_git(

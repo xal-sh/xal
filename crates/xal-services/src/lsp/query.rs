@@ -207,7 +207,7 @@ pub(super) fn query_client(
             }
             let items = client
                 .diagnostics
-                .get(path)
+                .get(&uri)
                 .map(|(_, items)| items.as_slice())
                 .unwrap_or_default();
             format_diagnostics(items, &uri, cwd)

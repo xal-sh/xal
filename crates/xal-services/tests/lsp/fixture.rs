@@ -28,15 +28,13 @@ fn send(value: &str) {
 }
 
 fn log(path: &str, value: &str) {
-    writeln!(
-        OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(path)
-            .unwrap(),
-        "{value}"
-    )
-    .unwrap();
+    OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .unwrap()
+        .write_all(format!("{value}\n").as_bytes())
+        .unwrap();
 }
 
 fn main() {

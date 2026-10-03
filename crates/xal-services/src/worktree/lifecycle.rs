@@ -119,6 +119,7 @@ pub fn create_managed_worktree(
         branch: branch.clone(),
         base_commit: base_commit.clone(),
     };
+    let path_argument = crate::git::path_argument(&path)?;
     fs::create_dir(&path)?;
     if let Err(error) = checked_git(
         &repository_root,
@@ -127,7 +128,7 @@ pub fn create_managed_worktree(
             "add",
             "-b",
             &branch,
-            &worktree.path,
+            &path_argument,
             &base_commit,
         ],
         cancelled,
@@ -222,7 +223,8 @@ pub fn remove_managed_worktree(
     if request.force.unwrap_or(false) {
         args.push("--force");
     }
-    args.push(&current.path);
+    let path_argument = crate::git::path_argument(Path::new(&current.path))?;
+    args.push(&path_argument);
     checked_git(Path::new(&current.repository_root), &args, cancelled)?;
     Ok(())
 }

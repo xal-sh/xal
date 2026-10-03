@@ -380,6 +380,10 @@ fn escapes(word: &Word, cwd: &Path, destructive: bool) -> bool {
     if word.text.starts_with('~') && word.text != "~" && !word.text.starts_with("~/") {
         return true;
     }
+    #[cfg(windows)]
+    if ["/dev/null", "/dev/stdout", "/dev/stderr", "/dev/tty"].contains(&word.text.as_str()) {
+        return false;
+    }
     let Ok(path) = resolve_path(cwd, &word.text) else {
         return true;
     };

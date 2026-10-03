@@ -144,7 +144,7 @@ async fn enter_exit_switches_effective_cwd_resets_file_and_shell_state_and_keeps
         (
             "worktree_remove",
             json!({"path":fixture.worktrees.join("side")}),
-            "~/worktrees/side",
+            &format!("~/{}", Path::new("worktrees").join("side").display()),
         ),
         ("worktree_remove", json!({"path":fixture.directory}), "~"),
         ("worktree_remove", json!({}), ""),

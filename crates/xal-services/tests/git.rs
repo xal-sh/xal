@@ -267,7 +267,7 @@ fn submodule_restore_reapply_and_dirty_denial_preserve_superproject_index() {
             "protocol.file.allow=always",
             "submodule",
             "add",
-            source.to_str().unwrap(),
+            reqwest13::Url::from_file_path(&source).unwrap().as_str(),
             "sub",
         ],
     );

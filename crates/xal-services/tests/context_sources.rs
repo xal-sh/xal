@@ -193,7 +193,10 @@ fn skill_precedence_yaml_repairs_warnings_catalog_and_verbatim_invocation() {
         .unwrap();
     let args = " α $HOME $(printf unsafe) $1";
     assert!(expanded.contains(&format!("User input ({} UTF-8 bytes):\n{args}", args.len())));
-    assert!(expanded.contains("- refs/steps.md"));
+    assert!(expanded.contains(&format!(
+        "- {}",
+        Path::new("refs").join("steps.md").display()
+    )));
     let refs = skills::references("😀 $audit then $unknown", &catalog);
     assert_eq!(
         refs[0],

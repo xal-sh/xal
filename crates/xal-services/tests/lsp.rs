@@ -281,12 +281,10 @@ fn all_queries_sync_utf16_configuration_and_read_only_server_requests() {
         (Operation::OutgoingCalls, "Found 1 outgoing call"),
         (Operation::Diagnostics, "Found 1 diagnostic"),
     ] {
-        assert!(
-            manager
-                .query(&fixture.query(operation), &fixture.root, &|| false)
-                .unwrap()
-                .starts_with(expected)
-        );
+        let output = manager
+            .query(&fixture.query(operation), &fixture.root, &|| false)
+            .unwrap();
+        assert!(output.starts_with(expected), "{operation:?}: {output}");
     }
     std::fs::write(fixture.root.join("source.fake"), "changed😀").unwrap();
     assert_eq!(

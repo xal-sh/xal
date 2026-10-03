@@ -1,15 +1,23 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde_json::json;
 use xal_host::permissions::Permissions;
 use xal_host::{PermissionRequest, PolicyDecision};
 use xal_services::settings::Settings;
 
+fn workspace() -> PathBuf {
+    std::path::absolute("/")
+        .unwrap()
+        .canonicalize()
+        .unwrap()
+        .join("xal-permissions-workspace/project")
+}
+
 fn policy(config: serde_json::Value, mode: &str) -> Permissions {
     Permissions::load(
         &Settings::parse(config.as_object().unwrap()).unwrap(),
         Path::new("/not-a-real-xal-home"),
-        Path::new("/workspace/project"),
+        &workspace(),
         mode,
     )
     .unwrap()
@@ -24,7 +32,7 @@ fn command(policy: &Permissions, text: &str) -> PolicyDecision {
                 args: json!({"command":text}).as_object().unwrap().clone(),
                 read_only: false,
             },
-            Path::new("/workspace/project"),
+            &workspace(),
         )
         .unwrap()
 }
@@ -53,8 +61,10 @@ fn shell_normal_mode_preserves_legacy_risk_cases() {
         "timeout -k 1 2 env printf ignored",
         "stdbuf -o L env printf ignored",
         "ls | xargs wc -l",
+        #[cfg(unix)]
         "mv report.txt /tmp/report.txt",
         "echo debug > /dev/null",
+        #[cfg(unix)]
         "touch /tmp/scratch",
         "sort -S 1G input.txt",
         "ssh -S socket host",
@@ -195,7 +205,7 @@ fn unresolved_shell_subjects_fail_closed_even_in_yolo_and_sandboxes() {
                                     args,
                                     read_only: false
                                 },
-                                Path::new("/workspace/project")
+                                &workspace()
                             )
                             .unwrap(),
                         PolicyDecision::Deny(_)

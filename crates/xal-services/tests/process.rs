@@ -107,7 +107,7 @@ fn process_fixture() {
         fs::write(&path, "ready").unwrap();
         loop {
             match std::io::stdout().write_all(&[b'@'; 8192]) {
-                Ok(()) => {}
+                Ok(()) => std::thread::sleep(Duration::from_millis(10)),
                 Err(error) if error.kind() == std::io::ErrorKind::BrokenPipe => {
                     std::thread::sleep(Duration::from_secs(60));
                 }

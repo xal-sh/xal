@@ -45,7 +45,10 @@ fn display_path(uri: &str, cwd: &str) -> String {
     let Some(path) = uri_path(uri) else {
         return uri.to_owned();
     };
-    let cwd = Path::new(cwd);
+    let cwd = file_uri(Path::new(cwd))
+        .ok()
+        .and_then(|uri| uri_path(&uri))
+        .unwrap_or_else(|| PathBuf::from(cwd));
     path.strip_prefix(cwd)
         .ok()
         .filter(|relative| !relative.as_os_str().is_empty())
@@ -371,15 +374,16 @@ mod tests {
 
     #[test]
     fn formats_locations_and_hover() {
+        let cwd = std::env::temp_dir().canonicalize().unwrap();
         let value = json!({
-            "uri": "file:///tmp/a.ts",
+            "uri": super::file_uri(&cwd.join("a.ts")).unwrap(),
             "range": {
                 "start": { "line": 0, "character": 1 },
                 "end": { "line": 0, "character": 2 }
             }
         });
         assert_eq!(
-            format_locations(&value, "/tmp", "definition", "definitions").unwrap(),
+            format_locations(&value, cwd.to_str().unwrap(), "definition", "definitions").unwrap(),
             "Found 1 definition\na.ts:1:2-1:3"
         );
         assert_eq!(
@@ -390,6 +394,7 @@ mod tests {
 
     #[test]
     fn formats_diagnostic() {
+        let cwd = std::env::temp_dir().canonicalize().unwrap();
         let items = vec![json!({
             "range": {
                 "start": { "line": 1, "character": 2 },
@@ -399,7 +404,12 @@ mod tests {
             "message": "bad"
         })];
         assert_eq!(
-            format_diagnostics(&items, "file:///tmp/a.ts", "/tmp").unwrap(),
+            format_diagnostics(
+                &items,
+                &super::file_uri(&cwd.join("a.ts")).unwrap(),
+                cwd.to_str().unwrap(),
+            )
+            .unwrap(),
             "Found 1 diagnostic\na.ts:2:3-2:4: error: bad"
         );
     }
