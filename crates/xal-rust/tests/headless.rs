@@ -1092,8 +1092,10 @@ fn worktree_switches_refresh_same_round_tools_structured_output_and_journal_even
         .collect::<Vec<_>>();
     assert_eq!(changed.len(), 2);
     assert_eq!(
-        changed[0]["previous"],
-        fixture.cwd.to_string_lossy().as_ref()
+        PathBuf::from(changed[0]["previous"].as_str().unwrap())
+            .canonicalize()
+            .unwrap(),
+        fixture.cwd
     );
     assert_eq!(changed[0]["cwd"], changed[1]["previous"]);
     assert_eq!(changed[1]["cwd"], fixture.cwd.to_string_lossy().as_ref());
@@ -1114,12 +1116,10 @@ fn worktree_switches_refresh_same_round_tools_structured_output_and_journal_even
     assert_eq!(
         journal
             .lines()
-            .filter(
-                |line| serde_json::from_str::<Value>(line).unwrap()["event"]["type"]
-                    == "workspace_changed"
-            )
-            .count(),
-        2
+            .map(|line| serde_json::from_str::<Value>(line).unwrap()["event"].clone())
+            .filter(|event| event["type"] == "workspace_changed")
+            .collect::<Vec<_>>(),
+        changed.into_iter().cloned().collect::<Vec<_>>()
     );
     assert_eq!(
         fs::read_to_string(fixture.cwd.join("sample.txt")).unwrap(),
