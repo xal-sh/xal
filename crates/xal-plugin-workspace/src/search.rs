@@ -27,8 +27,18 @@ impl Plugin for Search {
                 parameters["properties"]["case_insensitive"] = json!({"type":"boolean"});
             }
             registration.tool(name, Tool {
+                title: Some(Box::new(move |args, session| {
+                    let mut title = args.get("pattern").and_then(Value::as_str).unwrap_or("").to_owned();
+                    if name == "grep" && let Some(glob) = args.get("glob").and_then(Value::as_str).filter(|glob| !glob.is_empty()) {
+                        title.push_str(&format!(" ({glob})"));
+                    }
+                    if let Some(path) = args.get("path").and_then(Value::as_str).filter(|path| !path.is_empty()) {
+                        title.push_str(&format!(" in {}", session.display_path(path)?));
+                    }
+                    Ok(title)
+                })),
                 description: if name == "grep" { "Search files with a Rust regular expression, honoring ignore rules. Returns up to 250 matching lines or file paths." } else { "List files matching a glob, honoring ignore rules. Up to 100 files, newest first." }.into(),
-                parameters: schema(parameters), effects: Effects::read, redact: None, available: Box::new(|_| Ok(true)),
+                parameters: schema(parameters), effects: Effects::read, concurrency: None, permission_subject: None, redact: None, available: Box::new(|_| Ok(true)),
                 run: Box::new(move |args, context| Box::pin(async move {
                     let cancelled = Arc::new(AtomicBool::new(false));
                     let flag = cancelled.clone();
@@ -54,7 +64,28 @@ impl Plugin for Search {
                     }
                 })),
             })?;
+            super::renderer(registration, name, summarize)?;
         }
         Ok(())
     }
+}
+
+fn summarize(output: &str) -> String {
+    let first = output.lines().next().unwrap_or("");
+    if let Some(count) = first
+        .strip_prefix("Found ")
+        .and_then(|line| line.strip_suffix(" matching lines"))
+    {
+        return format!("{count} matches");
+    }
+    if let Some(count) = first
+        .strip_prefix("Found ")
+        .and_then(|line| line.strip_suffix(" files"))
+    {
+        return format!("{count} files");
+    }
+    if first.starts_with("No matches found") || first.starts_with("No files found") {
+        return "no matches".into();
+    }
+    first.into()
 }

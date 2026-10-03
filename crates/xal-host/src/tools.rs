@@ -12,6 +12,8 @@ pub struct PreparedTool {
     read_only: bool,
     pub(crate) args: JsonObject,
     pub(crate) effects: Effects,
+    pub(crate) concurrency: Concurrency,
+    subject: Option<String>,
 }
 
 pub(crate) struct OutputPolicy {
@@ -43,13 +45,42 @@ impl Host {
         };
     }
 
+    pub(crate) fn tool_catalog(
+        &self,
+        session: &Session,
+    ) -> Result<std::collections::BTreeMap<String, (&Entry, std::sync::Arc<Tool>)>> {
+        let session = self.effective_session(session)?;
+        let mut tools = std::collections::BTreeMap::new();
+        for entry in self.ready() {
+            for (name, tool) in &entry.registration.tools {
+                if tools.insert(name.clone(), (entry, tool.clone())).is_some() {
+                    return Err(Error::Failed(format!("duplicate tool: {name}")));
+                }
+            }
+            for (prefix, source) in &entry.registration.tool_sources {
+                for (name, tool) in guarded(|| source(&session))? {
+                    if !valid_name(&name) || !name.starts_with(prefix) {
+                        return Err(Error::Failed(format!(
+                            "dynamic tool {name} is outside its namespace {prefix}"
+                        )));
+                    }
+                    xal_services::schema::validator(&Value::Object(tool.parameters.clone()))
+                        .map_err(|error| Error::Failed(format!("dynamic tool {name}: {error}")))?;
+                    if tools.insert(name.clone(), (entry, tool)).is_some() {
+                        return Err(Error::Failed(format!("duplicate tool: {name}")));
+                    }
+                }
+            }
+        }
+        Ok(tools)
+    }
+
     pub fn tools(&self, session: &Session) -> Result<Vec<ToolDefinition>> {
         self.check()?;
+        let session = self.effective_session(session)?;
+        let session = &session;
         let mut tools = Vec::new();
-        for (name, tool) in self
-            .ready()
-            .flat_map(|entry| entry.registration.tools.iter())
-        {
+        for (name, (_, tool)) in self.tool_catalog(session)? {
             if !guarded(|| (tool.available)(session))? {
                 continue;
             }
@@ -67,11 +98,12 @@ impl Host {
         name: &str,
         args: &JsonObject,
         redactor: &xal_services::redactor::Redactor,
+        session: &Session,
     ) -> Result<JsonObject> {
         if let Some(redact) = self
-            .ready()
-            .find_map(|entry| entry.registration.tools.get(name))
-            .and_then(|tool| tool.redact)
+            .tool_catalog(session)?
+            .get(name)
+            .and_then(|(_, tool)| tool.redact)
         {
             return guarded(|| redact(args, redactor));
         }
@@ -99,9 +131,11 @@ impl Host {
     ) -> Result<PreparedTool> {
         self.check()?;
         session.cancellation.check()?;
-        let tool = self
-            .ready()
-            .find_map(|entry| entry.registration.tools.get(name))
+        let session = self.effective_session(session)?;
+        let session = &session;
+        let (_, tool) = self
+            .tool_catalog(session)?
+            .remove(name)
             .ok_or_else(|| Error::Failed(format!("unknown tool: {name}")))?;
         if !guarded(|| (tool.available)(session))? {
             return Err(Error::Denied(format!(
@@ -125,7 +159,10 @@ impl Host {
             };
             args
         };
-        let args = self.redact_arguments(name, &args, &self.output.redactor)?;
+        let args = match tool.redact {
+            Some(redact) => guarded(|| redact(&args, &self.output.redactor))?,
+            None => self.redact_arguments(name, &args, &self.output.redactor, session)?,
+        };
         xal_services::schema::validate(
             &Value::Object(tool.parameters.clone()),
             &Value::Object(args.clone()),
@@ -142,7 +179,13 @@ impl Host {
             session_id: session.id.clone(),
             cwd: session.cwd.clone(),
             read_only: session.read_only,
-            args,
+            subject: tool
+                .permission_subject
+                .as_ref()
+                .map(|subject| guarded(|| subject(&args)))
+                .transpose()?,
+            args: args.clone(),
+            concurrency: concurrency(&tool, &args, effects)?,
             effects,
         })
     }
@@ -150,6 +193,8 @@ impl Host {
     pub async fn authorize_tool(&self, prepared: &PreparedTool, session: &Session) -> Result<()> {
         self.check()?;
         session.cancellation.check()?;
+        let session = self.effective_session(session)?;
+        let session = &session;
         if prepared.session_id != session.id
             || prepared.cwd != session.cwd
             || prepared.read_only != session.read_only
@@ -167,6 +212,7 @@ impl Host {
             tool: prepared.name.clone(),
             args: prepared.args.clone(),
             read_only: prepared.effects == Effects::Read,
+            subject: prepared.subject.clone(),
         };
         let mut decision = match &self.permissions {
             Some(permissions) => permissions.evaluate(&request, &session.cwd)?,
@@ -235,14 +281,49 @@ impl Host {
         self.check()?;
         self.authorize_tool(&prepared, session).await?;
         session.cancellation.check()?;
-        let entry = self
-            .ready()
-            .find(|entry| entry.registration.tools.contains_key(&prepared.name))
+        let session = self.effective_session(session)?;
+        let session = &session;
+        let (entry, tool) = self
+            .tool_catalog(session)?
+            .remove(&prepared.name)
             .ok_or_else(|| Error::Failed(format!("tool removed: {}", prepared.name)))?;
-        let tool = &entry.registration.tools[&prepared.name];
+        if !guarded(|| (tool.available)(session))? {
+            return Err(Error::Denied(format!(
+                "{} is known but unavailable in this session",
+                prepared.name
+            )));
+        }
+        xal_services::schema::validate(
+            &Value::Object(tool.parameters.clone()),
+            &Value::Object(prepared.args.clone()),
+        )
+        .map_err(|error| Error::Failed(error.to_string()))?;
+        if tool
+            .permission_subject
+            .as_ref()
+            .map(|subject| guarded(|| subject(&prepared.args)))
+            .transpose()?
+            != prepared.subject
+        {
+            return Err(Error::Denied(
+                "tool permission subject changed after preparation".into(),
+            ));
+        }
+        if guarded(|| Ok((tool.effects)(&prepared.args)))? != prepared.effects
+            || concurrency(&tool, &prepared.args, prepared.effects)? != prepared.concurrency
+        {
+            return Err(Error::Denied(
+                "tool effects changed after preparation".into(),
+            ));
+        }
+        let workspace = std::sync::Arc::new(std::sync::Mutex::new(None));
         let cancellation = session.cancellation.child();
         let (sender, mut receiver) = channel(16, Cancellation::default())?;
         let context = Context {
+            command_owners: self.command_owners(),
+            workspace: (prepared.effects == Effects::Write
+                && prepared.concurrency == Concurrency::Exclusive)
+                .then(|| workspace.clone()),
             session: session.clone(),
             cancellation: cancellation.clone(),
             output: output.as_ref().map(|_| sender),
@@ -270,12 +351,13 @@ impl Host {
         let mut closed = false;
         let mut stream = self.output.redactor.stream();
         let mut delivered = 0;
+        let mut stream_error = None;
         while settled.is_none() || !closed {
             tokio::select! {
                 result = &mut supervised, if settled.is_none() => { settled = Some(result); receiver.close(); },
                 delta = receiver.recv(), if !closed => {
-                    match delta? {
-                        Some(delta) => {
+                    match delta {
+                        Ok(Some(delta)) => {
                             let delta = stream.write(&delta);
                             if let Some(output) = &output {
                                 let delta = crate::agent::storage::prefix(&delta, (20 * 1024usize).saturating_sub(delivered));
@@ -284,31 +366,64 @@ impl Host {
                                     && let Err(error) = forward(output, delta.into(), &cancellation, &entry.registration.cancellation).await {
                                         cancellation.cancel();
                                         session.cancellation.cancel();
-                                        if settled.is_none() { supervised.await?; }
-                                        return Err(error);
+                                        receiver.close();
+                                        closed = true;
+                                        stream_error = Some(error);
                                     }
                             }
                         }
-                        None => closed = true,
+                        Ok(None) => closed = true,
+                        Err(error) => {
+                            cancellation.cancel();
+                            session.cancellation.cancel();
+                            receiver.close();
+                            closed = true;
+                            stream_error = Some(error);
+                        }
                     }
                 }
             }
         }
-        if let Some(output) = &output {
+        if stream_error.is_none()
+            && let Some(output) = &output
+        {
             let tail = stream.end();
             let tail =
                 crate::agent::storage::prefix(&tail, (20 * 1024usize).saturating_sub(delivered));
-            if !tail.is_empty() {
-                forward(
+            if !tail.is_empty()
+                && let Err(error) = forward(
                     output,
                     tail.into(),
                     &cancellation,
                     &entry.registration.cancellation,
                 )
-                .await?;
+                .await
+            {
+                cancellation.cancel();
+                session.cancellation.cancel();
+                stream_error = Some(error);
             }
         }
-        let result = settled.ok_or_else(|| Error::Failed("tool result missing".into()))??;
+        let result = settled.ok_or_else(|| Error::Failed("tool result missing".into()))?;
+        let changed = self.apply_workspace(session, workspace).await;
+        let result = match (result, changed) {
+            (result, Ok(())) => result,
+            (Ok(_), Err(error)) => return Err(error),
+            (Err(error), Err(cleanup)) => {
+                return Err(Error::Failed(format!(
+                    "{error}; workspace switch failed: {cleanup}"
+                )));
+            }
+        };
+        if let Some(error) = stream_error {
+            return match result {
+                Err(settled) if settled != Error::Cancelled => Err(Error::Failed(format!(
+                    "{error}; tool settlement failed: {settled}"
+                ))),
+                _ => Err(error),
+            };
+        }
+        let result = result?;
         cancellation.check()?;
         cancellation.cancel();
         if speculative {
@@ -324,6 +439,8 @@ impl Host {
         args: JsonObject,
         session: &Session,
     ) -> Result<PreparedTool> {
+        let session = self.effective_session(session)?;
+        let session = &session;
         let HookInput::BeforeTool { args, .. } = self
             .hook(
                 HookInput::BeforeTool {
@@ -352,6 +469,8 @@ impl Host {
             read_only: session.read_only,
             args,
             effects: Effects::Read,
+            concurrency: Concurrency::Shared,
+            subject: None,
         })
     }
 
@@ -465,10 +584,22 @@ impl Host {
 
     pub async fn dispose_session(&self, session: &Session) -> Result<()> {
         session.cancellation.cancel();
+        let session = self.effective_session(session)?;
+        let result = self.dispose_resources(&session).await;
+        self.workspaces
+            .lock()
+            .map_err(|_| Error::Failed("workspace state lock poisoned".into()))?
+            .remove(&session.id);
+        result
+    }
+
+    pub(crate) async fn dispose_resources(&self, session: &Session) -> Result<()> {
         let mut errors = Vec::new();
         for entry in self.ready().collect::<Vec<_>>().into_iter().rev() {
             for dispose in entry.registration.session_disposers.iter().rev() {
                 let context = Context {
+                    command_owners: self.command_owners(),
+                    workspace: None,
                     session: session.clone(),
                     cancellation: Cancellation::default(),
                     output: None,
@@ -486,6 +617,18 @@ impl Host {
         }
         Err(Error::Failed(errors.join("\n")))
     }
+}
+
+fn concurrency(tool: &Tool, args: &JsonObject, effects: Effects) -> Result<Concurrency> {
+    guarded(|| {
+        Ok(match tool.concurrency {
+            Some(concurrency) => concurrency(args),
+            None => match effects {
+                Effects::Read => Concurrency::Shared,
+                Effects::Write => Concurrency::Exclusive,
+            },
+        })
+    })
 }
 
 async fn forward(

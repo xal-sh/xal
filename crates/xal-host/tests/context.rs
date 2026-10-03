@@ -227,9 +227,12 @@ impl Plugin for Mock {
         r.tool(
             "read",
             Tool {
+                title: None,
                 description: "read".into(),
                 parameters: json!({"type":"object"}).as_object().unwrap().clone(),
                 effects: Effects::read,
+                concurrency: None,
+                permission_subject: None,
                 redact: None,
                 available: Box::new(|_| Ok(true)),
                 run: Box::new(move |args, _| {

@@ -159,7 +159,7 @@ pub(super) async fn run(
                                 if visible { let text = raw.write(&delta); if !text.is_empty() { sink.emit(AgentEvent::ReasoningDelta { text })?; } }
                             }
                             ProviderEvent::Item(item) => {
-                                let item = super::redaction::item(host, sink.redactor, item)?;
+                                let item = super::redaction::item(host, sink.redactor, item, session)?;
                                 bytes = bytes.saturating_add(serde_json::to_vec(&item).map_err(super::sink::failure)?.len());
                                 match &item {
                                     Item::AssistantMessage { text: content, .. } => {

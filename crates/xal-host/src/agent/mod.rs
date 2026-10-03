@@ -132,7 +132,7 @@ impl<'a> Agent<'a> {
         if let Some(checkpoint) = checkpoint {
             let items = items
                 .into_iter()
-                .map(|item| redaction::item(self.host, self.sink.redactor, item))
+                .map(|item| redaction::item(self.host, self.sink.redactor, item, &self.session))
                 .collect::<Result<Vec<_>>>()?;
             let mut checkpoint = checkpoint.payload()["item"].clone();
             checkpoint["retained"] = json!(&items[..items.len() - 1]);
@@ -214,6 +214,20 @@ impl<'a> Agent<'a> {
         Ok(outcome)
     }
 
+    fn refresh_workspace(&mut self) -> Result<()> {
+        let session = self.host.effective_session(&self.session)?;
+        if session.cwd == self.session.cwd {
+            return Ok(());
+        }
+        let previous = self.session.cwd.to_string_lossy().into_owned();
+        self.session = session;
+        self.loops = loops::ToolLoops::default();
+        self.sink.emit(AgentEvent::WorkspaceChanged {
+            cwd: self.session.cwd.to_string_lossy().into_owned(),
+            previous,
+        })
+    }
+
     async fn turn(&mut self, input: Input) -> Result<()> {
         self.sink.emit(AgentEvent::SessionStarted {
             id: self.session.id.clone(),
@@ -227,6 +241,7 @@ impl<'a> Agent<'a> {
         self.input(input).await?;
         let mut interjected = false;
         loop {
+            self.refresh_workspace()?;
             self.session.cancellation.check()?;
             let queued = self.control.drain()?;
             if !queued.is_empty() {
@@ -376,7 +391,7 @@ impl<'a> Agent<'a> {
     }
 
     fn push(&mut self, item: Item) -> Result<()> {
-        self.history.push(self.sink.item(item)?);
+        self.history.push(self.sink.item(item, &self.session)?);
         self.summarized = false;
         Ok(())
     }
@@ -403,7 +418,7 @@ impl<'a> Agent<'a> {
         let instructions = format!(
             "{}\n\n{}",
             self.options.instructions,
-            self.host.prompts()?.join("\n\n")
+            self.host.session_prompts(&self.session)?.join("\n\n")
         );
         let instructions = self.sink.redactor.redact(&instructions);
         let cache_key = history::cache_key(&self.options.model, &instructions, &tools);

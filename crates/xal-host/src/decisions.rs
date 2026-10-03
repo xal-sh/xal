@@ -118,6 +118,8 @@ impl Service {
             }
             let cancellation = session.cancellation.child();
             let context = Context {
+                command_owners: std::sync::Arc::default(),
+                workspace: None,
                 session: session.clone(),
                 cancellation: cancellation.clone(),
                 output: None,

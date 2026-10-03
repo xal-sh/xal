@@ -22,10 +22,11 @@ impl Plugin for Classify {
         let home = self.home.clone();
         let cwd = self.cwd.clone();
         registration.tool("classify", Tool {
+            title: Some(Box::new(|args, _| Ok(format!("{} evaluations", args.get("evaluations").and_then(Value::as_array).map_or(0, Vec::len))))),
             description: "Evaluate supplied text or JSON with TypeSafe AI's Jev using caller-defined yes/no, choice, or score questions. Returns typed answers, not explanations or permission to act. Questions sharing state are batched; evaluations run consecutively. Uses one estimated token per serialized UTF-8 byte: 30,000 for state plus each question, 60,000 per request, at most 100 requests and five minutes. Oversized inputs fail before sending; nothing is truncated. Requires TypeSafe AI On; sends supplied content to TypeSafe and incurs API usage. Errors stop the call; completed requests remain billed and recorded.".into(),
             parameters: serde_json::from_str(include_str!("schema.json")).map_err(failure)?,
             effects: Effects::read,
-            redact: Some(redact),
+            concurrency: None, permission_subject: None, redact: Some(redact),
             available: Box::new(move |_| Ok(matches!(Configuration::load(&home, &cwd).map_err(failure)?.settings.typesafe_ai, TypeSafeSettings::Enabled { .. }))),
             run: Box::new(|args, context| Box::pin(execute(args, context))),
         })

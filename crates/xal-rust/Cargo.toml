@@ -14,5 +14,8 @@ xal-plugin-providers = { path = "../xal-plugin-providers" }
 xal-plugin-classify = { path = "../xal-plugin-classify" }
 xal-providers = { path = "../xal-providers" }
 xal-plugin-workspace = { path = "../xal-plugin-workspace" }
+xal-plugin-context = { path = "../xal-plugin-context" }
+xal-plugin-lsp = { path = "../xal-plugin-lsp" }
+xal-plugin-mcp = { path = "../xal-plugin-mcp" }
 serde_json = "=1.0.145"
 tokio = { version = "=1.50.0", features = ["rt", "macros", "signal", "process", "net", "io-util"] }

@@ -54,8 +54,8 @@ impl Sink<'_> {
         (self.receive)(event)
     }
 
-    pub fn item(&mut self, item: Item) -> Result<Item> {
-        let item = super::redaction::item(self.host, self.redactor, item)?;
+    pub fn item(&mut self, item: Item, session: &crate::Session) -> Result<Item> {
+        let item = super::redaction::item(self.host, self.redactor, item, session)?;
         let value = serde_json::to_value(&item).map_err(failure)?;
         if let Some(journal) = &mut self.journal {
             journal.append(&json!({"type":"item","item":value}))?;

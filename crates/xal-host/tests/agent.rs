@@ -95,13 +95,14 @@ impl Plugin for Fixture {
         for (name, effects) in [
             ("read", Effects::read as fn(&JsonObject) -> Effects),
             ("write", Effects::write),
+            ("shared_write", Effects::write),
         ] {
             let calls = self.calls.clone();
             let active = self.active.clone();
             let maximum = self.maximum.clone();
             let started = self.started.clone();
             let pause_tool = self.pause_tool;
-            registration.tool(name, Tool { description: name.into(), parameters: json!({"type":"object","properties":{"effective":{"const":true}},"required":["effective"]}).as_object().unwrap().clone(), effects, redact: None, available: Box::new(|_| Ok(true)), run: Box::new(move |args, context| {
+            registration.tool(name, Tool { title: Some(Box::new(move |args, _| Ok(format!("{name} effective={} secret-value", args.get("effective").and_then(serde_json::Value::as_bool).unwrap_or(false))))), description: name.into(), parameters: json!({"type":"object","properties":{"effective":{"const":true}},"required":["effective"]}).as_object().unwrap().clone(), effects, concurrency: if name == "shared_write" { Some(|_| Concurrency::Shared) } else { None }, permission_subject: None, redact: None, available: Box::new(|_| Ok(true)), run: Box::new(move |args, context| {
                 let calls = calls.clone(); let active = active.clone(); let maximum = maximum.clone(); let started = started.clone();
                 Box::pin(async move {
                     assert_eq!(args["effective"], true);
@@ -233,6 +234,13 @@ async fn effective_hooks_concurrent_reads_exclusive_writes_and_redacted_output()
             }
         }
     }
+    for event in &events {
+        if let AgentEvent::ToolStarted { tool, title, .. }
+        | AgentEvent::ToolFinished { tool, title, .. } = event
+        {
+            assert_eq!(title, &format!("{tool} effective=true [REDACTED]"));
+        }
+    }
     for id in ["one", "two", "three"] {
         let finished = events
             .iter()
@@ -270,6 +278,59 @@ async fn effective_hooks_concurrent_reads_exclusive_writes_and_redacted_output()
             .contains("secret-value")
     );
     host.shutdown().await;
+}
+
+#[tokio::test]
+async fn explicit_shared_scheduling_preserves_write_permissions() {
+    let fixture = Fixture::new(
+        vec![
+            vec![
+                call("one", "shared_write"),
+                call("two", "shared_write"),
+                done(),
+            ],
+            answer("finished"),
+        ],
+        false,
+    );
+    let maximum = fixture.maximum.clone();
+    let redactor = Arc::new(Redactor::new(vec!["secret-value".into()]).unwrap());
+    let mut host = Host::new(vec![Box::new(fixture)], Cancellation::default());
+    host.output_policy(redactor.clone(), options().artifacts);
+    host.start().await.unwrap();
+    let session = host
+        .session("test".into(), ".".into(), SessionKind::Headless, false)
+        .unwrap();
+    assert!(matches!(
+        host.prepare_tool(
+            "shared_write",
+            JsonObject::new(),
+            &Session {
+                read_only: true,
+                ..session.clone()
+            },
+        )
+        .await,
+        Err(Error::Denied(_))
+    ));
+    let mut events = Vec::new();
+    let mut receive = |event| {
+        events.push(event);
+        Ok(())
+    };
+    let mut agent = Agent::new(&host, session, options(), &redactor, None, &mut receive).unwrap();
+    assert!(matches!(
+        agent.run(input("authored")).await.unwrap(),
+        Outcome::Completed { .. }
+    ));
+    assert_eq!(maximum.load(Ordering::SeqCst), 2);
+    for event in events {
+        if let AgentEvent::ToolStarted { read_only, .. } = event {
+            assert!(!read_only);
+        }
+    }
+    host.shutdown().await;
+    assert!(host.failures().is_empty());
 }
 
 #[tokio::test]
@@ -433,9 +494,12 @@ impl Plugin for Loud {
         registration.tool(
             "loud",
             Tool {
+                title: None,
                 description: "loud".into(),
                 parameters: JsonObject::new(),
                 effects: Effects::read,
+                concurrency: None,
+                permission_subject: None,
                 redact: None,
                 available: Box::new(|_| Ok(true)),
                 run: Box::new(|_, context| {
@@ -500,9 +564,12 @@ impl Plugin for Stuck {
         registration.tool(
             "stuck",
             Tool {
+                title: None,
                 description: "stuck".into(),
                 parameters: JsonObject::new(),
                 effects: Effects::read,
+                concurrency: None,
+                permission_subject: None,
                 redact: None,
                 available: Box::new(|_| Ok(true)),
                 run: Box::new(|_, context| {

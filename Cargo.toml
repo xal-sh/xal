@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/xal-host", "crates/xal-native", "crates/xal-plugin-diagnostics", "crates/xal-plugin-inspect", "crates/xal-rust", "crates/xal-plugin-workspace", "crates/xal-services", "crates/xal-providers", "crates/xal-plugin-providers", "crates/xal-plugin-classify"]
+members = ["crates/xal-host", "crates/xal-native", "crates/xal-plugin-diagnostics", "crates/xal-plugin-inspect", "crates/xal-rust", "crates/xal-plugin-workspace", "crates/xal-services", "crates/xal-providers", "crates/xal-plugin-providers", "crates/xal-plugin-classify", "crates/xal-plugin-context", "crates/xal-plugin-lsp", "crates/xal-plugin-mcp"]
 resolver = "3"
 
 [workspace.package]

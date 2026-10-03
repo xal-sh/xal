@@ -25,9 +25,12 @@ impl Plugin for Capabilities {
         registration.tool(
             "read",
             Tool {
+                title: None,
                 description: "read".into(),
                 parameters: JsonObject::new(),
                 effects: Effects::read,
+                concurrency: None,
+                permission_subject: None,
                 redact: None,
                 available: Box::new(|_| Ok(true)),
                 run: Box::new(|args, _| {
@@ -46,9 +49,12 @@ impl Plugin for Capabilities {
         registration.tool(
             "write",
             Tool {
+                title: None,
                 description: "write".into(),
                 parameters: JsonObject::new(),
                 effects: Effects::write,
+                concurrency: None,
+                permission_subject: None,
                 redact: None,
                 available: Box::new(|_| Ok(true)),
                 run: Box::new(|_, _| Box::pin(async { panic!("must not execute denied tool") })),

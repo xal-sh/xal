@@ -12,6 +12,11 @@ pub type JsonObject = Map<String, Value>;
 pub type Call<'a, T> = Pin<Box<dyn Future<Output = Result<T>> + Send + 'a>>;
 pub type Handler<I, O> = Box<dyn Fn(I, Context) -> Call<'static, O> + Send + Sync>;
 pub type Availability = Box<dyn Fn(&Session) -> Result<bool> + Send + Sync>;
+pub type ToolSource =
+    Box<dyn Fn(&Session) -> Result<BTreeMap<String, std::sync::Arc<Tool>>> + Send + Sync>;
+pub type PromptSource = Box<dyn Fn(&Session) -> Result<String> + Send + Sync>;
+pub type PermissionSubject = Box<dyn Fn(&JsonObject) -> Result<String> + Send + Sync>;
+pub type ToolTitle = Box<dyn Fn(&JsonObject, &Session) -> Result<String> + Send + Sync>;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SessionKind {
@@ -29,14 +34,43 @@ pub struct Session {
     pub cancellation: Cancellation,
 }
 
+impl Session {
+    pub fn display_path(&self, path: &str) -> Result<String> {
+        if path.is_empty() {
+            return Ok(String::new());
+        }
+        let absolute = crate::permissions::logical_path(&self.cwd, path)?;
+        let relative = crate::permissions::display_path(&absolute, &self.cwd);
+        if relative.is_empty()
+            || relative.starts_with("..")
+            || std::path::Path::new(&relative).is_absolute()
+        {
+            return Ok(if std::path::Path::new(path).is_absolute() {
+                path.into()
+            } else {
+                absolute.to_string_lossy().into_owned()
+            });
+        }
+        Ok(relative)
+    }
+}
+
 #[derive(Clone)]
 pub struct Context {
+    pub(crate) command_owners: std::sync::Arc<BTreeMap<String, String>>,
+    pub(crate) workspace: Option<crate::workspace::Change>,
     pub session: Session,
     pub cancellation: Cancellation,
     pub output: Option<crate::Sender<String>>,
     pub speculative: bool,
     pub decisions: Option<std::sync::Arc<crate::decisions::Service>>,
     pub observation: Option<std::sync::Arc<crate::recording::Request>>,
+}
+
+impl Context {
+    pub fn command_owner(&self, name: &str) -> Option<&str> {
+        self.command_owners.get(name).map(String::as_str)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -72,15 +106,25 @@ pub struct PermissionRequest {
     pub tool: String,
     pub args: JsonObject,
     pub read_only: bool,
+    pub subject: Option<String>,
 }
 
 pub struct Tool {
+    pub title: Option<ToolTitle>,
     pub description: String,
     pub parameters: JsonObject,
     pub effects: fn(&JsonObject) -> Effects,
+    pub concurrency: Option<fn(&JsonObject) -> Concurrency>,
+    pub permission_subject: Option<PermissionSubject>,
     pub redact: Option<fn(&JsonObject, &xal_services::redactor::Redactor) -> Result<JsonObject>>,
     pub available: Availability,
     pub run: Handler<JsonObject, ToolResult>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Concurrency {
+    Shared,
+    Exclusive,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

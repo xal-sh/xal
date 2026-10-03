@@ -17,6 +17,21 @@ impl Plugin for Shell {
     }
 
     fn register(&mut self, registration: &mut Registration) -> Result<()> {
+        registration.prompt_source("shell", Box::new(|session| {
+            let shell = xal_services::shell::select().map_err(failure)?;
+            Ok(format!("Platform: {}. Working directory: {}.\nShell: {}{}, without interactive rc files. OS shell sandbox: {}.", std::env::consts::OS, session.cwd.display(), shell.label, shell.diagnostic.map_or_else(String::new, |message| format!(" ({message})")), if sandbox_available() { "macOS sandbox-exec (read/workspace, network denied)" } else { "unavailable; commands are not OS-sandboxed" }))
+        }))?;
+        registration.ui(
+            "bash",
+            Box::new(|contribution, _| {
+                Box::pin(async move {
+                    let UiContribution::Text { text } = contribution else {
+                        return Err(failure("shell title renderer expects text"));
+                    };
+                    Ok(super::compact_command_title(&text))
+                })
+            }),
+        )?;
         let manager = Arc::new(ShellManager::new());
         let owned = manager.clone();
         registration.session_disposer(Box::new(move |_, context| {
@@ -29,9 +44,13 @@ impl Plugin for Shell {
             })
         }));
         let owned = manager.clone();
-        registration.own(move || {
-            owned.dispose_all();
-            Ok(())
+        registration.own_async(move || {
+            Box::pin(async move {
+                tokio::task::spawn_blocking(move || owned.shutdown_all())
+                    .await
+                    .map_err(failure)?
+                    .map_err(failure)
+            })
         });
         let mut parameters = json!({"type":"object","properties":{"command":{"type":"string","minLength":1},"timeout":{"type":"number"},"background":{"type":"boolean"}},"required":["command"],"additionalProperties":false});
         if sandbox_available() {
@@ -39,10 +58,11 @@ impl Plugin for Shell {
                 json!({"type":"string","enum":["read","workspace"]});
         }
         registration.tool("bash", Tool {
+            title: Some(Box::new(|args, _| Ok(args.get("command").and_then(Value::as_str).unwrap_or("").into()))),
             description: "Execute foreground commands in a persistent shell without interactive rc files. cwd, exported variables and functions persist. Default timeout 120 seconds, maximum 600. On macOS sandbox read prevents writes, workspace permits workspace/temp writes, and both deny network. Read-sandbox calls may run concurrently in isolated shells. Background jobs are not available in this native phase.".into(),
             parameters: schema(parameters),
             effects: |args| if sandbox_available() && args.get("sandbox").and_then(Value::as_str) == Some("read") && args.get("background").and_then(Value::as_bool) != Some(true) { Effects::Read } else { Effects::Write },
-            redact: None, available: Box::new(|_| Ok(true)),
+            concurrency: None, permission_subject: None, redact: None, available: Box::new(|_| Ok(true)),
             run: Box::new(move |args, context| {
                 let manager = manager.clone();
                 Box::pin(async move {
@@ -51,7 +71,7 @@ impl Plugin for Shell {
                     let command = text(&args, "command")?;
                     let sandbox = args.get("sandbox").and_then(Value::as_str);
                     let seconds = args.get("timeout").and_then(Value::as_f64).unwrap_or(120.0).round().clamp(1.0, 600.0);
-                    let executable = shell()?;
+                    let executable = xal_services::shell::select().map_err(failure)?.executable;
                     let cwd = context.session.cwd.to_string_lossy().into_owned();
                     let mut environment = std::env::vars().map(|(name, value)| EnvironmentVariable { name, value }).collect::<Vec<_>>();
                     environment.retain(|entry| entry.name != "PWD");
@@ -124,25 +144,6 @@ impl Plugin for Shell {
             }),
         })
     }
-}
-
-fn shell() -> Result<String> {
-    let configured = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
-    let configured = configured.trim();
-    let path = Path::new(configured);
-    let supported = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .is_some_and(|name| ["sh", "bash", "dash", "ksh", "mksh", "zsh"].contains(&name));
-    if path.is_absolute() && path.is_file() && supported {
-        return Ok(configured.into());
-    }
-    if Path::new("/bin/sh").is_file() {
-        return Ok("/bin/sh".into());
-    }
-    Err(Error::Failed(
-        "no supported POSIX shell is available; configure SHELL".into(),
-    ))
 }
 
 fn launch(command: Vec<String>, cwd: &Path, sandbox: Option<&str>) -> Result<Vec<String>> {

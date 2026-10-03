@@ -308,16 +308,16 @@ async fn execute(
     let permissions = Permissions::load(&config.settings, home, cwd, mode)?;
     let read_only = permissions.read_only;
     let guidance = permissions.guidance.clone();
-    let mut plugins: Vec<Box<dyn Plugin>> = vec![
-        Box::new(xal_plugin_workspace::Files),
-        Box::new(xal_plugin_workspace::Search),
-        Box::new(xal_plugin_workspace::Shell),
-        Box::new(xal_plugin_providers::TextProvider { client, models }),
-        Box::new(xal_plugin_classify::Classify {
-            home: home.into(),
-            cwd: cwd.into(),
-        }),
-    ];
+    crate::integrations::discovery(config, redactor)?;
+    let mut plugins = crate::integrations::plugins(config, home, cwd, redactor)?;
+    plugins.push(Box::new(xal_plugin_providers::TextProvider {
+        client,
+        models,
+    }));
+    plugins.push(Box::new(xal_plugin_classify::Classify {
+        home: home.into(),
+        cwd: cwd.into(),
+    }));
     let decision_profile = match &config.settings.typesafe_ai {
         TypeSafeSettings::Enabled { profile } => Some(profile.clone()),
         TypeSafeSettings::Disabled { profile } => profile.clone(),
@@ -355,12 +355,15 @@ async fn execute(
     );
     let result = async {
         host.start().await?;
+        for warning in host.warnings() {
+            diagnostic(&redactor.redact(warning))?;
+        }
         let id = new_id().map_err(failure)?;
         let directory = Paths { home: home.into() }.project_sessions(cwd, redactor).map_err(failure)?;
         let session = host.session(id.clone(), cwd.into(), SessionKind::Headless, read_only)?;
         let options = Options {
             provider: provider.as_str().into(), profile: Some(profile.id.clone()), model: model.clone(), mode: mode.into(),
-            instructions: crate::prompt::instructions(cwd, mode, read_only, &guidance),
+            instructions: crate::prompt::instructions(mode, read_only, &guidance),
             thinking,
             context_window: info.context_window.unwrap_or(u64::MAX / 5),
             image_input: info.input_modalities.iter().any(|m| m == "image"), summary_target: Some(summary_target),

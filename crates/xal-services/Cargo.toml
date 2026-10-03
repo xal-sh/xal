@@ -8,6 +8,12 @@ rust-version = "1.92"
 [dependencies]
 bytes = "=1.12.1"
 futures-util = "=0.3.34"
+encoding_rs = "=0.8.35"
+html2md = "=0.2.15"
+rmcp = { version = "=3.2.0", default-features = false, features = ["client", "transport-async-rw", "transport-streamable-http-client"] }
+sse-stream = "=0.2.5"
+tokio = { version = "=1.50.0", features = ["rt-multi-thread", "process", "time", "sync", "macros", "io-util", "net"] }
+which = "=8.0.5"
 reqwest13 = { package = "reqwest", version = "=0.13.2", default-features = false, features = ["json", "rustls", "stream"] }
 globset = "=0.4.20"
 grep-regex = "=0.1.14"
@@ -18,9 +24,10 @@ getrandom = "=0.3.4"
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = { version = "=1.0.145", features = ["float_roundtrip"] }
 sha2 = "=0.10.9"
+serde_yaml = "=0.9.34"
 
 [target.'cfg(unix)'.dependencies]
 libc = "=0.2.189"
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_Storage_FileSystem", "Win32_System_Console", "Win32_System_Threading", "Win32_System_IO", "Win32_System_Pipes"] }
+windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_Storage_FileSystem", "Win32_System_Console", "Win32_System_Threading", "Win32_System_IO", "Win32_System_Pipes", "Win32_System_JobObjects", "Win32_System_Diagnostics_ToolHelp"] }

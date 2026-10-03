@@ -31,6 +31,10 @@ pub enum AgentEvent {
         model: String,
         mode: String,
     },
+    WorkspaceChanged {
+        cwd: String,
+        previous: String,
+    },
     StateChanged {
         state: AgentState,
     },
@@ -129,7 +133,8 @@ pub enum AgentEvent {
 impl AgentEvent {
     pub(super) fn persistable(&self) -> bool {
         match self {
-            Self::UserMessage { .. }
+            Self::WorkspaceChanged { .. }
+            | Self::UserMessage { .. }
             | Self::AssistantMessage { .. }
             | Self::ReasoningSummary { .. }
             | Self::ToolCallUpdated { .. }

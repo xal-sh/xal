@@ -1,4 +1,3 @@
-use super::storage::*;
 use super::*;
 
 #[napi(object)]
@@ -9,8 +8,7 @@ pub struct NativeMemorySnapshot {
 
 #[napi]
 pub struct NativeMemoryStore {
-    path: PathBuf,
-    snapshot: Arc<Mutex<Snapshot>>,
+    store: Arc<Store>,
 }
 
 enum Operation {
@@ -19,63 +17,32 @@ enum Operation {
 }
 
 pub struct MemoryTask {
-    path: PathBuf,
-    snapshot: Arc<Mutex<Snapshot>>,
+    store: Arc<Store>,
     secrets: Vec<String>,
     cancelled: Arc<AtomicBool>,
     operation: Operation,
 }
+
 impl Task for MemoryTask {
     type JsValue = NativeMemorySnapshot;
     type Output = Snapshot;
 
     fn compute(&mut self) -> napi::Result<Self::Output> {
-        if self.cancelled.load(Ordering::Relaxed) {
-            return Err(Error::new(Status::Cancelled, "The operation was aborted"));
+        match &self.operation {
+            Operation::Load => self
+                .store
+                .load(Protection::Secrets(&self.secrets), &self.cancelled),
+            Operation::Replace { content, expected } => self.store.replace(
+                content.clone(),
+                expected,
+                Protection::Secrets(&self.secrets),
+                &self.cancelled,
+            ),
         }
-        let next = match &self.operation {
-            Operation::Load => read(&self.path, &self.secrets)?,
-            Operation::Replace { content, expected } => {
-                let write_lock = lock(&self.path, &self.cancelled)?;
-                let result = (|| {
-                    let current = read(&self.path, &self.secrets)?;
-                    if current.revision != *expected {
-                        *self
-                            .snapshot
-                            .lock()
-                            .map_err(|_| failed("native memory snapshot lock failed"))? = current;
-                        return Err(invalid(
-                            "global memory changed since it was read; read it again before replacing it",
-                        ));
-                    }
-                    let next = validate(content.clone(), &self.secrets)?;
-                    if self.cancelled.load(Ordering::Relaxed) {
-                        return Err(Error::new(Status::Cancelled, "The operation was aborted"));
-                    }
-                    if next.content != current.content {
-                        secure_replace(&self.path, &next.content)?;
-                    }
-                    Ok(next)
-                })();
-                let release = write_lock.release();
-                match (result, release) {
-                    (Ok(next), Ok(())) => next,
-                    (Err(error), Ok(())) => return Err(error),
-                    (Ok(_), Err(error)) => return Err(error),
-                    (Err(error), Err(release)) => {
-                        return Err(failed(format!("{}; {}", error.reason, release.reason)));
-                    }
-                }
-            }
-        };
-        *self
-            .snapshot
-            .lock()
-            .map_err(|_| failed("native memory snapshot lock failed"))? = next.clone();
-        Ok(next)
+        .map_err(boundary)
     }
 
-    fn resolve(&mut self, _env: Env, output: Self::Output) -> napi::Result<Self::JsValue> {
+    fn resolve(&mut self, _: Env, output: Self::Output) -> napi::Result<Self::JsValue> {
         Ok(NativeMemorySnapshot {
             content: output.content,
             revision: output.revision,
@@ -88,26 +55,21 @@ impl NativeMemoryStore {
     #[napi(constructor, catch_unwind)]
     pub fn new(path: String) -> Self {
         Self {
-            path: PathBuf::from(path),
-            snapshot: Arc::new(Mutex::new(empty_snapshot())),
+            store: Arc::new(Store::new(path.into())),
         }
     }
 
     #[napi(getter, catch_unwind)]
     pub fn prompt_content(&self) -> napi::Result<String> {
-        Ok(self
-            .snapshot
-            .lock()
-            .map_err(|_| failed("native memory snapshot lock failed"))?
-            .content
-            .clone())
+        self.store
+            .prompt_content(Protection::Secrets(&[]))
+            .map_err(boundary)
     }
 
     #[napi(catch_unwind)]
     pub fn load(&self, secrets: Vec<String>, signal: Option<AbortSignal>) -> AsyncTask<MemoryTask> {
         AsyncTask::new(MemoryTask {
-            path: self.path.clone(),
-            snapshot: self.snapshot.clone(),
+            store: self.store.clone(),
             secrets,
             cancelled: cancellation_flag(signal),
             operation: Operation::Load,
@@ -123,8 +85,7 @@ impl NativeMemoryStore {
         signal: Option<AbortSignal>,
     ) -> AsyncTask<MemoryTask> {
         AsyncTask::new(MemoryTask {
-            path: self.path.clone(),
-            snapshot: self.snapshot.clone(),
+            store: self.store.clone(),
             secrets,
             cancelled: cancellation_flag(signal),
             operation: Operation::Replace {

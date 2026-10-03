@@ -13,13 +13,16 @@ pub(crate) struct Command {
 
 pub struct Registration {
     pub(crate) commands: BTreeMap<String, Command>,
-    pub(crate) tools: BTreeMap<String, Tool>,
+    pub(crate) tools: BTreeMap<String, std::sync::Arc<Tool>>,
+    pub(crate) tool_sources: BTreeMap<String, ToolSource>,
+    pub(crate) prompt_sources: Vec<(String, PromptSource)>,
     pub(crate) providers: BTreeMap<String, Provider>,
     pub(crate) decisions:
         BTreeMap<String, std::sync::Arc<Handler<DecisionRequest, DecisionResponse>>>,
     pub(crate) hooks: Vec<(String, Handler<HookInput, HookResult>)>,
     pub(crate) policies: BTreeMap<String, Handler<PermissionRequest, PolicyDecision>>,
     pub(crate) ui: BTreeMap<String, Handler<UiContribution, String>>,
+    pub(crate) warnings: Vec<String>,
     pub(crate) prompts: BTreeMap<String, String>,
     pub(crate) subscriptions: Vec<Sender<Event>>,
     pub(crate) disposers: Vec<Disposer>,
@@ -33,11 +36,14 @@ impl Registration {
         Self {
             commands: BTreeMap::new(),
             tools: BTreeMap::new(),
+            tool_sources: BTreeMap::new(),
+            prompt_sources: Vec::new(),
             providers: BTreeMap::new(),
             decisions: BTreeMap::new(),
             hooks: Vec::new(),
             policies: BTreeMap::new(),
             ui: BTreeMap::new(),
+            warnings: Vec::new(),
             prompts: BTreeMap::new(),
             subscriptions: Vec::new(),
             disposers: Vec::new(),
@@ -80,7 +86,23 @@ impl Registration {
         self.cancellation.check()?;
         xal_services::schema::validator(&serde_json::Value::Object(tool.parameters.clone()))
             .map_err(|error| Error::Failed(error.to_string()))?;
-        insert(&mut self.tools, name, tool)
+        insert(&mut self.tools, name, std::sync::Arc::new(tool))
+    }
+
+    pub fn dynamic_tools(&mut self, prefix: &str, source: ToolSource) -> Result<()> {
+        self.cancellation.check()?;
+        insert(&mut self.tool_sources, prefix, source)
+    }
+
+    pub fn prompt_source(&mut self, name: &str, source: PromptSource) -> Result<()> {
+        self.cancellation.check()?;
+        check_name(
+            name,
+            self.prompts.contains_key(name)
+                || self.prompt_sources.iter().any(|(key, _)| key == name),
+        )?;
+        self.prompt_sources.push((name.into(), source));
+        Ok(())
     }
 
     pub fn provider(&mut self, name: &str, provider: Provider) -> Result<()> {
@@ -123,8 +145,15 @@ impl Registration {
         insert(&mut self.ui, name, handler)
     }
 
+    pub fn warning(&mut self, message: String) -> Result<()> {
+        self.cancellation.check()?;
+        self.warnings.push(message);
+        Ok(())
+    }
+
     pub fn prompt(&mut self, name: &str, text: String) -> Result<()> {
         self.cancellation.check()?;
+        check_name(name, self.prompt_sources.iter().any(|(key, _)| key == name))?;
         insert(&mut self.prompts, name, text)
     }
 
@@ -166,6 +195,16 @@ impl Registration {
             .map(|name| ("command".into(), name.clone()))
             .chain(self.tools.keys().map(|name| ("tool".into(), name.clone())))
             .chain(
+                self.tool_sources
+                    .keys()
+                    .map(|name| ("tool-source".into(), name.clone())),
+            )
+            .chain(
+                self.prompt_sources
+                    .iter()
+                    .map(|(name, _)| ("prompt".into(), name.clone())),
+            )
+            .chain(
                 self.providers
                     .keys()
                     .map(|name| ("provider".into(), name.clone())),
@@ -206,11 +245,14 @@ impl Registration {
     pub(crate) fn clear(&mut self) {
         self.commands.clear();
         self.tools.clear();
+        self.tool_sources.clear();
+        self.prompt_sources.clear();
         self.providers.clear();
         self.decisions.clear();
         self.hooks.clear();
         self.policies.clear();
         self.ui.clear();
+        self.warnings.clear();
         self.prompts.clear();
         self.subscriptions.clear();
         self.session_disposers.clear();

@@ -12,18 +12,16 @@ struct Call {
 }
 
 impl Call {
+    fn shared(&self) -> bool {
+        self.prepared
+            .as_ref()
+            .is_ok_and(|tool| tool.concurrency == Concurrency::Shared)
+    }
+
     fn read_only(&self) -> bool {
         self.prepared
             .as_ref()
             .is_ok_and(|tool| tool.effects == Effects::Read)
-    }
-    fn title(&self) -> String {
-        self.args
-            .get("file_path")
-            .or_else(|| self.args.get("command"))
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or(&self.name)
-            .into()
     }
 }
 
@@ -149,7 +147,7 @@ impl Agent<'_> {
                     stopped = Some("Tool was skipped because a repeated tool loop was detected.".into());
                 }
             }
-            if call.read_only() && stopped.is_none() {
+            if call.shared() && stopped.is_none() {
                 shared.push(call);
                 if shared.len() == 4 {
                     self.batch(std::mem::take(&mut shared), active).await?;
@@ -181,7 +179,7 @@ impl Agent<'_> {
         let mut sources = Vec::new();
         let mut finished = Vec::new();
         for (index, call) in calls.into_iter().enumerate() {
-            let title = call.title();
+            let title = self.host.tool_title(&call.name, &call.args, active)?;
             let read_only = call.read_only();
             let prepared = match call.prepared {
                 Ok(prepared) => match self.host.authorize_tool(&prepared, active).await {
@@ -266,7 +264,9 @@ impl Agent<'_> {
             drop(receiver);
             while running.next().await.is_some() {}
         }
+        let workspace = self.refresh_workspace();
         observed?;
+        workspace?;
         sources.sort_by_key(|(index, ..)| *index);
         if let Some((_, target, ..)) = sources.last() {
             let target = target.clone();
@@ -276,7 +276,8 @@ impl Agent<'_> {
                     .map(|(_, _, name, args, output)| (name, args, output))
                     .collect(),
             );
-            if let Some(text) = self.read_ahead(trigger, active).await? {
+            let active = self.host.effective_session(active)?;
+            if let Some(text) = self.read_ahead(trigger, &active).await? {
                 for (_, item) in &mut results {
                     if let Item::ToolResult { call_id, output } = item
                         && *call_id == target

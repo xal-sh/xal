@@ -1,5 +1,6 @@
 mod accounts;
 mod headless;
+mod integrations;
 mod prompt;
 
 use std::env;
@@ -55,6 +56,10 @@ async fn run_host(
         }
     };
     host.shutdown().await;
+    host_result(host, output)
+}
+
+fn host_result(host: &Host, output: Result<String>) -> Result<String> {
     let failures = host
         .failures()
         .iter()
@@ -83,7 +88,7 @@ async fn dispatch(host: &Host, args: &[String]) -> Result<String> {
         for (name, description) in host.commands() {
             help.push_str(&format!("  {name}  {description}\n"));
         }
-        help.push_str("  run [options] [prompt]  Run a native headless session\n  connect / connections / profiles / rename / logout  Manage named connections\n  usage  Read provider request usage totals\n  models / model / thinking / context-window / compaction-limit  Configure text models\n  typesafe on|off  Configure decision inference\n\nUse <command> --help for account options. No TUI yet. Use xal for the current application.\n");
+        help.push_str("  run [options] [prompt]  Run a native headless session\n  connect / connections / profiles / rename / logout  Manage named connections\n  usage  Read provider request usage totals\n  models / model / thinking / context-window / compaction-limit  Configure text models\n  typesafe on|off  Configure decision inference\n  mcp / lsp  Inspect or manage native integrations\n  commands / prompt / review  List commands or preview prepared prompts\n  workspace-paths [query]  Rank workspace completion paths\n\nUse <command> --help for account options. No TUI yet. Use xal for the current application.\n");
         return Ok(help);
     }
     if args == ["host-check"] {
@@ -212,9 +217,17 @@ async fn main() -> ExitCode {
             }
         };
     }
-    match run(&args).await {
-        Ok(output) => match io::stdout().lock().write_all(output.as_bytes()) {
-            Ok(()) => ExitCode::SUCCESS,
+    let result = if args
+        .first()
+        .is_some_and(|command| integrations::handles(command))
+    {
+        integrations::run(&args).await
+    } else {
+        run(&args).await.map(|output| (output, 0))
+    };
+    match result {
+        Ok((output, code)) => match io::stdout().lock().write_all(output.as_bytes()) {
+            Ok(()) => ExitCode::from(code),
             Err(error) => {
                 eprintln!("xal-rust: {error}");
                 ExitCode::FAILURE
@@ -368,6 +381,17 @@ mod tests {
                     assert!(matches!(result, Err(Error::Failed(_))));
                     assert_eq!(host.failures()[1].phase, Phase::Dispose);
                     assert_eq!(host.failures()[1].error, error);
+                    let message = result.unwrap_err().to_string();
+                    assert!(message.contains(&host.failures()[1].to_string()));
+                    assert!(!message.contains(&host.failures()[0].to_string()));
+                    let combined = host_result(
+                        &host,
+                        Err(Error::Failed("fixture operation failure".into())),
+                    )
+                    .unwrap_err()
+                    .to_string();
+                    assert!(combined.contains("fixture operation failure"));
+                    assert!(combined.contains(&host.failures()[1].to_string()));
                 }
             }
             assert!(host.commands().is_empty());

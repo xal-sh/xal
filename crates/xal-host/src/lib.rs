@@ -3,6 +3,7 @@ mod channel;
 mod conversation;
 pub mod permissions;
 mod tools;
+mod workspace;
 pub fn sandbox_available() -> bool {
     cfg!(target_os = "macos") && std::path::Path::new("/usr/bin/sandbox-exec").is_file()
 }
@@ -175,6 +176,7 @@ impl Entry {
 }
 
 pub struct Host {
+    workspaces: std::sync::Mutex<std::collections::BTreeMap<String, std::path::PathBuf>>,
     entries: Vec<Entry>,
     cancellation: Cancellation,
     state: State,
@@ -188,6 +190,7 @@ pub struct Host {
 impl Host {
     pub fn new(plugins: Vec<Box<dyn Plugin>>, cancellation: Cancellation) -> Self {
         Self {
+            workspaces: std::sync::Mutex::new(std::collections::BTreeMap::new()),
             entries: plugins
                 .into_iter()
                 .map(|plugin| Entry {
@@ -281,6 +284,20 @@ impl Host {
         Ok(())
     }
 
+    fn command_owners(&self) -> std::sync::Arc<std::collections::BTreeMap<String, String>> {
+        std::sync::Arc::new(
+            self.ready()
+                .flat_map(|entry| {
+                    entry
+                        .registration
+                        .commands
+                        .keys()
+                        .map(|name| (name.clone(), entry.name.clone()))
+                })
+                .collect(),
+        )
+    }
+
     pub fn commands(&self) -> Vec<(&str, &str)> {
         self.ready()
             .flat_map(|entry| {
@@ -297,10 +314,24 @@ impl Host {
         self.check()?;
         for entry in self.ready() {
             if let Some(command) = entry.registration.commands.get(name) {
-                return run(&entry.registration.cancellation, async {
-                    (command.run)(args.to_vec(), entry.registration.cancellation.clone()).await
+                let cancellation = entry.registration.cancellation.child();
+                let _guard = cancellation.0.clone().drop_guard();
+                let operation = AssertUnwindSafe(async {
+                    (command.run)(args.to_vec(), cancellation.clone()).await
                 })
-                .await;
+                .catch_unwind();
+                tokio::pin!(operation);
+                let result = tokio::select! {
+                    biased;
+                    () = cancellation.cancelled() => {
+                        tokio::time::timeout(Duration::from_secs(5), &mut operation).await
+                            .map_err(|_| Error::Failed("command did not settle within 5 seconds of cancellation".into()))?
+                    }
+                    result = &mut operation => result,
+                }.unwrap_or_else(|_| Err(Error::Failed("plugin callback panicked".into())));
+                let output = result?;
+                cancellation.check()?;
+                return Ok(output);
             }
         }
         Err(Error::Failed(format!("unknown command: {name}")))
@@ -317,6 +348,10 @@ impl Host {
         if id.is_empty() {
             return Err(Error::Failed("session ID must not be empty".into()));
         }
+        self.workspaces
+            .lock()
+            .map_err(|_| Error::Failed("workspace state lock poisoned".into()))?
+            .insert(id.clone(), cwd.clone());
         Ok(Session {
             id,
             cwd,
@@ -345,7 +380,9 @@ impl Host {
     ) -> Result<O> {
         self.check()?;
         let context = Context {
-            session: session.clone(),
+            command_owners: self.command_owners(),
+            workspace: None,
+            session: self.effective_session(session)?,
             cancellation: session.cancellation.child(),
             output: None,
             speculative: false,
@@ -423,7 +460,9 @@ impl Host {
                     sender
                 };
                 let context = Context {
-                    session: session.clone(),
+                    command_owners: self.command_owners(),
+                    workspace: None,
+                    session: self.effective_session(session)?,
                     cancellation: session.cancellation.child(),
                     output: None,
                     speculative: false,
@@ -490,6 +529,27 @@ impl Host {
         Err(Error::Failed(format!("unknown decision provider: {name}")))
     }
 
+    pub fn warnings(&self) -> Vec<&str> {
+        self.ready()
+            .flat_map(|entry| entry.registration.warnings.iter().map(String::as_str))
+            .collect()
+    }
+
+    pub fn tool_title(&self, name: &str, args: &JsonObject, session: &Session) -> Result<String> {
+        self.check()?;
+        let session = self.effective_session(session)?;
+        let Some((_, tool)) = self.tool_catalog(&session)?.remove(name) else {
+            return Ok(name.into());
+        };
+        if !guarded(|| (tool.available)(&session))? {
+            return Ok(name.into());
+        }
+        match &tool.title {
+            Some(title) => guarded(|| title(args, &session)),
+            None => Ok(name.into()),
+        }
+    }
+
     pub async fn render(
         &self,
         name: &str,
@@ -510,6 +570,22 @@ impl Host {
             .ready()
             .flat_map(|entry| entry.registration.prompts.values().map(String::as_str))
             .collect())
+    }
+
+    pub fn session_prompts(&self, session: &Session) -> Result<Vec<String>> {
+        self.check()?;
+        let session = self.effective_session(session)?;
+        let mut prompts = Vec::new();
+        for entry in self.ready() {
+            prompts.extend(entry.registration.prompts.values().cloned());
+            for (_, source) in &entry.registration.prompt_sources {
+                let text = guarded(|| source(&session))?;
+                if !text.is_empty() {
+                    prompts.push(text);
+                }
+            }
+        }
+        Ok(prompts)
     }
 
     pub async fn shutdown(&mut self) {

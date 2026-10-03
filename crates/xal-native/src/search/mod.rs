@@ -26,11 +26,3 @@ impl From<xal_services::search::SearchResult> for NativeSearchResult {
         }
     }
 }
-pub(crate) fn walk_files(
-    root: &std::path::Path,
-    cancelled: &std::sync::atomic::AtomicBool,
-    deadline: Option<std::time::Instant>,
-) -> napi::Result<Vec<std::path::PathBuf>> {
-    xal_services::search::walk_files(root, cancelled, deadline)
-        .map_err(crate::tool_contracts::io_error)
-}

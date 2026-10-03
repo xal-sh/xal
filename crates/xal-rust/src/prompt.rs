@@ -1,11 +1,8 @@
-use std::path::Path;
-
-pub fn instructions(cwd: &Path, mode: &str, read_only: bool, guidance: &str) -> String {
+pub fn instructions(mode: &str, read_only: bool, guidance: &str) -> String {
     let mut sections = vec![
         "You are xal, a coding agent running in the user's terminal.".into(),
         "Do not claim results that were not observed in the conversation or tool output.\nDo not create commits or publish changes unless the user asks.".into(),
         "Every response that requests tools costs a full model round trip, so finish the work in as few rounds as possible.\nRequest all tool calls that do not depend on each other's results together in one response; they run in parallel. Reading several files, running several searches, or checking several things are one round, not one round each.\nBefore each round, decide everything you need to learn next and request it at once. Go one call at a time only when a call's input depends on an earlier call's output.\nPrefer a dedicated tool over a shell command when one fits the job.".into(),
-        format!("Platform: {}. Working directory: {}.\nShell commands run without interactive rc files.", std::env::consts::OS, cwd.display()),
         "Project instructions and the user's explicit requests take precedence over the defaults below.".into(),
     ];
     if !read_only {

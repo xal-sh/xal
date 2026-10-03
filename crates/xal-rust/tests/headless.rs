@@ -383,6 +383,75 @@ fn reads_edits_verifies_and_records_legacy_jsonl() {
 }
 
 #[test]
+fn tool_event_titles_keep_arguments_and_full_multiline_shell_commands() {
+    let fixture = Fixture::new();
+    let command = "set -e\nprintf 'first\\n'\nprintf 'second\\n'";
+    let server = Server::new(vec![
+        call("memory", "memory", json!({"operation":"read"}))
+            + &call("shell", "bash", json!({"command":command}))
+            + &call("web", "webfetch", json!({"url":"invalid://fixture-secret"}))
+            + &call("invalid", "memory", json!({"operation":false}))
+            + &done(),
+        answer("done"),
+    ]);
+    let output = fixture.run(
+        &server,
+        &["--format", "jsonl", "--mode", "yolo", "inspect"],
+        "",
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let emitted = events(&output);
+    for (id, title) in [
+        ("memory", "Read global memory"),
+        ("shell", command),
+        ("web", "invalid://[REDACTED]"),
+    ] {
+        for kind in ["tool_started", "tool_finished"] {
+            let event = emitted
+                .iter()
+                .find(|event| event["type"] == kind && event["callId"] == id)
+                .unwrap();
+            assert_eq!(event["title"], title);
+        }
+    }
+    let invalid = emitted
+        .iter()
+        .find(|event| event["type"] == "tool_finished" && event["callId"] == "invalid")
+        .unwrap();
+    assert_eq!(invalid["title"], "Global memory");
+    assert!(
+        invalid["output"]
+            .as_str()
+            .unwrap()
+            .starts_with("Tool failed:")
+    );
+    fs::write(
+        fixture.home.join("config.json"),
+        json!({"permissions":{"ask":["bash"]}}).to_string(),
+    )
+    .unwrap();
+    let denied = Server::new(vec![
+        call("approval", "bash", json!({"command":command})) + &done(),
+        answer("not run"),
+    ]);
+    let output = fixture.run(
+        &denied,
+        &["--format", "jsonl", "--mode", "normal", "inspect"],
+        "",
+    );
+    assert!(output.status.success());
+    assert!(
+        events(&output)
+            .iter()
+            .any(|event| event["type"] == "approval_requested" && event["title"] == command)
+    );
+}
+
+#[test]
 fn stdin_formats_redaction_and_retry_preserve_automation_contract() {
     let fixture = Fixture::new();
     let server = Server::new(vec!["HTTP/1.1 429 Too Many Requests\r\nContent-Length: 2\r\nRetry-After: 0\r\nConnection: close\r\n\r\n{}".into(), answer("fixture-secret accepted")]);
@@ -908,4 +977,152 @@ fn protocol_discriminants_are_not_redacted_and_changed_replay_is_discarded() {
         .find(|record| record["item"]["type"] == "assistant_message")
         .unwrap();
     assert!(message["item"].get("replay").is_none());
+}
+
+#[test]
+fn command_and_skill_expansion_keep_authored_text_and_redact_startup_warnings() {
+    let fixture = Fixture::new();
+    fs::create_dir_all(fixture.home.join("commands")).unwrap();
+    fs::create_dir_all(fixture.home.join("skills/example")).unwrap();
+    fs::create_dir_all(fixture.home.join("skills/fixture-secret")).unwrap();
+    fs::write(
+        fixture.home.join("commands/inspect.md"),
+        "Inspect the selected $1 carefully.",
+    )
+    .unwrap();
+    fs::write(
+        fixture.home.join("skills/example/SKILL.md"),
+        "---\ndescription: Fixture skill\n---\nFollow the fixture procedure.",
+    )
+    .unwrap();
+    fs::write(
+        fixture.home.join("skills/fixture-secret/SKILL.md"),
+        "Missing frontmatter",
+    )
+    .unwrap();
+    for (prompt, expanded, unchanged) in [
+        (
+            "/inspect module",
+            "Inspect the selected module carefully.",
+            false,
+        ),
+        (
+            "$example extra input",
+            "Follow the fixture procedure.",
+            false,
+        ),
+        ("Read inline $example", "Read inline $example", true),
+    ] {
+        let server = Server::new(vec![answer("prepared")]);
+        let output = fixture.run(&server, &["--format", "jsonl", prompt], "");
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            events(&output)
+                .iter()
+                .any(|event| event["type"] == "user_message" && event["text"] == prompt)
+        );
+        let request = &server.requests()[0];
+        let sent = request["input"].to_string();
+        assert!(sent.contains(expanded), "{sent}");
+        if unchanged {
+            assert!(!sent.contains("Follow the fixture procedure."));
+        }
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(!stderr.contains("fixture-secret"));
+        assert!(stderr.contains("[REDACTED]"), "{stderr}");
+    }
+}
+
+#[test]
+fn worktree_switches_refresh_same_round_tools_structured_output_and_journal_events() {
+    let fixture = Fixture::new();
+    fs::write(fixture.cwd.join("sample.txt"), "tracked content\n").unwrap();
+    for args in [
+        vec!["init"],
+        vec!["config", "user.name", "Fixture"],
+        vec!["config", "user.email", "fixture@example.invalid"],
+        vec!["add", "sample.txt"],
+        vec!["commit", "-m", "fixture"],
+    ] {
+        let output = Command::new("git")
+            .args(args)
+            .current_dir(&fixture.cwd)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    let schema = fixture.root.join("schema.json");
+    fs::write(&schema, json!({"type":"object","properties":{"done":{"type":"boolean"}},"required":["done"],"additionalProperties":false}).to_string()).unwrap();
+    let server = Server::new(vec![
+        call("enter", "worktree_enter", json!({"name":"fixture"}))
+            + &call("read", "read", json!({"file_path":"sample.txt"}))
+            + &call("exit", "worktree_exit", json!({"action":"remove"}))
+            + &call("submit", "submit_output", json!({"done":true}))
+            + &done(),
+    ]);
+    let output = fixture.run(
+        &server,
+        &[
+            "--format",
+            "jsonl",
+            "--output-schema",
+            schema.to_str().unwrap(),
+            "verify worktree",
+        ],
+        "",
+    );
+    assert!(
+        output.status.success(),
+        "{} {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let events = events(&output);
+    let changed = events
+        .iter()
+        .filter(|event| event["type"] == "workspace_changed")
+        .collect::<Vec<_>>();
+    assert_eq!(changed.len(), 2);
+    assert_eq!(
+        changed[0]["previous"],
+        fixture.cwd.to_string_lossy().as_ref()
+    );
+    assert_eq!(changed[0]["cwd"], changed[1]["previous"]);
+    assert_eq!(changed[1]["cwd"], fixture.cwd.to_string_lossy().as_ref());
+    assert!(events.iter().any(|event| {
+        event["type"] == "tool_finished"
+            && event["tool"] == "read"
+            && event["output"]
+                .as_str()
+                .unwrap()
+                .contains("tracked content")
+    }));
+    assert!(
+        events
+            .iter()
+            .any(|event| event["type"] == "turn_ended" && event["output"] == json!({"done":true}))
+    );
+    let journal = fs::read_to_string(&fixture.journals()[0]).unwrap();
+    assert_eq!(
+        journal
+            .lines()
+            .filter(
+                |line| serde_json::from_str::<Value>(line).unwrap()["event"]["type"]
+                    == "workspace_changed"
+            )
+            .count(),
+        2
+    );
+    assert_eq!(
+        fs::read_to_string(fixture.cwd.join("sample.txt")).unwrap(),
+        "tracked content\n"
+    );
 }

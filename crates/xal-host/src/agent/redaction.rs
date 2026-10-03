@@ -23,7 +23,12 @@ fn replay(redactor: &Redactor, value: &mut Option<Replay>) {
     }
 }
 
-pub(super) fn item(host: &crate::Host, redactor: &Redactor, mut item: Item) -> crate::Result<Item> {
+pub(super) fn item(
+    host: &crate::Host,
+    redactor: &Redactor,
+    mut item: Item,
+    session: &crate::Session,
+) -> crate::Result<Item> {
     match &mut item {
         Item::UserMessage {
             text, model_text, ..
@@ -51,7 +56,7 @@ pub(super) fn item(host: &crate::Host, redactor: &Redactor, mut item: Item) -> c
             replay: data,
         } => {
             *call_id = redactor.redact(call_id);
-            *args = host.redact_arguments(name, args, redactor)?;
+            *args = host.redact_arguments(name, args, redactor, session)?;
             *name = redactor.redact(name);
             replay(redactor, data);
         }
@@ -78,6 +83,10 @@ pub(super) fn event(redactor: &Redactor, mut event: AgentEvent) -> AgentEvent {
                 *profile = redactor.redact(profile);
             }
             *model = redactor.redact(model);
+        }
+        AgentEvent::WorkspaceChanged { cwd, previous } => {
+            *cwd = path(redactor, cwd);
+            *previous = path(redactor, previous);
         }
         AgentEvent::UserMessage { text, .. }
         | AgentEvent::TextDelta { text }

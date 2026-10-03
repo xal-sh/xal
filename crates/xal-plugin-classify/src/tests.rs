@@ -297,6 +297,16 @@ async fn typesafe_off_hides_classify_and_rechecks_already_prepared_calls() {
     let fixture = Fixture::new();
     let mut host = fixture.host(false).await;
     let session = fixture.session(&host);
+    assert_eq!(
+        host.tool_title("classify", &args(vec![evaluation("first")]), &session)
+            .unwrap(),
+        "1 evaluations"
+    );
+    assert_eq!(
+        host.tool_title("classify", &JsonObject::new(), &session)
+            .unwrap(),
+        "0 evaluations"
+    );
     let prepared = host
         .prepare_tool("classify", args(vec![evaluation("first")]), &session)
         .await

@@ -4,7 +4,6 @@ struct RunOutput {
     chunks: VecDeque<Vec<u8>>,
     bytes: usize,
     closed: bool,
-    lossy: bool,
 }
 
 pub(super) struct RunState {
@@ -24,7 +23,6 @@ impl RunState {
                 chunks: VecDeque::new(),
                 bytes: 0,
                 closed: false,
-                lossy: false,
             }),
             output_changed: Condvar::new(),
             completion: Mutex::new(None),
@@ -39,26 +37,13 @@ impl RunState {
         if bytes.is_empty() {
             return;
         }
-        let bytes = if bytes.len() > OUTPUT_CAPACITY {
-            bytes[bytes.len() - OUTPUT_CAPACITY..].to_vec()
-        } else {
-            bytes
-        };
         let mut output = lock(&self.output);
-        while !output.closed && output.bytes + bytes.len() > OUTPUT_CAPACITY {
-            if output.lossy {
-                let Some(dropped) = output.chunks.pop_front() else {
-                    break;
-                };
-                output.bytes -= dropped.len();
-                continue;
-            }
-            let (next, timeout) = self
-                .output_changed
-                .wait_timeout(output, Duration::from_millis(100))
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            output = next;
-            output.lossy = timeout.timed_out();
+        if output.bytes.saturating_add(bytes.len()) > OUTPUT_CAPACITY {
+            output.closed = true;
+            drop(output);
+            self.fail("shell output exceeded 64 MiB without being drained".into());
+            process_signal(&self.process, true);
+            return;
         }
         if output.closed {
             return;
@@ -152,7 +137,6 @@ impl ShellExecution {
             bytes.extend(chunk);
         }
         output.bytes = 0;
-        output.lossy = false;
         self.state.output_changed.notify_all();
         bytes
     }
@@ -192,5 +176,9 @@ impl Drop for ShellExecution {
         let mut output = lock(&self.state.output);
         output.closed = true;
         self.state.output_changed.notify_all();
+        drop(output);
+        if !self.state.done() {
+            process_signal(&self.state.process, true);
+        }
     }
 }

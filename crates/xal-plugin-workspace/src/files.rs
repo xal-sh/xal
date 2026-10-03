@@ -50,6 +50,11 @@ impl Plugin for Files {
             registration.tool(
                 name,
                 Tool {
+                    title: Some(Box::new(|args, session| {
+                        session.display_path(
+                            args.get("file_path").and_then(Value::as_str).unwrap_or(""),
+                        )
+                    })),
                     description: description.into(),
                     parameters: schema(parameters),
                     effects: if name == "read" {
@@ -57,6 +62,8 @@ impl Plugin for Files {
                     } else {
                         Effects::write
                     },
+                    concurrency: None,
+                    permission_subject: None,
                     redact: None,
                     available: Box::new(move |session| Ok(name == "read" || !session.read_only)),
                     run: Box::new(move |args, context| {
@@ -147,6 +154,29 @@ impl Plugin for Files {
                 },
             )?;
         }
+        for name in ["write", "edit"] {
+            super::renderer(registration, name, summarize)?;
+        }
         Ok(())
     }
+}
+
+fn summarize(output: &str) -> String {
+    let first = output.lines().next().unwrap_or("");
+    let Some((_, counts)) = first.rsplit_once(" (") else {
+        return "no changes".into();
+    };
+    if first.starts_with("Created ")
+        && let Some(lines) = counts.strip_suffix(" lines)")
+    {
+        return format!("+{lines} −0");
+    }
+    if first.starts_with("Updated ")
+        && let Some((added, removed)) = counts
+            .strip_suffix(')')
+            .and_then(|counts| counts.split_once(" -"))
+    {
+        return format!("{added} −{removed}");
+    }
+    "no changes".into()
 }

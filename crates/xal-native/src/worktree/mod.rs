@@ -1,24 +1,16 @@
 #![cfg_attr(test, allow(dead_code))]
 
-use std::fs::{self, OpenOptions};
-use std::io::Write;
-use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, MutexGuard, OnceLock, atomic::AtomicBool};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::{Arc, atomic::AtomicBool};
 
 use napi::bindgen_prelude::{AbortSignal, AsyncTask};
-use napi::{Env, Error, Status, Task};
+use napi::{Env, Task};
 use napi_derive::napi;
-use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 
 use crate::file_tools::NativeToolOutput;
-use crate::git::run_git;
-use crate::tool_contracts::cancellation_flag;
+use crate::tool_contracts::{cancellation_flag, io_error};
+use xal_services::worktree as service;
 
-mod git;
 mod lifecycle;
-mod marker;
 mod tool;
 
 use lifecycle::{Operation, WorktreeTask};
@@ -51,13 +43,6 @@ pub struct NativeWorktreeRequest {
 pub struct NativeWorktreeResult {
     pub found: bool,
     pub worktree: Option<NativeManagedWorktree>,
-}
-fn failed(message: impl Into<String>) -> Error {
-    Error::new(Status::GenericFailure, message.into())
-}
-
-fn canonical(path: impl AsRef<Path>) -> napi::Result<PathBuf> {
-    fs::canonicalize(path).map_err(|error| failed(error.to_string()))
 }
 fn task(
     operation: Operation,
@@ -101,4 +86,32 @@ pub fn native_unmanage_worktree(
     signal: Option<AbortSignal>,
 ) -> AsyncTask<WorktreeTask> {
     task(Operation::Unmanage, request, signal)
+}
+
+impl From<NativeManagedWorktree> for service::ManagedWorktree {
+    fn from(value: NativeManagedWorktree) -> Self {
+        Self {
+            version: value.version,
+            repository_root: value.repository_root,
+            original_cwd: value.original_cwd,
+            path: value.path,
+            cwd: value.cwd,
+            branch: value.branch,
+            base_commit: value.base_commit,
+        }
+    }
+}
+
+impl From<service::ManagedWorktree> for NativeManagedWorktree {
+    fn from(value: service::ManagedWorktree) -> Self {
+        Self {
+            version: value.version,
+            repository_root: value.repository_root,
+            original_cwd: value.original_cwd,
+            path: value.path,
+            cwd: value.cwd,
+            branch: value.branch,
+            base_commit: value.base_commit,
+        }
+    }
 }

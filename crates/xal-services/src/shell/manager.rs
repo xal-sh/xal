@@ -169,6 +169,25 @@ impl ShellManager {
         }
     }
 
+    pub fn shutdown_all(&self) -> std::io::Result<()> {
+        let removed = lock(&self.entries)
+            .drain()
+            .map(|(_, entry)| entry)
+            .collect::<Vec<_>>();
+        for entry in &removed {
+            process_signal(&entry.process, true);
+        }
+        let errors = removed
+            .iter()
+            .filter_map(|entry| crate::process::wait_process(&entry.process).err())
+            .map(|error| error.to_string())
+            .collect::<Vec<_>>();
+        if errors.is_empty() {
+            return Ok(());
+        }
+        Err(Error::other(errors.join("\n")))
+    }
+
     pub fn dispose_all(&self) {
         let removed = {
             let mut entries = lock(&self.entries);

@@ -14,12 +14,14 @@ use crate::process::{
     process_termination, process_write, spawn_process,
 };
 
-const OUTPUT_CAPACITY: usize = 256 * 1024;
+const OUTPUT_CAPACITY: usize = 64 * 1024 * 1024;
 static MARKER_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 mod execution;
 mod manager;
 mod persistent;
+mod selection;
+pub use selection::{Selection, select};
 
 use execution::RunState;
 pub use execution::{ShellExecution, WaitShellTask};

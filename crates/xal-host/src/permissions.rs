@@ -56,7 +56,14 @@ impl Permissions {
             rules: Vec::new(),
             denies: Vec::new(),
         };
-        for rule in ["write(/*)", "edit(/*)", "read(*.env)", "read(*.env.*)"] {
+        for rule in [
+            "write(/*)",
+            "edit(/*)",
+            "read(*.env)",
+            "read(*.env.*)",
+            "worktree_exit(remove force)",
+            "worktree_remove(* force)",
+        ] {
             policy.rules.push((rule.into(), false));
         }
         if let Some(home) = std::env::home_dir() {
@@ -139,7 +146,9 @@ impl Permissions {
     }
 
     pub fn evaluate(&self, request: &PermissionRequest, cwd: &Path) -> Result<PolicyDecision> {
-        let subject = if request.tool == "bash" {
+        let subject = if let Some(subject) = &request.subject {
+            subject.clone()
+        } else if request.tool == "bash" {
             request
                 .args
                 .get("command")
@@ -149,14 +158,68 @@ impl Permissions {
                 .to_owned()
         } else if request.tool == "classify" {
             "https://api.typesafe.ai/v1/systemone".into()
+        } else if request.tool == "webfetch" {
+            xal_services::web::subject(
+                request
+                    .args
+                    .get("url")
+                    .and_then(Value::as_str)
+                    .unwrap_or(""),
+            )
+        } else if request.tool == "memory" {
+            request
+                .args
+                .get("operation")
+                .and_then(Value::as_str)
+                .unwrap_or("invalid")
+                .to_owned()
+        } else if request.tool == "mcp_read_resource" || request.tool == "mcp_get_prompt" {
+            let key = if request.tool == "mcp_read_resource" {
+                "uri"
+            } else {
+                "name"
+            };
+            format!(
+                "{}/{}",
+                request
+                    .args
+                    .get("server")
+                    .and_then(Value::as_str)
+                    .unwrap_or(""),
+                request.args.get(key).and_then(Value::as_str).unwrap_or("")
+            )
+        } else if request.tool == "worktree_enter" {
+            request
+                .args
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_owned()
+        } else if request.tool == "worktree_exit" || request.tool == "worktree_remove" {
+            let key = if request.tool == "worktree_exit" {
+                "action"
+            } else {
+                "path"
+            };
+            format!(
+                "{}{}",
+                request.args.get(key).and_then(Value::as_str).unwrap_or(""),
+                if request.args.get("force").and_then(Value::as_bool) == Some(true) {
+                    " force"
+                } else {
+                    ""
+                }
+            )
         } else if let Some(path) = request.args.get("file_path").and_then(Value::as_str) {
             display_path(&logical_path(cwd, path)?, cwd)
         } else {
             String::new()
         };
         let canonical = request
-            .args
-            .get("file_path")
+            .subject
+            .is_none()
+            .then(|| request.args.get("file_path"))
+            .flatten()
             .and_then(Value::as_str)
             .map(|path| resolve_path(cwd, path).map(|path| display_path(&path, cwd)))
             .transpose()?;

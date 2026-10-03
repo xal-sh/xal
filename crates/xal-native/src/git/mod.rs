@@ -1,28 +1,17 @@
 #![cfg_attr(test, allow(dead_code))]
 
-use std::fs;
-use std::io::{Read, Write};
-use std::path::{Component, Path, PathBuf};
-use std::process::{Command, Stdio};
-use std::sync::{
-    Arc, OnceLock,
-    atomic::{AtomicBool, AtomicU64},
-};
-use std::thread;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::sync::{Arc, atomic::AtomicBool};
 
 use napi::bindgen_prelude::{AbortSignal, AsyncTask, Buffer};
 use napi::{Env, Error, Status, Task};
 use napi_derive::napi;
 
-use crate::tool_contracts::cancellation_flag;
+use crate::tool_contracts::{cancellation_flag, io_error};
+use xal_services::git as service;
 
 mod command;
 mod repository;
 mod snapshot;
-mod support;
 
-pub(crate) use command::run_git;
-use command::{GitCommandTask, GitOutput, NativeGitCommandRequest};
+use command::{GitCommandTask, NativeGitCommandRequest};
 use snapshot::*;
-use support::*;

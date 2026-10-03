@@ -53,9 +53,12 @@ impl Plugin for Inspect {
         registration.tool(
             "config-inspect",
             Tool {
+                title: None,
                 description: "Read configuration foundations without exposing credentials".into(),
                 parameters: JsonObject::new(),
                 effects: Effects::read,
+                concurrency: None,
+                permission_subject: None,
                 redact: None,
                 available: Box::new(|_| Ok(true)),
                 run: Box::new(|args, context| {

@@ -19,6 +19,7 @@ fn command(policy: &Permissions, text: &str) -> PolicyDecision {
     policy
         .evaluate(
             &PermissionRequest {
+                subject: None,
                 tool: "bash".into(),
                 args: json!({"command":text}).as_object().unwrap().clone(),
                 read_only: false,
@@ -189,6 +190,7 @@ fn unresolved_shell_subjects_fail_closed_even_in_yolo_and_sandboxes() {
                         policy
                             .evaluate(
                                 &PermissionRequest {
+                                    subject: None,
                                     tool: "bash".into(),
                                     args,
                                     read_only: false
@@ -230,6 +232,7 @@ fn configured_modes_and_path_aliases_cannot_erase_denials() {
     let config = Settings::parse(json!({"permissions":{"deny":["read(*.env)"]},"modes":{"fast":{"base":"yolo"},"review":{"base":"plan"}}}).as_object().unwrap()).unwrap();
     let permissions = Permissions::load(&config, &path, &path, "fast").unwrap();
     let request = PermissionRequest {
+        subject: None,
         tool: "read".into(),
         args: json!({"file_path":".env"}).as_object().unwrap().clone(),
         read_only: true,

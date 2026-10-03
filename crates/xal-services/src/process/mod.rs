@@ -10,10 +10,22 @@ use std::sync::{
 use std::thread;
 use std::time::{Duration, Instant};
 
-const OUTPUT_CAPACITY: usize = 256 * 1024;
+const OUTPUT_CAPACITY: usize = 64 * 1024 * 1024;
 
 mod normalize;
+#[cfg(unix)]
+mod pipe;
 mod state;
+#[cfg(unix)]
+pub(crate) use pipe::Pipe;
+#[cfg(unix)]
+mod unix;
+#[cfg(unix)]
+pub(crate) use unix::signal_group;
+#[cfg(windows)]
+mod windows;
+#[cfg(windows)]
+pub use windows::Tree as ProcessTree;
 
 pub(crate) use state::{
     ProcessState, process_drain, process_interrupt, process_output_closed, process_reader_error,

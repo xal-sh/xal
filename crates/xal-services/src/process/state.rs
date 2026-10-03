@@ -4,12 +4,16 @@ pub(super) struct OutputQueue {
     chunks: VecDeque<Vec<u8>>,
     bytes: usize,
     pub(super) closed: bool,
-    lossy: bool,
 }
 
 pub(crate) struct ProcessState {
     child: Mutex<Option<Child>>,
+    #[cfg(unix)]
+    pub(super) stdin: Mutex<Option<Pipe<ChildStdin>>>,
+    #[cfg(not(unix))]
     pub(super) stdin: Mutex<Option<ChildStdin>>,
+    #[cfg(unix)]
+    stop_pipes: Arc<AtomicBool>,
     pub(super) output: Mutex<OutputQueue>,
     pub(super) output_changed: Condvar,
     readers: AtomicUsize,
@@ -18,7 +22,10 @@ pub(crate) struct ProcessState {
     terminated: Condvar,
     deadline: Mutex<Option<Instant>>,
     timed_out: AtomicBool,
+    #[cfg(unix)]
     pid: u32,
+    #[cfg(windows)]
+    tree: super::windows::Tree,
 }
 
 pub(super) fn lock<'a, T>(mutex: &'a Mutex<T>) -> MutexGuard<'a, T> {
@@ -31,26 +38,14 @@ fn push_output(state: &ProcessState, bytes: Vec<u8>) {
     if bytes.is_empty() {
         return;
     }
-    let bytes = if bytes.len() > OUTPUT_CAPACITY {
-        bytes[bytes.len() - OUTPUT_CAPACITY..].to_vec()
-    } else {
-        bytes
-    };
     let mut output = lock(&state.output);
-    while !output.closed && output.bytes + bytes.len() > OUTPUT_CAPACITY {
-        if output.lossy {
-            let Some(dropped) = output.chunks.pop_front() else {
-                break;
-            };
-            output.bytes -= dropped.len();
-            continue;
-        }
-        let (next, timeout) = state
-            .output_changed
-            .wait_timeout(output, Duration::from_millis(100))
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        output = next;
-        output.lossy = timeout.timed_out();
+    if output.bytes.saturating_add(bytes.len()) > OUTPUT_CAPACITY {
+        output.closed = true;
+        drop(output);
+        *lock(&state.reader_error) =
+            Some("process output exceeded 64 MiB without being drained".into());
+        signal_process_tree(state, true);
+        return;
     }
     if output.closed {
         return;
@@ -75,6 +70,7 @@ fn read_stream(state: Arc<ProcessState>, mut stream: impl Read) {
             }
         }
     }
+    let _output = lock(&state.output);
     state
         .readers
         .fetch_sub(1, std::sync::atomic::Ordering::Release);
@@ -150,6 +146,11 @@ fn watch_process(state: Arc<ProcessState>) {
             signal: Some(error.to_string()),
         },
     };
+    signal_process_tree(&state, true);
+    #[cfg(unix)]
+    state
+        .stop_pipes
+        .store(true, std::sync::atomic::Ordering::Release);
     *lock(&state.stdin) = None;
     *lock(&state.termination) = Some(termination);
     state.terminated.notify_all();
@@ -157,25 +158,28 @@ fn watch_process(state: Arc<ProcessState>) {
 
 pub(super) fn signal_process_tree(state: &ProcessState, force: bool) {
     #[cfg(unix)]
-    {
-        let signal = if force { "-KILL" } else { "-TERM" };
-        let _ = Command::new("kill")
-            .args([signal, "--", &format!("-{}", state.pid)])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
-    }
+    let result = super::signal_group(
+        state.pid,
+        if force { libc::SIGKILL } else { libc::SIGTERM },
+        || match lock(&state.child).as_mut() {
+            Some(child) => child.try_wait().map(|_| ()),
+            None => Ok(()),
+        },
+    );
     #[cfg(windows)]
-    {
-        let mut command = Command::new("taskkill");
-        command.args(["/PID", &state.pid.to_string(), "/T"]);
-        if force {
-            command.arg("/F");
+    let result = {
+        let _ = force;
+        state.tree.terminate()
+    };
+    if let Err(error) = result {
+        *lock(&state.reader_error) = Some(format!("could not terminate process tree: {error}"));
+        if let Some(child) = lock(&state.child).as_mut()
+            && let Err(cleanup) = child.kill()
+        {
+            *lock(&state.reader_error) = Some(format!(
+                "could not terminate process tree: {error}; child cleanup failed: {cleanup}"
+            ));
         }
-        let _ = command.stdout(Stdio::null()).stderr(Stdio::null()).status();
-    }
-    if force && let Some(child) = lock(&state.child).as_mut() {
-        let _ = child.kill();
     }
 }
 
@@ -219,6 +223,9 @@ pub(crate) fn spawn_process(request: ProcessRequest) -> std::io::Result<Arc<Proc
         use std::os::unix::process::CommandExt;
         command.process_group(0);
     }
+    #[cfg(windows)]
+    let (mut child, tree) = super::windows::Tree::spawn(&mut command)?;
+    #[cfg(unix)]
     let mut child = command
         .spawn()
         .map_err(|error| Error::other(format!("failed to launch: {error}")))?;
@@ -231,15 +238,27 @@ pub(crate) fn spawn_process(request: ProcessRequest) -> std::io::Result<Arc<Proc
         .stderr
         .take()
         .ok_or_else(|| Error::other("native process stderr was unavailable".to_owned()))?;
+    #[cfg(unix)]
+    let stop_pipes = Arc::new(AtomicBool::new(false));
+    #[cfg(unix)]
+    let stdin = stdin.map(|stdin| Pipe::new(stdin, stop_pipes.clone()));
+    #[cfg(unix)]
+    let stdout = Pipe::new(stdout, stop_pipes.clone());
+    #[cfg(unix)]
+    let stderr = Pipe::new(stderr, stop_pipes.clone());
     let state = Arc::new(ProcessState {
+        #[cfg(unix)]
         pid: child.id(),
+        #[cfg(windows)]
+        tree,
         child: Mutex::new(Some(child)),
         stdin: Mutex::new(stdin),
+        #[cfg(unix)]
+        stop_pipes,
         output: Mutex::new(OutputQueue {
             chunks: VecDeque::new(),
             bytes: 0,
             closed: false,
-            lossy: false,
         }),
         output_changed: Condvar::new(),
         readers: AtomicUsize::new(2),
@@ -265,7 +284,6 @@ pub(crate) fn process_drain(state: &ProcessState) -> Vec<u8> {
         bytes.extend(chunk);
     }
     output.bytes = 0;
-    output.lossy = false;
     state.output_changed.notify_all();
     bytes
 }
@@ -314,12 +332,7 @@ pub(crate) fn process_signal(state: &ProcessState, force: bool) {
 pub(crate) fn process_interrupt(state: &ProcessState) -> bool {
     #[cfg(unix)]
     {
-        Command::new("kill")
-            .args(["-INT", "--", &format!("-{}", state.pid)])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .is_ok_and(|status| status.success())
+        i32::try_from(state.pid).is_ok_and(|pid| unsafe { libc::kill(-pid, libc::SIGINT) } == 0)
     }
     #[cfg(windows)]
     {
