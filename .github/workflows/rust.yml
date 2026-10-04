@@ -50,7 +50,7 @@ jobs:
 
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --exclude xal-native --all-targets --locked -- -D warnings
-      - run: cargo test --workspace --exclude xal-native --all-targets --locked
+      - run: cargo test --workspace --exclude xal-native --all-targets --locked --no-fail-fast
 
   targets:
     name: Target ${{ matrix.target }}
