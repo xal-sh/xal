@@ -14,6 +14,7 @@ pub(crate) struct Command {
 pub struct Registration {
     pub(crate) commands: BTreeMap<String, Command>,
     pub(crate) tools: BTreeMap<String, std::sync::Arc<Tool>>,
+    pub(crate) snapshots: BTreeMap<String, crate::undo::Scope>,
     pub(crate) tool_sources: BTreeMap<String, ToolSource>,
     pub(crate) prompt_sources: Vec<(String, PromptSource)>,
     pub(crate) providers: BTreeMap<String, Provider>,
@@ -36,6 +37,7 @@ impl Registration {
         Self {
             commands: BTreeMap::new(),
             tools: BTreeMap::new(),
+            snapshots: BTreeMap::new(),
             tool_sources: BTreeMap::new(),
             prompt_sources: Vec::new(),
             providers: BTreeMap::new(),
@@ -87,6 +89,13 @@ impl Registration {
         xal_services::schema::validator(&serde_json::Value::Object(tool.parameters.clone()))
             .map_err(|error| Error::Failed(error.to_string()))?;
         insert(&mut self.tools, name, std::sync::Arc::new(tool))
+    }
+
+    pub fn workspace_snapshots(&mut self, name: &str, scope: crate::undo::Scope) -> Result<()> {
+        if !self.tools.contains_key(name) {
+            return Err(Error::Failed("snapshot tool is not registered".into()));
+        }
+        insert(&mut self.snapshots, name, scope)
     }
 
     pub fn dynamic_tools(&mut self, prefix: &str, source: ToolSource) -> Result<()> {

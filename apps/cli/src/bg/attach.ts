@@ -5,8 +5,9 @@ import { appInfo } from "../app-info"
 import { backgroundSessionDir } from "../config/paths"
 import { asString, isRecord } from "../lib/json"
 import { pendingToolCalls } from "../providers/conversation"
+import { createNativeSessionLock, type NativeSessionLock } from "../native"
 import { SessionRecorder } from "../sessions/recorder"
-import { findSession, loadSession } from "../sessions/store"
+import { loadSession, summarize } from "../sessions/store"
 import type { SessionSummary } from "../sessions/types"
 import {
   effectiveStatus,
@@ -15,6 +16,7 @@ import {
   readBgLease,
   readBgState,
   removeBackgroundSession,
+  releaseBgLease,
   writeBgControl,
   writeBgState,
   type BgControlAction,
@@ -93,9 +95,10 @@ async function requestWorker(state: BgState, action: BgControlAction, timeoutMs:
 
 export type StopOutcome = "stopped" | "timeout" | "not_running"
 
-async function denyPendingRequest(state: BgState): Promise<void> {
-  const loaded = await loadSession(state.sessionPath)
-  if (!loaded) throw new Error(`the session file for ${state.sessionId.slice(0, 8)} is missing`)
+async function denyPendingRequest(state: BgState, owner: NativeSessionLock): Promise<void> {
+  const loaded = await loadSession(state.sessionPath, owner)
+  if (!loaded || loaded.meta.id !== state.sessionId)
+    throw new Error(`the session file for ${state.sessionId.slice(0, 8)} is missing or mismatched`)
   const calls = pendingToolCalls(activeHistory(loaded.items), {
     provider: loaded.meta.provider,
     model: loaded.meta.model,
@@ -106,7 +109,7 @@ async function denyPendingRequest(state: BgState): Promise<void> {
   const recorder = new SessionRecorder((message) => {
     recorderError = message
   })
-  recorder.attach(state.sessionPath)
+  recorder.attach(state.sessionPath, owner)
   for (const call of calls) {
     const approval = loaded.events.findLast(
       (event) => event.type === "approval_requested" && event.callId === call.callId,
@@ -129,7 +132,7 @@ async function denyPendingRequest(state: BgState): Promise<void> {
   await recorder.flush()
   if (recorderError) throw new Error(recorderError)
 
-  const verified = await loadSession(state.sessionPath)
+  const verified = await loadSession(state.sessionPath, owner)
   if (!verified) throw new Error(`the session file for ${state.sessionId.slice(0, 8)} became unreadable`)
   const remaining = pendingToolCalls(activeHistory(verified.items), {
     provider: verified.meta.provider,
@@ -138,15 +141,41 @@ async function denyPendingRequest(state: BgState): Promise<void> {
   if (remaining.length > 0) throw new Error(`the pending request for ${state.sessionId.slice(0, 8)} was not denied`)
 }
 
+async function waitForRelease(state: BgState, timeoutMs: number): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  while (true) {
+    const lease = await readBgLease(state.sessionId)
+    if (lease && lease.workerId !== state.workerId) throw new Error("background ownership changed")
+    if (!lease || !isProcessAlive(state.pid)) return
+    if (Date.now() >= deadline) throw new Error("worker has not released its lease before the deadline")
+    await Bun.sleep(100)
+  }
+}
+
 async function stopWaitingSession(state: BgState): Promise<void> {
-  await denyPendingRequest(state)
-  await writeBgState({
-    ...state,
-    updatedAt: Date.now(),
-    status: "stopped",
-    activity: "stopped",
-    detail: "pending request denied when the background session was stopped",
-  })
+  await waitForRelease(state, STOP_GRACE_MS)
+  const owner = createNativeSessionLock(state.sessionPath)
+  try {
+    const current = await readBgState(state.sessionId)
+    if (!current || current.workerId !== state.workerId || current.status !== "needs_input") {
+      throw new Error(`background ownership for ${state.sessionId.slice(0, 8)} changed`)
+    }
+    const lease = await readBgLease(state.sessionId)
+    if (lease && (lease.workerId !== state.workerId || isProcessAlive(current.pid))) {
+      throw new Error("worker has not released its lease")
+    }
+    await denyPendingRequest(state, owner)
+    await writeBgState({
+      ...state,
+      updatedAt: Date.now(),
+      status: "stopped",
+      activity: "stopped",
+      detail: "pending request denied when the background session was stopped",
+    })
+    if (lease) await releaseBgLease(state.sessionId, state.workerId)
+  } finally {
+    owner.close()
+  }
 }
 
 export async function stopBackgroundWorker(view: BgView): Promise<StopOutcome> {
@@ -184,13 +213,26 @@ export async function takeOverBackgroundSession(id: string): Promise<TakeoverOut
   try {
     const final = found.effective === "running" ? await handoffFromWorker(found.state) : found.state
     const effective = effectiveStatus(final, isProcessAlive(final.pid))
-    const summary = await findSession(sessionId)
-    if (!summary) throw new Error(`the session file for ${sessionId.slice(0, 8)} is missing`)
-    await removeBackgroundSession(sessionId)
-    return {
-      summary,
-      continueWork: continueAfter(effective),
-      retryPendingTools: effective === "needs_input",
+    await waitForRelease(final, HANDOFF_TIMEOUT_MS)
+    const owner = createNativeSessionLock(final.sessionPath)
+    try {
+      const current = await readBgState(sessionId)
+      if (!current || current.workerId !== final.workerId) throw new Error("background ownership changed")
+      const lease = await readBgLease(sessionId)
+      if (lease && (lease.workerId !== final.workerId || isProcessAlive(final.pid))) {
+        throw new Error("worker has not released its lease")
+      }
+      const summary = await summarize(final.sessionPath)
+      if (!summary || summary.id !== sessionId)
+        throw new Error(`the session file for ${sessionId.slice(0, 8)} is missing or mismatched`)
+      await removeBackgroundSession(sessionId)
+      return {
+        summary,
+        continueWork: continueAfter(effective),
+        retryPendingTools: effective === "needs_input",
+      }
+    } finally {
+      owner.close()
     }
   } catch (error) {
     await releaseAttach(sessionId)

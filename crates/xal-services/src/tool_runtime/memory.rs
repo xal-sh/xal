@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) fn memory_prepare(value: &Value) -> napi::Result<Value> {
+pub fn memory_prepare(value: &Value) -> io::Result<Value> {
     let request = object(value)?;
     let operation = string(request, "operation")
         .ok_or_else(|| invalid("operation must be read, replace, or clear"))?;

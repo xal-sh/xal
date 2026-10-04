@@ -218,7 +218,10 @@ async fn files_search_web_gates_hashes_artifacts_and_cancellation_use_one_host()
     let artifacts = fs::read_dir(root.join("artifacts/fixture"))
         .unwrap()
         .collect::<std::io::Result<Vec<_>>>()
-        .unwrap();
+        .unwrap()
+        .into_iter()
+        .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "txt"))
+        .collect::<Vec<_>>();
     assert_eq!(artifacts.len(), 1);
     let saved = fs::read_to_string(artifacts[0].path()).unwrap();
     assert!(!saved.contains("secret-fixture"));

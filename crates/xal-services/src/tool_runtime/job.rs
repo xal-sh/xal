@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) fn job_prepare(value: &Value) -> napi::Result<Value> {
+pub fn job_prepare(value: &Value) -> io::Result<Value> {
     let request = object(value)?;
     let id = required_string(request, "id")?;
     let wait = match request.get("wait").and_then(Value::as_f64) {
@@ -10,7 +10,7 @@ pub(super) fn job_prepare(value: &Value) -> napi::Result<Value> {
     Ok(json!({ "id": id, "wait": wait }))
 }
 
-fn process_record_notice(record: Option<&Value>) -> napi::Result<String> {
+fn process_record_notice(record: Option<&Value>) -> io::Result<String> {
     let Some(record) = record else {
         return Ok(String::new());
     };
@@ -35,7 +35,7 @@ fn process_record_notice(record: Option<&Value>) -> napi::Result<String> {
     }
 }
 
-pub(super) fn process_output(value: &Value) -> napi::Result<Value> {
+pub fn process_output(value: &Value) -> io::Result<Value> {
     let request = object(value)?;
     let pending = string(request, "pending").unwrap_or_default();
     let unread = if pending.is_empty() {
@@ -70,7 +70,7 @@ pub(super) fn process_output(value: &Value) -> napi::Result<Value> {
     )
 }
 
-fn agent_record(record: Option<&Value>) -> napi::Result<String> {
+fn agent_record(record: Option<&Value>) -> io::Result<String> {
     let Some(record) = record else {
         return Ok(String::new());
     };
@@ -98,7 +98,7 @@ fn agent_record(record: Option<&Value>) -> napi::Result<String> {
     }
 }
 
-fn agent_status(request: &Map<String, Value>) -> napi::Result<String> {
+fn agent_status(request: &Map<String, Value>) -> io::Result<String> {
     let id = required_string(request, "id")?;
     let now = request
         .get("now")
@@ -197,7 +197,7 @@ fn agent_status(request: &Map<String, Value>) -> napi::Result<String> {
     ))
 }
 
-pub(super) fn agent_output(value: &Value) -> napi::Result<Value> {
+pub fn agent_output(value: &Value) -> io::Result<Value> {
     let request = object(value)?;
     if request.get("done").and_then(Value::as_bool) != Some(true) {
         let mut output = agent_status(request)?;
@@ -226,7 +226,7 @@ pub(super) fn agent_output(value: &Value) -> napi::Result<Value> {
     Ok(json!({ "output": output }))
 }
 
-pub(super) fn job_kill(value: &Value) -> napi::Result<Value> {
+pub fn job_kill(value: &Value) -> io::Result<Value> {
     let request = object(value)?;
     let id = required_string(request, "id")?;
     let status = required_string(request, "status")?;
@@ -286,7 +286,7 @@ pub(super) fn job_kill(value: &Value) -> napi::Result<Value> {
     Ok(json!({ "output": output }))
 }
 
-pub(super) fn job_status(value: &Value) -> napi::Result<Value> {
+pub fn job_status(value: &Value) -> io::Result<Value> {
     let request = object(value)?;
     let jobs = request
         .get("jobs")
@@ -351,7 +351,7 @@ pub(super) fn job_status(value: &Value) -> napi::Result<Value> {
     Ok(json!({ "output": lines.join("\n") }))
 }
 
-fn extension(value: Option<&Value>, field: &str, maximum: i64) -> napi::Result<i64> {
+fn extension(value: Option<&Value>, field: &str, maximum: i64) -> io::Result<i64> {
     let Some(value) = value else {
         return Ok(0);
     };
@@ -368,7 +368,7 @@ fn extension(value: Option<&Value>, field: &str, maximum: i64) -> napi::Result<i
     Ok(number)
 }
 
-pub(super) fn job_extend_prepare(value: &Value) -> napi::Result<Value> {
+pub fn job_extend_prepare(value: &Value) -> io::Result<Value> {
     let request = object(value)?;
     let id = required_string(request, "id")?;
     let turns = extension(request.get("turns"), "turns", MAX_EXTENSION_TURNS)?;
@@ -378,7 +378,7 @@ pub(super) fn job_extend_prepare(value: &Value) -> napi::Result<Value> {
     Ok(json!({ "id": id, "turns": turns }))
 }
 
-pub(super) fn job_extend_finalize(value: &Value) -> napi::Result<Value> {
+pub fn job_extend_finalize(value: &Value) -> io::Result<Value> {
     let request = object(value)?;
     let id = required_string(request, "id")?;
     let turns = request.get("turns").and_then(Value::as_i64).unwrap_or(0);
@@ -399,7 +399,7 @@ pub(super) fn job_extend_finalize(value: &Value) -> napi::Result<Value> {
     )
 }
 
-pub(super) fn job_send_prepare(value: &Value) -> napi::Result<Value> {
+pub fn job_send_prepare(value: &Value) -> io::Result<Value> {
     let request = object(value)?;
     let id = required_string(request, "id")?;
     let message = required_string(request, "message")?;
@@ -411,7 +411,7 @@ pub(super) fn job_send_prepare(value: &Value) -> napi::Result<Value> {
     Ok(json!({ "id": id, "message": message }))
 }
 
-pub(super) fn job_send_finalize(value: &Value) -> napi::Result<Value> {
+pub fn job_send_finalize(value: &Value) -> io::Result<Value> {
     let request = object(value)?;
     let id = required_string(request, "id")?;
     match required_string(request, "disposition")?.as_str() {

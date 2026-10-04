@@ -44,6 +44,14 @@ impl Host {
         if let Some(cwd) = workspaces.get(&session.id) {
             session.cwd = cwd.clone();
         }
+        if let Some(permissions) = self
+            .session_permissions
+            .lock()
+            .map_err(|_| Error::Failed("session permissions poisoned".into()))?
+            .get(&session.id)
+        {
+            session.read_only = permissions.read_only;
+        }
         Ok(session)
     }
 

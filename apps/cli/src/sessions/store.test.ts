@@ -422,3 +422,12 @@ test("loads a user-only compaction floor without rewriting the version-2 session
     expect(await readFile(path, "utf8")).toBe(encoded)
   })
 })
+
+test("repairs an incomplete UTF-8 crash suffix without decoding it", async () => {
+  await withSessionFile(async (path) => {
+    const complete = Buffer.from(record({ type: "meta", meta }))
+    await writeFile(path, Buffer.concat([complete, Buffer.from([123, 34, 240, 159])]))
+    expect((await loadSession(path))?.meta.id).toBe(meta.id)
+    expect(await readFile(path)).toEqual(complete)
+  })
+})

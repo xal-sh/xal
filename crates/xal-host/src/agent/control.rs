@@ -1,5 +1,5 @@
 use std::collections::VecDeque;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, atomic::Ordering};
 
 use tokio::sync::Notify;
 
@@ -9,8 +9,11 @@ use crate::{Cancellation, Error, Result};
 struct State {
     queue: VecDeque<Input>,
     active: Option<Cancellation>,
+    turn: Option<Cancellation>,
     steering: bool,
     accepting: bool,
+    pause: bool,
+    jobs: Arc<crate::jobs::Jobs>,
 }
 
 #[derive(Clone)]
@@ -21,13 +24,16 @@ pub struct Control {
 }
 
 impl Control {
-    pub(super) fn new(cancellation: Cancellation) -> Self {
+    pub(super) fn new(cancellation: Cancellation, jobs: Arc<crate::jobs::Jobs>) -> Self {
         Self {
             state: Arc::new(Mutex::new(State {
                 queue: VecDeque::new(),
                 active: None,
+                turn: None,
                 steering: false,
                 accepting: true,
+                pause: false,
+                jobs,
             })),
             changed: Arc::new(Notify::new()),
             cancellation,
@@ -61,6 +67,7 @@ impl Control {
             return Err(Error::Failed("input queue full".into()));
         }
         state.queue.push_back(input);
+        state.jobs.input_pending.store(true, Ordering::Release);
         if steer {
             state.steering = true;
             if let Some(active) = &state.active {
@@ -68,11 +75,88 @@ impl Control {
             }
         }
         self.changed.notify_one();
+        state.jobs.activity.notify_waiters();
+        Ok(())
+    }
+
+    pub fn promote(&self, id: &str) -> Result<()> {
+        self.jobs()?.get(id)?.promote()
+    }
+
+    pub fn jobs(&self) -> Result<Arc<crate::jobs::Jobs>> {
+        Ok(self
+            .state
+            .lock()
+            .map_err(|_| Error::Failed("input queue poisoned".into()))?
+            .jobs
+            .clone())
+    }
+
+    pub(super) fn reset(&self, jobs: Arc<crate::jobs::Jobs>) -> Result<()> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| Error::Failed("input queue poisoned".into()))?;
+        jobs.input_pending
+            .store(state.pause || !state.queue.is_empty(), Ordering::Release);
+        state.jobs = jobs;
+        Ok(())
+    }
+
+    pub fn pause(&self) -> Result<()> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| Error::Failed("input queue poisoned".into()))?;
+        state.pause = true;
+        state.jobs.input_pending.store(true, Ordering::Release);
+        self.changed.notify_waiters();
+        state.jobs.activity.notify_waiters();
+        Ok(())
+    }
+
+    pub(super) fn boundary(&self) -> Result<()> {
+        if self
+            .state
+            .lock()
+            .map_err(|_| Error::Failed("input queue poisoned".into()))?
+            .pause
+        {
+            return Err(Error::Paused);
+        }
         Ok(())
     }
 
     pub fn interrupt(&self) {
-        self.cancellation.cancel();
+        match self.state.lock() {
+            Ok(state) => {
+                if let Some(turn) = &state.turn {
+                    turn.cancel();
+                }
+            }
+            Err(_) => self.cancellation.cancel(),
+        }
+    }
+
+    pub(super) fn begin(&self) -> Result<Cancellation> {
+        self.cancellation.check()?;
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| Error::Failed("input queue poisoned".into()))?;
+        let turn = self.cancellation.child();
+        state.turn = Some(turn.clone());
+        state.pause = false;
+        state
+            .jobs
+            .input_pending
+            .store(!state.queue.is_empty(), Ordering::Release);
+        state.accepting = true;
+        Ok(turn)
+    }
+
+    pub(super) fn lifetime(&self) -> Cancellation {
+        self.cancellation.clone()
     }
 
     pub(super) fn active(&self, cancellation: Cancellation) -> Result<()> {
@@ -105,6 +189,10 @@ impl Control {
             .map_err(|_| Error::Failed("input queue poisoned".into()))?;
         state.active = None;
         state.steering = false;
+        state
+            .jobs
+            .input_pending
+            .store(state.pause, Ordering::Release);
         Ok(state.queue.drain(..).collect())
     }
 

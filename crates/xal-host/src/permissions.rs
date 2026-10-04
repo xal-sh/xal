@@ -10,6 +10,10 @@ use crate::{Error, PermissionRequest, PolicyDecision, Result};
 mod shell;
 mod split;
 
+#[cfg(test)]
+mod tests;
+
+#[derive(Clone)]
 pub struct Permissions {
     pub mode: String,
     pub read_only: bool,
@@ -17,9 +21,22 @@ pub struct Permissions {
     pub(crate) skip_ask: bool,
     rules: Vec<(String, bool)>,
     denies: Vec<String>,
+    home: PathBuf,
+    pub(crate) grants: Vec<(PathBuf, String)>,
 }
 
 impl Permissions {
+    pub fn child(&self, read_only: bool) -> Self {
+        let mut child = self.clone();
+        child.read_only |= read_only;
+        if read_only {
+            child.mode = "plan".into();
+            child.skip_ask = false;
+            child.guidance = "Read-only task: never modify files or use an unsandboxed shell. Inherited denials remain authoritative.".into();
+        }
+        child
+    }
+
     pub fn load(settings: &Settings, home: &Path, cwd: &Path, mode: &str) -> Result<Self> {
         let custom = settings.modes.get(mode);
         for (name, definition) in &settings.modes {
@@ -55,6 +72,8 @@ impl Permissions {
                 .unwrap_or_else(|| guidance.into()),
             rules: Vec::new(),
             denies: Vec::new(),
+            home: home.into(),
+            grants: Vec::new(),
         };
         for rule in [
             "write(/*)",
@@ -115,6 +134,9 @@ impl Permissions {
         if let Some(value) = read_json(&home.join("permissions.json"))
             .map_err(|_| Error::Failed("permissions.json is malformed or inaccessible".into()))?
         {
+            if value["version"] != 1 {
+                return Err(Error::Failed("permissions.json is malformed".into()));
+            }
             let projects = value
                 .get("projects")
                 .and_then(Value::as_object)
@@ -128,9 +150,7 @@ impl Permissions {
                     let rule = rule
                         .as_str()
                         .ok_or_else(|| Error::Failed("permissions.json is malformed".into()))?;
-                    if Path::new(project) == cwd {
-                        policy.rules.push((rule.into(), true));
-                    }
+                    policy.grants.push((PathBuf::from(project), rule.into()));
                 }
             }
         }
@@ -146,6 +166,67 @@ impl Permissions {
     }
 
     pub fn evaluate(&self, request: &PermissionRequest, cwd: &Path) -> Result<PolicyDecision> {
+        let subject = Self::subject(request, cwd)?;
+        let canonical = request
+            .subject
+            .is_none()
+            .then(|| request.args.get("file_path"))
+            .flatten()
+            .and_then(Value::as_str)
+            .map(|path| resolve_path(cwd, path).map(|path| display_path(&path, cwd)))
+            .transpose()?;
+        if canonical
+            .as_ref()
+            .is_some_and(|subject| self.denied(&request.tool, subject))
+        {
+            return Ok(PolicyDecision::Deny(
+                "Blocked by the active permission rules.".into(),
+            ));
+        }
+        if self.denied(&request.tool, &subject) || (self.read_only && !request.read_only) {
+            return Ok(PolicyDecision::Deny(
+                "Blocked by the active permission rules.".into(),
+            ));
+        }
+        let sandboxed = crate::sandbox_available()
+            && request
+                .args
+                .get("sandbox")
+                .and_then(Value::as_str)
+                .is_some_and(|sandbox| ["read", "workspace"].contains(&sandbox));
+        if request.tool == "bash"
+            && sandboxed
+            && matches!(
+                self.shell_policy(&subject, cwd, 0),
+                Some(PolicyDecision::Deny(_))
+            )
+        {
+            return Ok(PolicyDecision::Deny(
+                "Blocked by the active permission rules.".into(),
+            ));
+        }
+        let decision = if request.tool == "bash" && !sandboxed {
+            self.shell_policy(&subject, cwd, 0)
+        } else {
+            let logical = self.matched(&request.tool, &subject);
+            let target = canonical
+                .as_ref()
+                .and_then(|subject| self.matched(&request.tool, subject));
+            if matches!(target, Some(PolicyDecision::Ask(_))) {
+                target
+            } else {
+                logical.or(target)
+            }
+        };
+        Ok(match decision {
+            Some(PolicyDecision::Deny(reason)) => PolicyDecision::Deny(reason),
+            Some(PolicyDecision::Ask(_)) if self.skip_ask => PolicyDecision::Allow,
+            Some(decision) => decision,
+            None => PolicyDecision::Allow,
+        })
+    }
+
+    pub fn subject(request: &PermissionRequest, cwd: &Path) -> Result<String> {
         let subject = if let Some(subject) = &request.subject {
             subject.clone()
         } else if request.tool == "bash" {
@@ -215,63 +296,83 @@ impl Permissions {
         } else {
             String::new()
         };
-        let canonical = request
-            .subject
-            .is_none()
-            .then(|| request.args.get("file_path"))
-            .flatten()
-            .and_then(Value::as_str)
-            .map(|path| resolve_path(cwd, path).map(|path| display_path(&path, cwd)))
-            .transpose()?;
-        if canonical
-            .as_ref()
-            .is_some_and(|subject| self.denied(&request.tool, subject))
-        {
-            return Ok(PolicyDecision::Deny(
-                "Blocked by the active permission rules.".into(),
-            ));
-        }
-        if self.denied(&request.tool, &subject) || (self.read_only && !request.read_only) {
-            return Ok(PolicyDecision::Deny(
-                "Blocked by the active permission rules.".into(),
-            ));
-        }
-        let sandboxed = crate::sandbox_available()
-            && request
-                .args
-                .get("sandbox")
-                .and_then(Value::as_str)
-                .is_some_and(|sandbox| ["read", "workspace"].contains(&sandbox));
-        if request.tool == "bash"
-            && sandboxed
-            && matches!(
-                self.shell_policy(&subject, cwd, 0),
-                Some(PolicyDecision::Deny(_))
-            )
-        {
-            return Ok(PolicyDecision::Deny(
-                "Blocked by the active permission rules.".into(),
-            ));
-        }
-        let decision = if request.tool == "bash" && !sandboxed {
-            self.shell_policy(&subject, cwd, 0)
+        Ok(subject)
+    }
+
+    pub fn rule(request: &PermissionRequest, cwd: &Path) -> Result<String> {
+        let subject = Self::subject(request, cwd)?;
+        Ok(if subject.is_empty() {
+            request.tool.clone()
         } else {
-            let logical = self.matched(&request.tool, &subject);
-            let target = canonical
-                .as_ref()
-                .and_then(|subject| self.matched(&request.tool, subject));
-            if matches!(target, Some(PolicyDecision::Ask(_))) {
-                target
-            } else {
-                logical.or(target)
-            }
-        };
-        Ok(match decision {
-            Some(PolicyDecision::Deny(reason)) => PolicyDecision::Deny(reason),
-            Some(PolicyDecision::Ask(_)) if self.skip_ask => PolicyDecision::Allow,
-            Some(decision) => decision,
-            None => PolicyDecision::Allow,
+            format!("{}({subject})", request.tool)
         })
+    }
+
+    pub(crate) fn granted(&self, request: &PermissionRequest, cwd: &Path) -> Result<bool> {
+        let subject = Self::subject(request, cwd)?;
+        Ok(self
+            .grants
+            .iter()
+            .any(|(workspace, rule)| workspace == cwd && matches(rule, &request.tool, &subject)))
+    }
+
+    pub(crate) fn remember(
+        &mut self,
+        request: &PermissionRequest,
+        cwd: &Path,
+        pattern: &str,
+        persistent: bool,
+    ) -> Result<()> {
+        if pattern.is_empty()
+            || pattern.len() > 20_000
+            || !matches(pattern, &request.tool, &Self::subject(request, cwd)?)
+        {
+            return Err(Error::Failed(
+                "approval pattern does not match this action".into(),
+            ));
+        }
+        if persistent {
+            let path = self.home.join("permissions.json");
+            let _owner = xal_services::session_lock::SessionLock::wait(
+                &path,
+                std::time::Duration::from_secs(5),
+            )
+            .map_err(|e| Error::Failed(e.to_string()))?;
+            let mut file = read_json(&path)
+                .map_err(|e| Error::Failed(e.to_string()))?
+                .unwrap_or_else(|| serde_json::json!({"version":1,"projects":{}}));
+            if file["version"] != 1 {
+                return Err(Error::Failed("permissions.json is malformed".into()));
+            }
+            let projects = file
+                .get_mut("projects")
+                .and_then(Value::as_object_mut)
+                .ok_or_else(|| Error::Failed("permissions.json is malformed".into()))?;
+            for project in projects.values() {
+                if project["allow"]
+                    .as_array()
+                    .is_none_or(|rules| rules.iter().any(|r| !r.is_string()))
+                {
+                    return Err(Error::Failed("permissions.json is malformed".into()));
+                }
+            }
+            let project = projects
+                .entry(cwd.to_string_lossy().into_owned())
+                .or_insert_with(|| serde_json::json!({"allow":[]}));
+            let rules = project["allow"]
+                .as_array_mut()
+                .ok_or_else(|| Error::Failed("permissions.json is malformed".into()))?;
+            if !rules.iter().any(|r| r == pattern) {
+                rules.push(serde_json::json!(pattern));
+            }
+            xal_services::storage::write_json(&path, &file)
+                .map_err(|e| Error::Failed(e.to_string()))?;
+        }
+        let grant = (cwd.to_path_buf(), pattern.into());
+        if !self.grants.contains(&grant) {
+            self.grants.push(grant);
+        }
+        Ok(())
     }
 
     fn denied(&self, tool: &str, subject: &str) -> bool {

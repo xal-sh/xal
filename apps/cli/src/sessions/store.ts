@@ -1,5 +1,5 @@
 import { createReadStream } from "node:fs"
-import { readdir, truncate } from "node:fs/promises"
+import { readdir } from "node:fs/promises"
 import { join } from "node:path"
 import { createInterface } from "node:readline"
 import type { AgentEvent } from "../agent/events"
@@ -11,6 +11,7 @@ import {
 } from "../agent/history"
 import { isMessageId } from "../agent/message-id"
 import { projectSessionsDir, sessionsDir } from "../config/paths"
+import { createNativeSessionLock, type NativeSessionLock } from "../native"
 import { parseRecord } from "./records"
 import { titleFromEvents, titleFromInput } from "./title"
 import type { LoadedSession, SessionMeta, SessionSummary } from "./types"
@@ -71,7 +72,7 @@ function rewindMessageIds(
   return { retained: messageIds.slice(0, index), redos }
 }
 
-async function summarize(path: string): Promise<SessionSummary | undefined> {
+export async function summarize(path: string): Promise<SessionSummary | undefined> {
   let meta: SessionMeta | undefined
   let generatedTitle: string | undefined
   let recordedTitle: string | undefined
@@ -162,16 +163,17 @@ function updateToolCall(items: HistoryItem[], event: Extract<AgentEvent, { type:
   return false
 }
 
-export async function loadSession(path: string): Promise<LoadedSession | undefined> {
-  let text: string
+export async function loadSession(path: string, owner?: NativeSessionLock): Promise<LoadedSession | undefined> {
+  let bytes: Buffer
+  let complete: string
   try {
-    text = await Bun.file(path).text()
+    bytes = Buffer.from(await Bun.file(path).arrayBuffer())
+    complete = new TextDecoder("utf-8", { fatal: true }).decode(bytes.subarray(0, bytes.lastIndexOf(10) + 1))
   } catch {
     return undefined
   }
-  const completeEnd = text.lastIndexOf("\n") + 1
-  const complete = text.slice(0, completeEnd)
-  const hasIncompleteTail = completeEnd < text.length
+  const completeEnd = bytes.lastIndexOf(10) + 1
+  const hasIncompleteTail = completeEnd < bytes.length
 
   let meta: SessionMeta | undefined
   let items: HistoryItem[] = []
@@ -289,10 +291,11 @@ export async function loadSession(path: string): Promise<LoadedSession | undefin
 
   if (!meta) return undefined
   if (hasIncompleteTail) {
+    const lock = owner ?? createNativeSessionLock(path)
     try {
-      await truncate(path, Buffer.byteLength(complete))
-    } catch {
-      return undefined
+      lock.repair(bytes, completeEnd)
+    } finally {
+      if (!owner) lock.close()
     }
   }
   return { meta, items, checkpoints, events, title: titleFromEvents(events) }

@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) fn update_plan(value: &Value) -> napi::Result<Value> {
+pub fn update_plan(value: &Value) -> io::Result<Value> {
     let request = object(value)?;
     if request
         .keys()
@@ -38,7 +38,7 @@ pub(super) fn update_plan(value: &Value) -> napi::Result<Value> {
     Ok(json!({ "explanation": explanation, "plan": plan, "output": "Plan updated" }))
 }
 
-pub(super) fn submit_plan_prepare(value: &Value) -> napi::Result<Value> {
+pub fn submit_plan_prepare(value: &Value) -> io::Result<Value> {
     let request = object(value)?;
     let markdown = required_string(request, "plan")?;
     if utf16_len(&markdown) > MAX_PLAN_LENGTH {
@@ -49,7 +49,7 @@ pub(super) fn submit_plan_prepare(value: &Value) -> napi::Result<Value> {
     Ok(json!({ "markdown": markdown }))
 }
 
-pub(super) fn submit_plan_review(value: &Value) -> napi::Result<Value> {
+pub fn submit_plan_review(value: &Value) -> io::Result<Value> {
     let request = object(value)?;
     let display_name = required_string(request, "displayName")?;
     let usage = request.get("usage").and_then(Value::as_object);
@@ -87,7 +87,7 @@ pub(super) fn submit_plan_review(value: &Value) -> napi::Result<Value> {
     }] }))
 }
 
-pub(super) fn submit_plan_finalize(value: &Value) -> napi::Result<Value> {
+pub fn submit_plan_finalize(value: &Value) -> io::Result<Value> {
     let request = object(value)?;
     let path = required_string(request, "path")?;
     let markdown = required_string(request, "markdown")?;

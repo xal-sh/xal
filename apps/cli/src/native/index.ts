@@ -91,7 +91,14 @@ export interface NativeSecretMatcher {
   redact(text: string): string
 }
 
+export interface NativeSessionLock {
+  close(): void
+  append(text: string, create: boolean): void
+  repair(original: Buffer, completeBytes: number): void
+}
+
 interface NativeBinding {
+  createSessionLock(path: string): NativeSessionLock
   createSecretMatcher(values: string[], marker: string): NativeSecretMatcher
   createGitRepository(cwd: string): NativeGitRepository
   createLspManager(definitions: unknown, appName: string, appVersion: string): NativeLspManager
@@ -178,6 +185,7 @@ function createBinding(value: unknown): NativeBinding {
   const apiVersion = requiredFunction(value, "apiVersion")
   const version: unknown = Reflect.apply(apiVersion, value, [])
   if (version !== NATIVE_API_VERSION) throw new Error(`native addon API version mismatch: ${String(version)}`)
+  const SessionLock = requiredFunction(value, "NativeSessionLock")
   const Matcher = value.NativeSecretMatcher
   if (typeof Matcher !== "function") throw new Error("native addon NativeSecretMatcher export is invalid")
   const nativeBatchScores = requiredFunction(value, "nativeBatchScores")
@@ -272,6 +280,24 @@ function createBinding(value: unknown): NativeBinding {
   const nativeUnifiedDiff = requiredFunction(value, "nativeUnifiedDiff")
 
   return {
+    createSessionLock(path) {
+      const instance: unknown = Reflect.construct(SessionLock, [path])
+      if (!isRecord(instance)) throw new Error("native session lock instance is invalid")
+      const close = requiredFunction(instance, "close")
+      const append = requiredFunction(instance, "append")
+      const repair = requiredFunction(instance, "repair")
+      return {
+        close() {
+          Reflect.apply(close, instance, [])
+        },
+        append(text, create) {
+          Reflect.apply(append, instance, [text, create])
+        },
+        repair(original, completeBytes) {
+          Reflect.apply(repair, instance, [original, completeBytes])
+        },
+      }
+    },
     createSecretMatcher(values, marker) {
       const instance: unknown = Reflect.construct(Matcher, [values, marker])
       if (!isRecord(instance)) throw new Error("native addon matcher instance is invalid")
@@ -422,6 +448,10 @@ let shellManager: NativeShellManager | undefined
 function nativeBinding(): NativeBinding {
   binding ??= createBinding(loadBindingValue())
   return binding
+}
+
+export function createNativeSessionLock(path: string): NativeSessionLock {
+  return nativeBinding().createSessionLock(path)
 }
 
 export function createNativeSecretMatcher(values: string[], marker: string): NativeSecretMatcher {

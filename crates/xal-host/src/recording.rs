@@ -14,7 +14,7 @@ use sha2::{Digest, Sha256};
 use xal_services::{
     credentials::new_id,
     redactor::Redactor,
-    storage::{create_secure, read_text},
+    storage::{create_secure, read_file},
 };
 
 use crate::*;
@@ -197,18 +197,28 @@ impl Recorder {
         let event = match result {
             Ok(()) => "turn_ended",
             Err(Error::Cancelled) => "turn_interrupted",
+            Err(Error::Paused | Error::NeedsInput) => return Ok(()),
             Err(_) => "turn_failed",
         };
         self.profile(&mut state, json!({"type":"agent_event","session":session_label,"kind":kind(&session.kind),"event":{"type":event,"context":context}}));
         Ok(())
     }
     pub fn flush(&self) -> Result<()> {
-        let state = self.state.lock().map_err(failure)?;
+        let mut state = self.state.lock().map_err(failure)?;
         if let Some(error) = &state.usage.failure {
             return Err(failure(format!("usage recorder is unavailable: {error}")));
         }
         if let Some(file) = &state.usage.file {
             file.sync_data().map_err(failure)?;
+        }
+        if let Some(file) = state.profile.as_ref().and_then(|p| p.file.as_ref())
+            && let Err(error) = file.sync_data()
+        {
+            eprintln!(
+                "{}",
+                self.redactor.redact(&format!("profiler stopped: {error}"))
+            );
+            state.profile = None;
         }
         Ok(())
     }
@@ -357,50 +367,7 @@ fn timestamp() -> Result<String> {
     let time = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(failure)?;
-    let mut days = time.as_secs() / 86400;
-    let mut year = 1970u64;
-    loop {
-        let count = if leap(year) { 366 } else { 365 };
-        if days < count {
-            break;
-        }
-        days -= count;
-        year += 1;
-    }
-    let months = [
-        31,
-        if leap(year) { 29 } else { 28 },
-        31,
-        30,
-        31,
-        30,
-        31,
-        31,
-        30,
-        31,
-        30,
-        31,
-    ];
-    let mut month = 1;
-    for count in months {
-        if days < count {
-            break;
-        }
-        days -= count;
-        month += 1;
-    }
-    let seconds = time.as_secs() % 86400;
-    Ok(format!(
-        "{year:04}-{month:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z",
-        days + 1,
-        seconds / 3600,
-        seconds / 60 % 60,
-        seconds % 60,
-        time.subsec_millis()
-    ))
-}
-fn leap(year: u64) -> bool {
-    year.is_multiple_of(4) && (!year.is_multiple_of(100) || year.is_multiple_of(400))
+    xal_services::time::timestamp(time.as_millis().try_into().map_err(failure)?).map_err(failure)
 }
 pub fn parse_usage(value: &Value) -> Result<Usage> {
     if value["type"] != "provider_usage" || ![Some(1), Some(2)].contains(&value["version"].as_u64())
@@ -440,51 +407,111 @@ pub fn parse_usage(value: &Value) -> Result<Usage> {
     }
     Ok(usage)
 }
-pub fn read_usage(directory: &Path) -> Result<Value> {
-    let entries = match std::fs::read_dir(directory) {
-        Ok(entries) => entries,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(json!({"requests":0,"usage":Usage::default()}));
+#[derive(Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Totals {
+    requests: u64,
+    total_tokens: u64,
+    total_input_tokens: u64,
+    cache_read_input_tokens: u64,
+    cache_write_input_tokens: u64,
+    output_tokens: u64,
+}
+impl Totals {
+    fn add(&mut self, usage: &Usage) -> Result<()> {
+        fn sum(a: u64, b: u64) -> Result<u64> {
+            a.checked_add(b)
+                .filter(|n| *n <= 9_007_199_254_740_991)
+                .ok_or_else(|| failure("usage total exceeds safe integer range"))
         }
+        self.requests = sum(self.requests, 1)?;
+        self.total_input_tokens = sum(
+            self.total_input_tokens,
+            usage.total_input_tokens.unwrap_or(0),
+        )?;
+        self.cache_read_input_tokens = sum(
+            self.cache_read_input_tokens,
+            usage.cache_read_input_tokens.unwrap_or(0),
+        )?;
+        self.cache_write_input_tokens = sum(
+            self.cache_write_input_tokens,
+            usage.cache_write_input_tokens.unwrap_or(0),
+        )?;
+        self.output_tokens = sum(self.output_tokens, usage.output_tokens.unwrap_or(0))?;
+        self.total_tokens = sum(self.total_input_tokens, self.output_tokens)?;
+        Ok(())
+    }
+}
+pub fn read_usage(directory: &Path) -> Result<Value> {
+    usage_summary(directory, None, &[], crate::agent::now()?)
+}
+pub fn usage_summary(
+    directory: &Path,
+    session_id: Option<&str>,
+    providers: &[String],
+    now: u64,
+) -> Result<Value> {
+    use std::io::BufRead;
+    let mut all = Totals::default();
+    let mut weekly = Totals::default();
+    let mut session = Totals::default();
+    let mut daily = BTreeMap::<String, Totals>::new();
+    let entries = match std::fs::read_dir(directory) {
+        Ok(entries) => Some(entries),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
         Err(error) => return Err(failure(error)),
     };
-    let mut usage = Usage::default();
-    let mut requests = 0;
-    for entry in entries {
+    let fingerprint = session_id.map(fingerprint);
+    for entry in entries.into_iter().flatten() {
         let entry = entry.map_err(failure)?;
         if !entry.file_type().map_err(failure)?.is_file()
             || entry.path().extension().is_none_or(|e| e != "jsonl")
         {
             continue;
         }
-        let text = read_text(&entry.path())
+        let file = read_file(&entry.path())
             .map_err(failure)?
             .ok_or_else(|| failure("usage file disappeared"))?;
-        for line in text.lines() {
-            let next = parse_usage(&serde_json::from_str::<Value>(line).map_err(failure)?)?;
-            let sum = |a: Option<u64>, b: Option<u64>| {
-                a.unwrap_or(0)
-                    .checked_add(b.unwrap_or(0))
-                    .filter(|n| *n <= 9_007_199_254_740_991)
-                    .map(Some)
-                    .ok_or_else(|| failure("usage total exceeds safe integer range"))
-            };
-            usage = Usage {
-                total_input_tokens: sum(usage.total_input_tokens, next.total_input_tokens)?,
-                cache_read_input_tokens: sum(
-                    usage.cache_read_input_tokens,
-                    next.cache_read_input_tokens,
-                )?,
-                cache_write_input_tokens: sum(
-                    usage.cache_write_input_tokens,
-                    next.cache_write_input_tokens,
-                )?,
-                output_tokens: sum(usage.output_tokens, next.output_tokens)?,
-            };
-            requests += 1;
+        for line in std::io::BufReader::new(file).lines() {
+            let record: Value = serde_json::from_str(&line.map_err(failure)?).map_err(failure)?;
+            let usage = parse_usage(&record)?;
+            if !providers.is_empty() && !providers.iter().any(|p| record["provider"] == *p) {
+                continue;
+            }
+            let timestamp = xal_services::time::parse(
+                record["timestamp"]
+                    .as_str()
+                    .ok_or_else(|| failure("usage timestamp missing"))?,
+            )
+            .map_err(failure)?;
+            all.add(&usage)?;
+            daily
+                .entry(xal_services::time::local_date(timestamp).map_err(failure)?)
+                .or_default()
+                .add(&usage)?;
+            if timestamp >= now.saturating_sub(7 * 86_400_000) && timestamp <= now {
+                weekly.add(&usage)?;
+            }
+            if record["version"] == 2
+                && fingerprint
+                    .as_ref()
+                    .is_some_and(|s| record["session"] == *s)
+            {
+                session.add(&usage)?;
+            }
         }
     }
-    Ok(json!({"requests":requests,"usage":usage}))
+    let daily = daily
+        .into_iter()
+        .map(|(date, total)| {
+            let mut value = json!(total);
+            value["date"] = json!(date);
+            value
+        })
+        .collect::<Vec<_>>();
+    Ok(
+        json!({"requests":all.requests,"usage":{"totalInputTokens":all.total_input_tokens,"cacheReadInputTokens":all.cache_read_input_tokens,"cacheWriteInputTokens":all.cache_write_input_tokens,"outputTokens":all.output_tokens},"session":session,"weekly":weekly,"allTime":all,"daily":daily}),
+    )
 }
 fn failure(error: impl std::fmt::Display) -> Error {
     Error::Failed(error.to_string())
@@ -513,7 +540,7 @@ fn valid_timestamp(value: &str) -> bool {
     let day = number(8, 10);
     let maximum = match month {
         4 | 6 | 9 | 11 => 30,
-        2 if leap(number(0, 4)) => 29,
+        2 if xal_services::time::leap(number(0, 4)) => 29,
         2 => 28,
         1..=12 => 31,
         _ => return false,

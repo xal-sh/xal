@@ -1,3 +1,4 @@
+import type { NativeSessionLock } from "../../native"
 import type { PermissionMode } from "../../permissions/types"
 import type { ModelInputModality, Provider, ThinkingEffort, Usage, UserInput } from "../../providers/types"
 import type { LoadedSession } from "../../sessions/types"
@@ -27,6 +28,7 @@ export interface AgentSessionDeps {
 }
 
 export interface ResumeTarget {
+  owner?: NativeSessionLock
   session: LoadedSession
   path: string
   cwd: string

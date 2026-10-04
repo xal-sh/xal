@@ -408,7 +408,12 @@ async fn summaries_are_tool_free_atomic_and_unchanged_checkpoints_are_noops() {
             let continued =
                 xal_services::records::read_journal(&fixture.root.join("continued.jsonl")).unwrap();
             assert_eq!(
-                continued.last().unwrap().payload()["item"]["strategy"],
+                continued
+                    .iter()
+                    .rev()
+                    .find(|r| r.kind() == xal_services::records::RecordKind::Item)
+                    .unwrap()
+                    .payload()["item"]["strategy"],
                 "user_messages_v1"
             );
             assert_eq!(history::active(&continued).unwrap(), agent.history());

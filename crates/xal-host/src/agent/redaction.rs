@@ -70,6 +70,69 @@ pub(super) fn item(
 
 pub(super) fn event(redactor: &Redactor, mut event: AgentEvent) -> AgentEvent {
     match &mut event {
+        AgentEvent::AgentQuestions { questions } => {
+            for question in questions {
+                question.question = redactor.redact(&question.question);
+            }
+        }
+        AgentEvent::BackgroundResults { results } => {
+            for result in results {
+                result.redact(redactor);
+            }
+        }
+        AgentEvent::ConversationRewound { prompt, .. }
+        | AgentEvent::ConversationRedone { prompt, .. } => *prompt = redactor.redact(prompt),
+        AgentEvent::ShellFinished {
+            input,
+            command,
+            output,
+            ..
+        } => {
+            *input = redactor.redact(input);
+            *command = redactor.redact(command);
+            *output = redactor.redact(output);
+        }
+        AgentEvent::TaskListUpdated { tasks, explanation } => {
+            for task in tasks {
+                task.step = redactor.redact(&task.step);
+            }
+            *explanation = explanation.as_ref().map(|s| redactor.redact(s));
+        }
+        AgentEvent::PlanUpdated { plan } => {
+            plan.path = path(redactor, &plan.path.to_string_lossy()).into();
+            plan.markdown = redactor.redact(&plan.markdown);
+            plan.feedback = plan.feedback.as_ref().map(|s| redactor.redact(s));
+        }
+        AgentEvent::GoalUpdated { goal } => {
+            goal.condition = redactor.redact(&goal.condition);
+            goal.evaluator_model = redactor.redact(&goal.evaluator_model);
+            goal.last_reason = goal.last_reason.as_ref().map(|s| redactor.redact(s));
+        }
+        AgentEvent::SessionTitleChanged { title } => *title = redactor.redact(title),
+        AgentEvent::ModelChanged {
+            provider,
+            profile,
+            model,
+        } => {
+            *provider = redactor.redact(provider);
+            *profile = profile.as_ref().map(|p| redactor.redact(p));
+            *model = redactor.redact(model);
+        }
+        AgentEvent::ThinkingChanged { thinking } => {
+            *thinking = thinking.as_ref().map(|t| redactor.redact(t))
+        }
+        AgentEvent::ModeChanged { mode } => *mode = redactor.redact(mode),
+        AgentEvent::ElicitationRequested { questions, .. } => {
+            for q in questions {
+                q.header = redactor.redact(&q.header);
+                q.question = redactor.redact(&q.question);
+                for o in &mut q.options {
+                    o.label = redactor.redact(&o.label);
+                    o.description = redactor.redact(&o.description);
+                }
+            }
+        }
+        AgentEvent::ElicitationResolved { .. } => {}
         AgentEvent::SessionStarted {
             cwd,
             provider,
@@ -104,12 +167,18 @@ pub(super) fn event(redactor: &Redactor, mut event: AgentEvent) -> AgentEvent {
             *args = object(redactor, args);
         }
         AgentEvent::ApprovalRequested {
+            pattern,
             call_id,
             tool,
             title,
             ..
+        } => {
+            *pattern = pattern.as_ref().map(|p| redactor.redact(p));
+            *call_id = redactor.redact(call_id);
+            *tool = redactor.redact(tool);
+            *title = redactor.redact(title);
         }
-        | AgentEvent::ToolStarted {
+        AgentEvent::ToolStarted {
             call_id,
             tool,
             title,

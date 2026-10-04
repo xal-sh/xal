@@ -1,10 +1,10 @@
-import { appendFile, mkdir, readFile, unlink } from "node:fs/promises"
-import { dirname, join } from "node:path"
+import { readFile, unlink } from "node:fs/promises"
+import { join, resolve } from "node:path"
 import type { AgentEvent } from "../agent/events"
 import type { HistoryItem } from "../agent/history"
 import { projectSessionsDir } from "../config/paths"
 import { describeError } from "../lib/error"
-import { writeNewSecureText } from "../lib/fs"
+import { createNativeSessionLock, type NativeSessionLock } from "../native"
 import { isPersistable, parseRecord } from "./records"
 import { loadSession } from "./store"
 import type { SessionMeta, SessionRecord } from "./types"
@@ -90,6 +90,7 @@ function sameState(left: ForkState, right: ForkState): boolean {
 }
 
 export class SessionRecorder {
+  private owner: NativeSessionLock | undefined
   private path: string | undefined
   private pending: { meta: SessionMeta; cwd: string } | undefined
   private queue: Promise<void> = Promise.resolve()
@@ -99,17 +100,35 @@ export class SessionRecorder {
   constructor(private readonly onError: (message: string) => void) {}
 
   start(meta: SessionMeta, cwd: string): void {
+    this.release()
     this.generation += 1
     this.path = undefined
     this.pending = { meta, cwd }
     this.failed = false
   }
 
-  attach(path: string): void {
+  attach(path: string, owner?: NativeSessionLock): void {
+    const next = owner ?? this.ownership(path) ?? createNativeSessionLock(path)
+    if (next !== this.owner) this.release()
+    this.owner = next
     this.generation += 1
     this.path = path
     this.pending = undefined
     this.failed = false
+  }
+
+  ownership(path: string): NativeSessionLock | undefined {
+    return this.path && resolve(path) === resolve(this.path) ? this.owner : undefined
+  }
+
+  release(): void {
+    const owner = this.owner
+    this.owner = undefined
+    if (owner) this.queue = this.queue.then(() => owner.close())
+  }
+
+  reclaim(): void {
+    if (this.path && !this.owner) this.owner = createNativeSessionLock(this.path)
   }
 
   async flush(): Promise<void> {
@@ -148,20 +167,25 @@ export class SessionRecorder {
     const firstNewline = source.indexOf("\n")
     const path = join(projectSessionsDir(cwd), `${target.id}.jsonl`)
     const correctionLines = corrections.map((event) => line({ type: "event", event })).join("")
-    await writeNewSecureText(path, line({ type: "meta", meta }) + source.slice(firstNewline + 1) + correctionLines)
-    const loaded = await loadSession(path)
-    if (
-      !loaded ||
-      loaded.meta.id !== target.id ||
-      loaded.meta.parentId !== target.parentId ||
-      !sameState(replayState(loaded.meta, loaded.events), target)
-    ) {
-      await unlink(path)
-      throw new Error("forked session did not pass validation")
+    const owner = createNativeSessionLock(path)
+    try {
+      owner.append(line({ type: "meta", meta }) + source.slice(firstNewline + 1) + correctionLines, true)
+      const loaded = await loadSession(path, owner)
+      if (
+        !loaded ||
+        loaded.meta.id !== target.id ||
+        loaded.meta.parentId !== target.parentId ||
+        !sameState(replayState(loaded.meta, loaded.events), target)
+      ) {
+        await unlink(path)
+        throw new Error("forked session did not pass validation")
+      }
+      this.attach(path, owner)
+      return { path, corrections }
+    } catch (error) {
+      owner.close()
+      throw error
     }
-    this.path = path
-    this.pending = undefined
-    return { path, corrections }
   }
 
   item(item: HistoryItem): void {
@@ -193,18 +217,16 @@ export class SessionRecorder {
     }
     const path = this.path
     if (!path) return Promise.resolve()
+    if (pending) this.owner = createNativeSessionLock(path)
+    const owner = this.owner
+    if (!owner) throw new Error("session ownership was released")
     const writing = this.queue.then(() => {
       if (this.failed) throw new Error("session recorder is unavailable")
-      return this.write(path, record, pending?.meta)
+      const payload = pending ? line({ type: "meta", meta: pending.meta }) + line(record) : line(record)
+      owner.append(payload, pending !== undefined)
     })
     this.queue = writing.catch((error: unknown) => this.fail(error, generation))
     return writing
-  }
-
-  private async write(path: string, record: SessionRecord, meta: SessionMeta | undefined): Promise<void> {
-    if (meta) await mkdir(dirname(path), { recursive: true })
-    const payload = meta ? line({ type: "meta", meta }) + line(record) : line(record)
-    await appendFile(path, payload, { mode: 0o600 })
   }
 
   private fail(error: unknown, generation: number): void {

@@ -95,6 +95,7 @@ pub(super) enum Mode {
     Turn,
     ManualSummary,
     AutoSummary,
+    GoalEvaluation,
 }
 
 pub(super) async fn run(
@@ -108,7 +109,7 @@ pub(super) async fn run(
 ) -> Result<Round> {
     let (visible, max_attempts) = match mode {
         Mode::Turn => (true, 6),
-        Mode::ManualSummary => (false, 1),
+        Mode::ManualSummary | Mode::GoalEvaluation => (false, 1),
         Mode::AutoSummary => (false, 2),
     };
     for attempt in 1..=max_attempts {
@@ -125,14 +126,15 @@ pub(super) async fn run(
         let (sender, mut receiver) = channel(32, Cancellation::default())?;
         let mut request = request.clone();
         request.attempt = attempt;
-        request.phase = if visible {
-            recording::Phase::Turn
-        } else {
-            recording::Phase::Compaction
+        request.phase = match mode {
+            Mode::Turn => recording::Phase::Turn,
+            Mode::ManualSummary | Mode::AutoSummary => recording::Phase::Compaction,
+            Mode::GoalEvaluation => recording::Phase::GoalEvaluation,
         };
         let operation = host.provider(provider, request, session, sender);
         tokio::pin!(operation);
         let mut settled = None;
+        let interactions = host.interactions.get(&session.id)?;
         let consumed: Result<()> = async {
             loop {
                 tokio::select! {
@@ -194,6 +196,9 @@ pub(super) async fn run(
                         if bytes > 16 * 1024 * 1024 { return Err(Error::Failed("provider output exceeds 16 MiB".into())); }
                     }
                     () = control.changed.notified() => queue_changed(control, sink)?,
+                    () = interactions.changed.notified() => {
+                        for event in interactions.drain()? { sink.emit(event)?; }
+                    },
                 }
             }
             Ok(())

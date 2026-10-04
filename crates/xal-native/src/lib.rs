@@ -7,6 +7,7 @@ mod memory;
 mod output_contract;
 mod process;
 mod search;
+mod session_lock;
 mod shell;
 mod skill;
 mod tool_contracts;
@@ -21,7 +22,7 @@ use xal_services::redactor::SecretMatcher;
 
 #[napi(js_name = "apiVersion", catch_unwind)]
 pub fn api_version() -> u32 {
-    12
+    13
 }
 
 #[napi]

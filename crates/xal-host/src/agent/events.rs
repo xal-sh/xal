@@ -12,6 +12,9 @@ pub enum AgentState {
     RunningHook,
     Compacting,
     AwaitingApproval,
+    AwaitingInput,
+    EvaluatingGoal,
+    WaitingBackground,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -21,6 +24,69 @@ pub enum AgentState {
     rename_all_fields = "camelCase"
 )]
 pub enum AgentEvent {
+    AgentQuestions {
+        questions: Vec<crate::tasks::Question>,
+    },
+    BackgroundResults {
+        results: Vec<crate::jobs::BackgroundResult>,
+    },
+    ConversationRewound {
+        message_id: String,
+        prompt: String,
+        file_count: usize,
+        removed_messages: usize,
+    },
+    ConversationRedone {
+        message_id: String,
+        prompt: String,
+        file_count: usize,
+        restored_messages: usize,
+    },
+    ShellFinished {
+        message_id: String,
+        call_id: String,
+        input: String,
+        command: String,
+        output: String,
+        read_only: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        denial: Option<String>,
+    },
+    TaskListUpdated {
+        tasks: Vec<xal_services::workflows::TrackedTask>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        explanation: Option<String>,
+    },
+    PlanUpdated {
+        plan: xal_services::workflows::Plan,
+    },
+    GoalUpdated {
+        goal: xal_services::workflows::Goal,
+    },
+    SessionTitleChanged {
+        title: String,
+    },
+    ModelChanged {
+        provider: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        profile: Option<String>,
+        model: String,
+    },
+    ThinkingChanged {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        thinking: Option<String>,
+    },
+    ModeChanged {
+        mode: String,
+    },
+    ElicitationRequested {
+        request_id: String,
+        call_id: String,
+        questions: Vec<crate::interactions::Question>,
+    },
+    ElicitationResolved {
+        call_id: String,
+    },
     SessionStarted {
         id: String,
         cwd: String,
@@ -65,6 +131,8 @@ pub enum AgentEvent {
         args: JsonObject,
     },
     ApprovalRequested {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pattern: Option<String>,
         call_id: String,
         tool: String,
         title: String,
@@ -133,7 +201,19 @@ pub enum AgentEvent {
 impl AgentEvent {
     pub(super) fn persistable(&self) -> bool {
         match self {
-            Self::WorkspaceChanged { .. }
+            Self::AgentQuestions { .. }
+            | Self::BackgroundResults { .. }
+            | Self::ConversationRewound { .. }
+            | Self::ConversationRedone { .. }
+            | Self::ShellFinished { .. }
+            | Self::TaskListUpdated { .. }
+            | Self::PlanUpdated { .. }
+            | Self::GoalUpdated { .. }
+            | Self::SessionTitleChanged { .. }
+            | Self::ModelChanged { .. }
+            | Self::ThinkingChanged { .. }
+            | Self::ModeChanged { .. }
+            | Self::WorkspaceChanged { .. }
             | Self::UserMessage { .. }
             | Self::AssistantMessage { .. }
             | Self::ReasoningSummary { .. }
@@ -144,7 +224,9 @@ impl AgentEvent {
             | Self::TurnFailed { .. }
             | Self::TurnInterrupted
             | Self::Error { .. } => true,
-            Self::SessionStarted { .. }
+            Self::ElicitationRequested { .. }
+            | Self::ElicitationResolved { .. }
+            | Self::SessionStarted { .. }
             | Self::StateChanged { .. }
             | Self::TextDelta { .. }
             | Self::ReasoningDelta { .. }
@@ -176,6 +258,12 @@ pub struct Input {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum Outcome {
+    Paused {
+        response: Value,
+    },
+    NeedsInput {
+        response: Value,
+    },
     Completed {
         response: Value,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -199,7 +287,8 @@ pub enum Outcome {
 impl Outcome {
     pub fn exit_code(&self) -> u8 {
         match self {
-            Self::Completed { .. } => 0,
+            Self::Completed { .. } | Self::Paused { .. } => 0,
+            Self::NeedsInput { .. } => 1,
             Self::Failed { .. } => 1,
             Self::Interrupted { .. } => 130,
         }

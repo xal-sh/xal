@@ -9,6 +9,7 @@ struct RunOutput {
 pub(super) struct RunState {
     output: Mutex<RunOutput>,
     output_changed: Condvar,
+    activity: tokio::sync::Notify,
     completion: Mutex<Option<Result<ProcessTermination, String>>>,
     completed: Condvar,
     deadline: Mutex<Option<Instant>>,
@@ -25,6 +26,7 @@ impl RunState {
                 closed: false,
             }),
             output_changed: Condvar::new(),
+            activity: tokio::sync::Notify::new(),
             completion: Mutex::new(None),
             completed: Condvar::new(),
             deadline: Mutex::new(None),
@@ -50,6 +52,7 @@ impl RunState {
         }
         output.bytes += bytes.len();
         output.chunks.push_back(bytes);
+        self.activity.notify_waiters();
     }
 
     pub(super) fn finish(&self, termination: ProcessTermination) {
@@ -60,6 +63,7 @@ impl RunState {
         *completion = Some(Ok(termination));
         drop(completion);
         self.completed.notify_all();
+        self.activity.notify_waiters();
     }
 
     pub(super) fn fail(&self, error: String) {
@@ -70,6 +74,7 @@ impl RunState {
         *completion = Some(Err(error));
         drop(completion);
         self.completed.notify_all();
+        self.activity.notify_waiters();
     }
 
     pub(super) fn done(&self) -> bool {
@@ -130,6 +135,15 @@ impl WaitShellTask {
 }
 
 impl ShellExecution {
+    pub fn activity(&self) -> &tokio::sync::Notify {
+        &self.state.activity
+    }
+
+    pub fn kill_and_wait(&self) -> std::io::Result<()> {
+        self.kill();
+        crate::process::wait_process(&self.state.process).map(|_| ())
+    }
+
     pub fn drain(&self) -> Vec<u8> {
         let mut output = lock(&self.state.output);
         let mut bytes = Vec::with_capacity(output.bytes);

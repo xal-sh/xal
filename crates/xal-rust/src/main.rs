@@ -1,7 +1,10 @@
 mod accounts;
+mod background;
 mod headless;
 mod integrations;
 mod prompt;
+mod sessions;
+mod task_agents;
 
 use std::env;
 use std::future::Future;
@@ -88,7 +91,7 @@ async fn dispatch(host: &Host, args: &[String]) -> Result<String> {
         for (name, description) in host.commands() {
             help.push_str(&format!("  {name}  {description}\n"));
         }
-        help.push_str("  run [options] [prompt]  Run a native headless session\n  connect / connections / profiles / rename / logout  Manage named connections\n  usage  Read provider request usage totals\n  models / model / thinking / context-window / compaction-limit  Configure text models\n  typesafe on|off  Configure decision inference\n  mcp / lsp  Inspect or manage native integrations\n  commands / prompt / review  List commands or preview prepared prompts\n  workspace-paths [query]  Rank workspace completion paths\n\nUse <command> --help for account options. No TUI yet. Use xal for the current application.\n");
+        help.push_str("  run [options] [prompt]  Run a native headless session\n  sessions  List, title, export, fork, clear or move recorded history\n  bg  Detach, inspect, stop or attach background sessions\n  connect / connections / profiles / rename / logout  Manage named connections\n  usage  Read provider request usage totals\n  models / model / thinking / context-window / compaction-limit  Configure text models\n  typesafe on|off  Configure decision inference\n  mcp / lsp  Inspect or manage native integrations\n  commands / prompt / review  List commands or preview prepared prompts\n  workspace-paths [query]  Rank workspace completion paths\n\nUse <command> --help for account options. No TUI yet. Use xal for the current application.\n");
         return Ok(help);
     }
     if args == ["host-check"] {
@@ -203,10 +206,12 @@ async fn main() -> ExitCode {
     };
     if args
         .first()
-        .is_some_and(|arg| arg == "run" || accounts::handles(arg))
+        .is_some_and(|arg| arg == "run" || arg == "bg" || accounts::handles(arg))
     {
         return match if args[0] == "run" {
             headless::run(&args[1..]).await
+        } else if args[0] == "bg" {
+            background::run(&args[1..]).await
         } else {
             accounts::run(&args).await
         } {
@@ -217,7 +222,9 @@ async fn main() -> ExitCode {
             }
         };
     }
-    let result = if args
+    let result = if args.first().is_some_and(|arg| arg == "sessions") {
+        sessions::run(&args[1..])
+    } else if args
         .first()
         .is_some_and(|command| integrations::handles(command))
     {
@@ -237,7 +244,9 @@ async fn main() -> ExitCode {
             eprintln!("xal-rust: {error}");
             match error {
                 Error::Cancelled => ExitCode::from(130),
-                Error::Failed(_)
+                Error::Paused
+                | Error::NeedsInput
+                | Error::Failed(_)
                 | Error::Denied(_)
                 | Error::ApprovalRequired(_)
                 | Error::Provider { .. } => ExitCode::FAILURE,

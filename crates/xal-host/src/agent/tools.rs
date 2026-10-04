@@ -1,7 +1,7 @@
 use futures_util::stream::{FuturesUnordered, StreamExt};
 use xal_services::redactor::Redactor;
 
-use super::{Agent, AgentEvent, AgentState, loops, storage, stream};
+use super::{Agent, AgentEvent, loops, storage, stream};
 use crate::*;
 
 struct Call {
@@ -29,7 +29,9 @@ impl Agent<'_> {
     pub(super) async fn tools(&mut self, calls: Vec<Item>, active: &Session) -> Result<()> {
         let start = self.history.len();
         let result = self.execute_calls(calls.clone(), active).await;
-        if let Err(error) = &result {
+        if let Err(error) = &result
+            && !matches!(error, Error::Paused | Error::NeedsInput)
+        {
             for call in calls {
                 let Item::ToolCall { call_id, .. } = &call else {
                     return Err(Error::Failed("expected tool call".into()));
@@ -55,6 +57,14 @@ impl Agent<'_> {
         let mut shared = Vec::new();
         let mut stopped: Option<String> = None;
         for item in calls {
+            if self.control.boundary().is_err() {
+                self.batch(std::mem::take(&mut shared), active).await?;
+                return Err(Error::Paused);
+            }
+            if self.workflows.dismissed || self.workflows.restart {
+                self.skipped(item, "Tool skipped at the plan review boundary.")?;
+                continue;
+            }
             if let Some(reason) = &stopped {
                 self.skipped(item, reason)?;
                 continue;
@@ -72,6 +82,13 @@ impl Agent<'_> {
             else {
                 return Err(Error::Failed("expected tool call".into()));
             };
+            if self.defer_interactions
+                && ["request_user_input", "submit_plan"].contains(&name.as_str())
+            {
+                self.batch(std::mem::take(&mut shared), active).await?;
+                self.state(super::AgentState::AwaitingInput)?;
+                return Err(Error::NeedsInput);
+            }
             if name == "submit_output" && self.contract.is_some() {
                 self.batch(std::mem::take(&mut shared), active).await?;
                 active.cancellation.check()?;
@@ -109,6 +126,7 @@ impl Agent<'_> {
                     }
                     Err(Error::ApprovalRequired(_)) => {
                         self.sink.emit(AgentEvent::ApprovalRequested {
+                            pattern: None,
                             call_id: call_id.clone(),
                             tool: name.clone(),
                             title: "Submit structured output".into(),
@@ -147,7 +165,7 @@ impl Agent<'_> {
                     stopped = Some("Tool was skipped because a repeated tool loop was detected.".into());
                 }
             }
-            if call.shared() && stopped.is_none() {
+            if call.shared() && stopped.is_none() && !self.defer_interactions {
                 shared.push(call);
                 if shared.len() == 4 {
                     self.batch(std::mem::take(&mut shared), active).await?;
@@ -172,6 +190,7 @@ impl Agent<'_> {
         if calls.is_empty() {
             return Ok(());
         }
+        let interactions = self.host.interactions.get(&self.session.id)?;
         let mut running = FuturesUnordered::new();
         let (updates, mut receiver) = channel(32, Cancellation::default())?;
         let mut results = Vec::new();
@@ -182,22 +201,15 @@ impl Agent<'_> {
             let title = self.host.tool_title(&call.name, &call.args, active)?;
             let read_only = call.read_only();
             let prepared = match call.prepared {
-                Ok(prepared) => match self.host.authorize_tool(&prepared, active).await {
-                    Ok(()) => Ok(prepared),
-                    Err(error) => Err(error),
-                },
+                Ok(mut prepared) => {
+                    match self.approval(&mut prepared, &call.id, &title, active).await {
+                        Ok(()) => Ok(prepared),
+                        Err(Error::NeedsInput) => return Err(Error::NeedsInput),
+                        Err(error) => Err(error),
+                    }
+                }
                 Err(error) => Err(error),
             };
-            if matches!(prepared, Err(Error::ApprovalRequired(_))) {
-                self.state(AgentState::AwaitingApproval)?;
-                self.sink.emit(AgentEvent::ApprovalRequested {
-                    call_id: call.id.clone(),
-                    tool: call.name.clone(),
-                    title: title.clone(),
-                    read_only,
-                })?;
-                self.state(AgentState::RunningTool)?;
-            }
             if prepared.is_ok() {
                 self.sink.emit(AgentEvent::ToolStarted {
                     call_id: call.id.clone(),
@@ -255,6 +267,7 @@ impl Agent<'_> {
                         results.push((index, Item::ToolResult { call_id: id, output }));
                     }
                     () = self.control.changed.notified() => stream::queue_changed(&self.control, &mut self.sink)?,
+                    () = interactions.changed.notified() => self.interactions(&interactions)?,
                 }
             }
             Ok(())
@@ -264,6 +277,7 @@ impl Agent<'_> {
             drop(receiver);
             while running.next().await.is_some() {}
         }
+        self.interactions(&interactions)?;
         let workspace = self.refresh_workspace();
         observed?;
         workspace?;
@@ -373,7 +387,7 @@ async fn execute(
     updates: Sender<AgentEvent>,
 ) -> Result<ToolResult> {
     let (sender, mut receiver) = channel(16, Cancellation::default())?;
-    let operation = host.execute_tool_streaming(prepared, active, Some(sender));
+    let operation = host.execute_agent_tool(prepared, active, sender, id);
     tokio::pin!(operation);
     let mut stream = redactor.stream();
     let mut delivered = 0;

@@ -14,8 +14,19 @@ pub fn plugins(
     cwd: &Path,
     redactor: &Arc<Redactor>,
 ) -> Result<Vec<Box<dyn Plugin>>> {
+    if config.has_external_plugins() {
+        return Err(failure(
+            "configured external plugins are unavailable in the native development executable; use xal until P07",
+        ));
+    }
     let user_home = env::home_dir().ok_or_else(|| failure("cannot determine user home"))?;
     Ok(vec![
+        Box::new(xal_host::jobs::Tools),
+        Box::new(xal_host::tasks::Tools),
+        Box::new(xal_host::workflows::Workflows {
+            home: home.into(),
+            redactor: redactor.clone(),
+        }),
         Box::new(xal_plugin_workspace::Files),
         Box::new(xal_plugin_workspace::Search),
         Box::new(xal_plugin_workspace::Shell),
@@ -269,4 +280,41 @@ async fn paths(
 
 fn failure(error: impl std::fmt::Display) -> Error {
     Error::Failed(error.to_string())
+}
+
+pub fn decision_plugins(
+    config: &Configuration,
+    home: &Path,
+    cwd: &Path,
+    redactor: &Arc<Redactor>,
+    plugins: &mut Vec<Box<dyn Plugin>>,
+) -> Result<Option<decisions::Settings>> {
+    plugins.push(Box::new(xal_plugin_classify::Classify {
+        home: home.into(),
+        cwd: cwd.into(),
+    }));
+    let profile = match &config.settings.typesafe_ai {
+        xal_services::settings::TypeSafeSettings::Enabled { profile } => Some(profile.clone()),
+        xal_services::settings::TypeSafeSettings::Disabled { profile } => profile.clone(),
+    };
+    let Some(profile) = profile else {
+        return Ok(None);
+    };
+    plugins.push(Box::new(xal_plugin_providers::TypeSafe(
+        crate::accounts::client(
+            xal_providers::Id::TypeSafe,
+            xal_providers::client::Account::Profile {
+                home: home.into(),
+                id: profile.clone(),
+            },
+            &config.settings,
+            redactor.clone(),
+        )?,
+    )));
+    Ok(Some(decisions::Settings {
+        home: home.into(),
+        cwd: cwd.into(),
+        profile,
+        redactor: redactor.clone(),
+    }))
 }

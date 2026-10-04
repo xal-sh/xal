@@ -88,6 +88,11 @@ jobs:
       - name: Check plugin and headless dependency boundaries
         run: bun scripts/rust/check-boundaries.ts
 
+      - name: Build legacy ownership adapter for the compatibility probe
+        env:
+          RUSTFLAGS: ""
+        run: bun run native:ensure
+
       - name: Smoke test and record executable bytes
         shell: bash
         env:

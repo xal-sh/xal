@@ -4,6 +4,7 @@ import { backgroundSessionDir, backgroundSessionsDir } from "../config/paths"
 import { isMissingPathError } from "../lib/error"
 import { readJsonFile, writeNewSecureText, writeSecureJson } from "../lib/fs"
 import { asNumber, asString, isRecord } from "../lib/json"
+import { createNativeSessionLock } from "../native"
 
 export type BgStatus = "running" | "done" | "needs_input" | "failed" | "stopped" | "handoff"
 
@@ -272,19 +273,32 @@ export function removeBackgroundSession(sessionId: string): Promise<void> {
   return rm(backgroundSessionDir(sessionId), { recursive: true, force: true })
 }
 
+async function clearEntry(state: BgState): Promise<void> {
+  const owner = createNativeSessionLock(state.sessionPath)
+  try {
+    const current = await readBgState(state.sessionId)
+    if (!current || current.workerId !== state.workerId || isProcessAlive(current.pid)) {
+      throw new Error(`background ownership for ${state.sessionId.slice(0, 8)} changed; retry after it stops`)
+    }
+    await removeBackgroundSession(state.sessionId)
+  } finally {
+    owner.close()
+  }
+}
+
 export async function clearBackgroundSessions(id?: string): Promise<string[]> {
   const removed: string[] = []
   if (id !== undefined) {
     const found = await findBackgroundSession(id)
     if (!found) throw new Error(`no background session matches ${id}`)
     if (found.alive) throw new Error(`session ${found.state.sessionId.slice(0, 8)} is still running; stop it first`)
-    await removeBackgroundSession(found.state.sessionId)
+    await clearEntry(found.state)
     removed.push(found.state.sessionId)
     return removed
   }
   for (const entry of await listBackgroundSessions()) {
     if (entry.alive) continue
-    await removeBackgroundSession(entry.state.sessionId)
+    await clearEntry(entry.state)
     removed.push(entry.state.sessionId)
   }
   return removed

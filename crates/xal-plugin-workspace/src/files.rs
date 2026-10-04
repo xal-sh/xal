@@ -155,6 +155,7 @@ impl Plugin for Files {
             )?;
         }
         for name in ["write", "edit"] {
+            registration.workspace_snapshots(name, xal_host::undo::Scope::Path("file_path"))?;
             super::renderer(registration, name, summarize)?;
         }
         Ok(())

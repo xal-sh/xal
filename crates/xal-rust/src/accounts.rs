@@ -178,10 +178,23 @@ async fn execute(
     }
     cancel.check()?;
     if command == "usage" {
-        if !args.position.is_empty() {
-            return Err(failure("usage takes no arguments"));
+        if args.position.len() > 1 {
+            return Err(failure("usage [session-id] [--provider PROVIDER]"));
         }
-        return recording::read_usage(&home.join("usage"));
+        if args.position.is_empty() && args.provider.is_none() {
+            return recording::read_usage(&home.join("usage"));
+        }
+        let providers = match args.provider.as_deref() {
+            None => Vec::new(),
+            Some("openai") => vec![Id::OpenAi.as_str().into(), Id::ChatGpt.as_str().into()],
+            Some(selector) => vec![Id::parse(selector)?.as_str().into()],
+        };
+        return recording::usage_summary(
+            &home.join("usage"),
+            args.position.first().map(String::as_str),
+            &providers,
+            xal_host::agent::now()?,
+        );
     }
     if command == "connections" {
         if !args.position.is_empty() {

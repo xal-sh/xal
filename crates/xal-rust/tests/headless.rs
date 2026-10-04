@@ -13,6 +13,11 @@ use std::time::{Duration, Instant};
 use serde_json::{Value, json};
 use xal_services::records::Record;
 
+#[path = "headless/background.rs"]
+mod background;
+#[path = "headless/goals.rs"]
+mod goals;
+
 struct Fixture {
     root: PathBuf,
     home: PathBuf,

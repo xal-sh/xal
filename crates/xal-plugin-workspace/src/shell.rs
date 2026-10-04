@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use serde_json::{Value, json};
 use xal_host::*;
-use xal_services::process::{EnvironmentVariable, normalize_process_output};
+use xal_services::process::EnvironmentVariable;
 use xal_services::shell::{ShellManager, ShellRequest};
 
 use super::{failure, schema, text};
@@ -59,14 +59,14 @@ impl Plugin for Shell {
         }
         registration.tool("bash", Tool {
             title: Some(Box::new(|args, _| Ok(args.get("command").and_then(Value::as_str).unwrap_or("").into()))),
-            description: "Execute foreground commands in a persistent shell without interactive rc files. cwd, exported variables and functions persist. Default timeout 120 seconds, maximum 600. On macOS sandbox read prevents writes, workspace permits workspace/temp writes, and both deny network. Read-sandbox calls may run concurrently in isolated shells. Background jobs are not available in this native phase.".into(),
+            description: "Execute managed commands in a persistent shell without interactive rc files. cwd, exported variables and functions persist. Default timeout 120 seconds, maximum 600. On macOS sandbox read prevents writes, workspace permits workspace/temp writes, and both deny network. Read-sandbox calls may run concurrently in isolated shells. Set background:true to return a managed job ID immediately; collect output with job_output and stop it with job_kill. Foreground commands can also be promoted. Background commands ignore timeout.".into(),
             parameters: schema(parameters),
             effects: |args| if sandbox_available() && args.get("sandbox").and_then(Value::as_str) == Some("read") && args.get("background").and_then(Value::as_bool) != Some(true) { Effects::Read } else { Effects::Write },
             concurrency: None, permission_subject: None, redact: None, available: Box::new(|_| Ok(true)),
             run: Box::new(move |args, context| {
                 let manager = manager.clone();
                 Box::pin(async move {
-                    if args.get("background").and_then(Value::as_bool) == Some(true) { return Err(Error::Failed("background jobs are unavailable in the native headless phase".into())); }
+                    let background = args.get("background").and_then(Value::as_bool) == Some(true);
                     context.cancellation.check()?;
                     let command = text(&args, "command")?;
                     let sandbox = args.get("sandbox").and_then(Value::as_str);
@@ -85,64 +85,35 @@ impl Plugin for Shell {
                             EnvironmentVariable { name: format!("GIT_CONFIG_VALUE_{count}"), value: "false".into() },
                         ]);
                     }
-                    let request = ShellRequest { session_id: context.session.id.clone(), sandbox_id: sandbox.unwrap_or("plain").into(), command: command.clone(), cwd: cwd.clone(), persistent_launch: launch(vec![executable.clone(), "-s".into()], &context.session.cwd, sandbox)?, isolated_launch: launch(vec![executable, "-c".into(), command], &context.session.cwd, sandbox)?, environment };
-                    let execution = manager.execute(request).map_err(failure)?;
-                    execution.set_timeout(Duration::from_secs_f64(seconds).as_millis().try_into().map_err(failure)?);
-                    let mut wait = execution.wait();
-                    let completion = tokio::task::spawn_blocking(move || wait.compute());
-                    tokio::pin!(completion);
-                    let mut output = Vec::new();
-                    let mut delivered = 0;
-                    let deadline = tokio::time::sleep(Duration::from_secs_f64(seconds) + Duration::from_secs(1));
-                    tokio::pin!(deadline);
-                    let mut timed_out = false;
-                    let termination = loop {
-                        output.extend(execution.drain());
-                        if output.len() > 64 * 1024 * 1024 {
-                            execution.kill();
-                            completion.await.map_err(failure)?.map_err(failure)?;
-                            return Err(Error::Failed("shell output exceeded 64 MiB; process killed".into()));
-                        }
-                        if let Some(sender) = &context.output {
-                            let available = match std::str::from_utf8(&output[delivered..]) {
-                                Ok(_) => output.len(),
-                                Err(error) if error.error_len().is_none() => delivered + error.valid_up_to(),
-                                Err(_) => output.len(),
-                            };
-                            if available > delivered {
-                                if let Err(error) = sender.send(String::from_utf8_lossy(&output[delivered..available]).into_owned()).await {
-                                    execution.kill();
-                                    completion.await.map_err(failure)?.map_err(failure)?;
-                                    return Err(error);
-                                }
-                                delivered = available;
-                            }
-                        }
-                        tokio::select! {
-                            biased;
-                            () = &mut deadline => {
-                                timed_out = true;
-                                execution.kill();
-                                break completion.await.map_err(failure)?.map_err(failure)?;
-                            }
-                            () = context.cancellation.cancelled() => {
-                                execution.kill();
-                                completion.await.map_err(failure)?.map_err(failure)?;
-                                return Err(Error::Cancelled);
-                            }
-                            result = &mut completion => break result.map_err(failure)?.map_err(failure)?,
-                            () = tokio::time::sleep(Duration::from_millis(5)) => {},
-                        }
+                    let request = ShellRequest { session_id: context.session.id.clone(), sandbox_id: sandbox.unwrap_or("plain").into(), command: command.clone(), cwd: cwd.clone(), persistent_launch: launch(vec![executable.clone(), "-s".into()], &context.session.cwd, sandbox)?, isolated_launch: launch(vec![executable, "-c".into(), command.clone()], &context.session.cwd, sandbox)?, environment };
+                    let jobs = &context.session.jobs;
+                    let prepared = jobs.prepare_process(&command, background)?;
+                    let execution = match manager.execute(request) {
+                        Ok(execution) => execution,
+                        Err(error) => { let error = failure(error); jobs.launch_failed(prepared, &error)?; return Err(error); }
                     };
-                    output.extend(execution.drain());
-                    let output = String::from_utf16_lossy(&normalize_process_output(String::from_utf8_lossy(&output).encode_utf16().collect()));
-                    let footer = if timed_out || execution.timed_out() { format!("(timed out after {seconds}s and was killed)") }
-                        else if termination.status == "signaled" { "(terminated by signal)".into() }
-                        else { format!("(exit code {}{})", termination.exit_code.ok_or_else(|| Error::Failed("shell exit code missing".into()))?, sandbox.map_or_else(String::new, |access| format!(" · {access} sandbox"))) };
-                    Ok(ToolResult { output: if output.trim_end().is_empty() { footer } else { format!("{}\n{footer}", output.trim_end()) } })
+                    if !background { execution.set_timeout(Duration::from_secs_f64(seconds).as_millis().try_into().map_err(failure)?); }
+                    let job = jobs.start_process(prepared, execution, (!background).then_some(seconds as u32))?;
+                    loop {
+                        let changed = job.changed.notified();
+                        tokio::pin!(changed); changed.as_mut().enable();
+                        if job.published()? { context.session.undo.lock().map_err(failure)?.invalidate("background shell changes cannot be captured; full undo is unavailable"); return Ok(ToolResult { output: format!("Background job started: {}", job.id) }); }
+                        let output = job.take_output()?;
+                        if let Some(sender) = &context.output && !output.is_empty() {
+                            let sent = tokio::select! { biased; () = context.cancellation.cancelled() => Err(Error::Cancelled), result = sender.send(output) => result };
+                            if let Err(error) = sent { jobs.stop(&job.id).await?; return Err(error); }
+                        }
+                        if job.done()? { break; }
+                        tokio::select! { () = &mut changed => {}, () = context.cancellation.cancelled() => { jobs.stop(&job.id).await?; return Err(Error::Cancelled); } }
+                    }
+                    let output = String::from_utf16_lossy(&xal_services::process::normalize_process_output(job.output()?.encode_utf16().collect()));
+                    let snapshot = job.snapshot()?;
+                    let detail = snapshot["status"].as_str().ok_or_else(|| failure("shell status missing"))?;
+                    Ok(ToolResult { output: format!("{}{}({}{})", output.trim_end(), if output.trim_end().is_empty() { "" } else { "\n" }, detail, sandbox.map_or_else(String::new, |access| format!(" · {access} sandbox"))) })
                 })
             }),
-        })
+        })?;
+        registration.workspace_snapshots("bash", xal_host::undo::Scope::Workspace)
     }
 }
 

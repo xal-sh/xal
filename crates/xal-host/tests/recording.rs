@@ -133,3 +133,29 @@ fn active_redaction_streams_observe_new_credentials_before_new_output() {
     text.push_str(&stream.end());
     assert_eq!(text, "[REDACTED] [REDACTED]");
 }
+
+#[test]
+fn calendar_usage_filters_sessions_and_providers_and_rejects_corrupt_tails() {
+    let home = std::env::temp_dir().join(format!("xal-calendar-{}", new_id().unwrap()));
+    std::fs::create_dir(&home).unwrap();
+    let now = xal_services::time::parse("2024-03-12T12:00:00.000Z").unwrap();
+    let record = |date: &str, provider: &str, version: u32| {
+        json!({"version":version,"type":"provider_usage","id":"request","timestamp":date,"session":recording::fingerprint("session"),"provider":provider,"model":"model","phase":"turn","outcome":"completed","usage":{"totalInputTokens":3,"cacheReadInputTokens":1,"cacheWriteInputTokens":0,"outputTokens":2}}).to_string()
+    };
+    let path = home.join("usage.jsonl");
+    let records = [
+        record("2024-03-01T12:00:00.000Z", "mock", 1),
+        record("2024-03-12T12:00:00.000Z", "mock", 2),
+        record("2024-03-12T12:00:00.000Z", "other", 2),
+    ]
+    .join("\n");
+    std::fs::write(&path, format!("{records}\n")).unwrap();
+    let summary = recording::usage_summary(&home, Some("session"), &["mock".into()], now).unwrap();
+    assert_eq!(summary["allTime"]["totalTokens"], 10);
+    assert_eq!(summary["weekly"]["requests"], 1);
+    assert_eq!(summary["session"]["requests"], 1);
+    assert_eq!(summary["daily"].as_array().unwrap().len(), 2);
+    std::fs::write(path, format!("{records}\n{{")).unwrap();
+    assert!(recording::read_usage(&home).is_err());
+    std::fs::remove_dir_all(home).unwrap();
+}

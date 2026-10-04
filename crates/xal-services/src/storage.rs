@@ -25,6 +25,19 @@ pub fn read_object(path: &Path) -> io::Result<Map<String, Value>> {
 }
 
 pub fn read_text(path: &Path) -> io::Result<Option<String>> {
+    let Some(file) = read_file(path)? else {
+        return Ok(None);
+    };
+    let mut content = String::new();
+    file.take(64 * 1024 * 1024 + 1)
+        .read_to_string(&mut content)?;
+    if content.len() > 64 * 1024 * 1024 {
+        return Err(invalid("storage file exceeds 64 MiB"));
+    }
+    Ok(Some(content))
+}
+
+pub fn read_file(path: &Path) -> io::Result<Option<File>> {
     match fs::symlink_metadata(path) {
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error),
@@ -52,16 +65,7 @@ pub fn read_text(path: &Path) -> io::Result<Option<String>> {
     if !file.metadata()?.is_file() {
         return Err(malformed(path));
     }
-    let mut content = String::new();
-    file.take(64 * 1024 * 1024 + 1)
-        .read_to_string(&mut content)?;
-    if content.len() > 64 * 1024 * 1024 {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "storage file exceeds 64 MiB",
-        ));
-    }
-    Ok(Some(content))
+    Ok(Some(file))
 }
 
 pub fn write_json(path: &Path, value: &Value) -> io::Result<()> {
@@ -144,14 +148,26 @@ pub fn create_secure(path: &Path) -> io::Result<File> {
 
 #[cfg(windows)]
 pub fn create_secure(path: &Path) -> io::Result<File> {
+    create_windows(
+        path,
+        windows_sys::Win32::Storage::FileSystem::FILE_SHARE_READ,
+    )
+}
+
+#[cfg(windows)]
+pub(crate) fn create_lock(path: &Path) -> io::Result<File> {
+    use windows_sys::Win32::Storage::FileSystem::{FILE_SHARE_READ, FILE_SHARE_WRITE};
+    create_windows(path, FILE_SHARE_READ | FILE_SHARE_WRITE)
+}
+
+#[cfg(windows)]
+fn create_windows(path: &Path, sharing: u32) -> io::Result<File> {
     use std::os::windows::ffi::OsStrExt;
     use std::os::windows::io::FromRawHandle;
     use windows_sys::Win32::Foundation::{GENERIC_WRITE, INVALID_HANDLE_VALUE, LocalFree};
     use windows_sys::Win32::Security::Authorization::ConvertStringSecurityDescriptorToSecurityDescriptorW;
     use windows_sys::Win32::Security::SECURITY_ATTRIBUTES;
-    use windows_sys::Win32::Storage::FileSystem::{
-        CREATE_NEW, CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ,
-    };
+    use windows_sys::Win32::Storage::FileSystem::{CREATE_NEW, CreateFileW, FILE_ATTRIBUTE_NORMAL};
 
     let descriptor: Vec<u16> = "D:P(A;;FA;;;OW)(A;;FA;;;SY)\0".encode_utf16().collect();
     let mut security = std::ptr::null_mut();
@@ -178,7 +194,7 @@ pub fn create_secure(path: &Path) -> io::Result<File> {
         CreateFileW(
             path.as_ptr(),
             GENERIC_WRITE,
-            FILE_SHARE_READ,
+            sharing,
             &attributes,
             CREATE_NEW,
             FILE_ATTRIBUTE_NORMAL,

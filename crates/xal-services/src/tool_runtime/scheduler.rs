@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) fn scheduler_prepare(value: &Value) -> napi::Result<Value> {
+pub fn scheduler_prepare(value: &Value) -> io::Result<Value> {
     let request = object(value)?;
     let duration = integer(request, "duration_ms")
         .filter(|duration| (1..=MAX_SCHEDULER_DURATION_MS).contains(duration));
@@ -12,7 +12,7 @@ pub(super) fn scheduler_prepare(value: &Value) -> napi::Result<Value> {
     Ok(json!({ "durationMs": duration }))
 }
 
-pub(super) fn scheduler_finalize(value: &Value) -> napi::Result<Value> {
+pub fn scheduler_finalize(value: &Value) -> io::Result<Value> {
     let request = object(value)?;
     let elapsed = request
         .get("elapsedSeconds")

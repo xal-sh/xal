@@ -107,6 +107,27 @@ fn native_account_commands_keep_legacy_syntax_identity_and_nonbillable_connectio
 }
 
 #[test]
+fn usage_accepts_provider_aliases_and_rejects_unknown_selectors() {
+    let fixture = Fixture::new();
+    for provider in ["openai", "openai-api", "chatgpt", "openai-chatgpt"] {
+        let output = fixture.run(&["usage", "--provider", provider], "");
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert!(value.is_object());
+    }
+    assert!(
+        !fixture
+            .run(&["usage", "--provider", "nonexistent"], "")
+            .status
+            .success()
+    );
+}
+
+#[test]
 fn native_typesafe_settings_do_not_switch_the_harness_and_remember_the_connection() {
     let fixture = Fixture::new();
     storage::write_json(&fixture.0.join("credentials.json"),&json!({"profiles":{"decision":{"name":"Decision","provider":"typesafe","credential":{"type":"api_key","key":"fixture-typesafe"}},"text":{"name":"Text","provider":"minimax","credential":{"type":"api_key","key":"fixture-text"}}}})).unwrap();

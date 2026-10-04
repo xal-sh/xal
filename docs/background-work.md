@@ -30,7 +30,7 @@ Ids accept unique prefixes. Statuses:
 
 Attach is a takeover handoff: a running worker pauses at the next safe boundary and exits, then the TUI resumes the session in place and continues the work. A pending permission request or interactive tool is re-raised interactively on attach. Interactive tools are deferred before execution, so work before a question is never replayed. Nothing is auto-denied while a session runs in the background, which also means the permission mode governs unattended progress: a session in a mode that asks for approval stops at the first request with `needs input`. Inside the TUI, `/bg list` opens the same manager as a picker: attach here, stop, show the log path, or remove an entry.
 
-A background session stays an ordinary session. Once the worker cleanly releases its lease, `xal resume <id>` works as usual. While a lease is active, resuming is refused so two processes never write one transcript. If a worker dies without releasing its lease, attach the `died` entry to recover it safely.
+A background session stays an ordinary session. Once the worker cleanly releases its lease, `xal resume <id>` works as usual. While a lease or transcript owner is active, resuming is refused so two processes never write one transcript. If a worker dies without releasing its lease, attach the `died` entry to recover it safely. If detach fails, the TUI exits with the failure and any unsent queued input; explicitly resume the saved session instead of continuing stale in-memory history, because the worker may already have recorded progress.
 
 ## Task agents
 

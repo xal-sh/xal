@@ -1,3 +1,4 @@
+import { createNativeSessionLock } from "../../native"
 import { appInfo } from "../../app-info"
 import { readBgLease } from "../../bg/state"
 import { getProfile, listProfiles, loadCredentialSecrets, type ProviderProfile } from "../../config/credentials"
@@ -198,51 +199,57 @@ export async function resumeSession(
   summary: SessionSummary,
   options: ResumeOptions = {},
 ): Promise<string[]> {
-  const lease = await readBgLease(summary.id)
-  if (lease && lease.workerId !== options.backgroundWorkerId) {
-    const short = summary.id.slice(0, 8)
-    throw new Error(`session ${short} is running in the background; use "${appInfo.name} bg attach ${short}"`)
-  }
   await session.flushPersistence()
-  const loaded = await loadSession(summary.path)
-  if (!loaded) throw new Error(`session is unreadable: ${summary.path}`)
+  const existing = session.persistenceOwner(summary.path)
+  const owner = existing ?? createNativeSessionLock(summary.path)
+  try {
+    const lease = await readBgLease(summary.id)
+    if (options.backgroundWorkerId ? lease?.workerId !== options.backgroundWorkerId : lease !== undefined) {
+      throw new Error(`session ${summary.id.slice(0, 8)} background ownership changed; use "${appInfo.name} bg attach"`)
+    }
+    const loaded = await loadSession(summary.path, owner)
+    if (!loaded) throw new Error(`session is unreadable: ${summary.path}`)
 
-  const notices: string[] = []
-  const last = lastState(loaded)
-  if (!last.profile) throw new Error("session has no provider profile")
-  const profile = await getProfile(last.profile)
-  if (!profile) throw new Error(`provider profile ${last.profile} used by this session no longer exists`)
-  if (profile.provider !== last.provider) throw new Error("session provider profile does not match its provider")
-  const provider = getTextProvider(last.provider)
-  if (!provider) throw new Error(`provider ${last.provider} used by this session is not available`)
-  const model = last.model
-  const thinking = await resolveThinking(provider, profile.id, model, last.thinking)
-  const modelInfo = await findModel(provider, profile.id, model)
-  let cwd = last.cwd
-  if (!(await pathExists(cwd))) {
-    const fallback = (await pathExists(loaded.meta.cwd)) ? loaded.meta.cwd : process.cwd()
-    notices.push(`recorded workspace ${cwd} is unavailable — continuing in ${fallback}`)
-    cwd = fallback
-  }
-  if (cwd !== process.cwd()) {
-    notices.push(`this session was working in ${cwd} — paths may not match ${process.cwd()}`)
-  }
+    const notices: string[] = []
+    const last = lastState(loaded)
+    if (!last.profile) throw new Error("session has no provider profile")
+    const profile = await getProfile(last.profile)
+    if (!profile) throw new Error(`provider profile ${last.profile} used by this session no longer exists`)
+    if (profile.provider !== last.provider) throw new Error("session provider profile does not match its provider")
+    const provider = getTextProvider(last.provider)
+    if (!provider) throw new Error(`provider ${last.provider} used by this session is not available`)
+    const model = last.model
+    const thinking = await resolveThinking(provider, profile.id, model, last.thinking)
+    const modelInfo = await findModel(provider, profile.id, model)
+    let cwd = last.cwd
+    if (!(await pathExists(cwd))) {
+      const fallback = (await pathExists(loaded.meta.cwd)) ? loaded.meta.cwd : process.cwd()
+      notices.push(`recorded workspace ${cwd} is unavailable — continuing in ${fallback}`)
+      cwd = fallback
+    }
+    if (cwd !== process.cwd()) {
+      notices.push(`this session was working in ${cwd} — paths may not match ${process.cwd()}`)
+    }
 
-  if (
-    !session.resume({
-      session: loaded,
-      path: summary.path,
-      cwd,
-      provider,
-      profileId: profile.id,
-      model,
-      modelInputModalities: modelInfo?.inputModalities,
-      thinking,
-      mode: last.mode,
-      continueGoal: !options.deferGoalResume,
-    })
-  ) {
-    throw new Error("cannot resume while a turn or background job is unsettled")
+    if (
+      !session.resume({
+        owner,
+        session: loaded,
+        path: summary.path,
+        cwd,
+        provider,
+        profileId: profile.id,
+        model,
+        modelInputModalities: modelInfo?.inputModalities,
+        thinking,
+        mode: last.mode,
+        continueGoal: !options.deferGoalResume,
+      })
+    ) {
+      throw new Error("cannot resume while a turn or background job is unsettled")
+    }
+    return notices
+  } finally {
+    if (session.persistenceOwner(summary.path) !== owner) owner.close()
   }
-  return notices
 }

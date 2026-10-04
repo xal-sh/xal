@@ -4,13 +4,47 @@ use xal_services::records::{Record, RecordKind};
 
 use crate::*;
 
-pub fn active(records: &[Record]) -> Result<Vec<Item>> {
-    let mut items = Vec::new();
-    for record in records {
-        if record.kind() != RecordKind::Item {
-            continue;
+pub fn pending_calls(items: &[Item]) -> Vec<Item> {
+    let mut pending = Vec::new();
+    for item in items {
+        match item {
+            Item::ToolCall { .. } => pending.push(item.clone()),
+            Item::ToolResult { call_id, .. } => {
+                if let Some(index) = pending.iter().position(
+                    |item| matches!(item, Item::ToolCall { call_id: id, .. } if id == call_id),
+                ) {
+                    pending.remove(index);
+                }
+            }
+            _ => {}
         }
-        let raw = &record.payload()["item"];
+    }
+    pending
+}
+
+pub fn active(records: &[Record]) -> Result<Vec<Item>> {
+    if records
+        .first()
+        .is_some_and(|r| r.kind() == RecordKind::Meta)
+    {
+        return from_items(
+            &xal_services::sessions::replay(records)
+                .map_err(super::failure)?
+                .conversation
+                .items,
+        );
+    }
+    let values = records
+        .iter()
+        .filter(|r| r.kind() == RecordKind::Item)
+        .map(|r| r.payload()["item"].clone())
+        .collect::<Vec<_>>();
+    from_items(&values)
+}
+
+pub fn from_items(values: &[Value]) -> Result<Vec<Item>> {
+    let mut items = Vec::new();
+    for raw in values {
         match raw["type"].as_str() {
             Some("direct_shell") => items.push(Item::user(format!("The user ran this shell command themselves in the session:\n<shell-input>\n{}\n</shell-input>\n<shell-output>\n{}\n</shell-output>", text(raw, "command")?, text(raw, "output")?))),
             Some("compaction") => {

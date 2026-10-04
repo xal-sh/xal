@@ -27,6 +27,11 @@ pub enum SessionKind {
 
 #[derive(Clone)]
 pub struct Session {
+    pub tasks: Option<std::sync::Arc<crate::tasks::Service>>,
+    pub task: Option<std::sync::Arc<crate::tasks::Handle>>,
+    pub undo_gate: std::sync::Arc<tokio::sync::Mutex<()>>,
+    pub undo: crate::undo::Shared,
+    pub jobs: std::sync::Arc<crate::jobs::Jobs>,
     pub id: String,
     pub cwd: PathBuf,
     pub kind: SessionKind,
@@ -57,6 +62,10 @@ impl Session {
 
 #[derive(Clone)]
 pub struct Context {
+    pub task_options: Option<crate::agent::Options>,
+    pub task_permissions: Option<crate::permissions::Permissions>,
+    pub call_id: Option<String>,
+    pub interactions: std::sync::Arc<crate::interactions::Interactions>,
     pub(crate) command_owners: std::sync::Arc<BTreeMap<String, String>>,
     pub(crate) workspace: Option<crate::workspace::Change>,
     pub session: Session,

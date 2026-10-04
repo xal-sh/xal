@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) fn task_prepare(value: &Value) -> napi::Result<Value> {
+pub fn task_prepare(value: &Value) -> io::Result<Value> {
     let request = object(value)?;
     let context = required_string(request, "context")?;
     if utf16_len(&context) > MAX_CONTEXT_LENGTH {
@@ -98,7 +98,7 @@ pub(super) fn task_prepare(value: &Value) -> napi::Result<Value> {
     Ok(json!({ "context": context, "tasks": tasks }))
 }
 
-pub(super) fn task_context(value: &Value) -> napi::Result<Value> {
+pub fn task_context(value: &Value) -> io::Result<Value> {
     let request = object(value)?;
     let mut complete = request.clone();
     complete.insert(
@@ -109,7 +109,7 @@ pub(super) fn task_context(value: &Value) -> napi::Result<Value> {
     Ok(json!({ "context": prepared.get("context").cloned().unwrap_or(Value::Null) }))
 }
 
-pub(super) fn task_items(value: &Value) -> napi::Result<Value> {
+pub fn task_items(value: &Value) -> io::Result<Value> {
     let request = object(value)?;
     let mut complete = request.clone();
     complete.insert("context".to_owned(), json!("validation"));
@@ -117,7 +117,7 @@ pub(super) fn task_items(value: &Value) -> napi::Result<Value> {
     Ok(json!({ "tasks": prepared.get("tasks").cloned().unwrap_or(Value::Null) }))
 }
 
-pub(super) fn task_finalize(value: &Value) -> napi::Result<Value> {
+pub fn task_finalize(value: &Value) -> io::Result<Value> {
     let request = object(value)?;
     let jobs = request
         .get("jobs")

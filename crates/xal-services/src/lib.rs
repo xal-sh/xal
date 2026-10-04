@@ -1,3 +1,4 @@
+pub mod background;
 pub mod config;
 pub mod context_sources;
 pub mod credentials;
@@ -24,3 +25,11 @@ pub mod tool_contracts;
 pub mod transport;
 pub mod web;
 pub mod worktree;
+
+pub mod prompt_history;
+pub mod session_lock;
+pub mod sessions;
+pub mod tool_runtime;
+pub mod workflows;
+
+pub mod time;

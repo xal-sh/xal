@@ -23,6 +23,47 @@ impl Sink<'_> {
         self.deliver(event)
     }
 
+    pub fn events(&mut self, events: &[AgentEvent]) -> Result<()> {
+        let events = events
+            .iter()
+            .cloned()
+            .map(|e| super::redaction::event(self.redactor, e))
+            .collect::<Vec<_>>();
+        if let Some(journal) = &mut self.journal {
+            let values = events
+                .iter()
+                .filter(|e| e.persistable())
+                .map(|event| json!({"type":"event","event":event}))
+                .collect::<Vec<_>>();
+            let receive = &mut self.receive;
+            return journal.append_with(&values, || {
+                for event in events {
+                    receive(event)?;
+                }
+                Ok(())
+            });
+        }
+        for event in events {
+            self.deliver(event)?;
+        }
+        Ok(())
+    }
+
+    pub fn paired(&mut self, event: AgentEvent, item: serde_json::Value) -> Result<()> {
+        let event = super::redaction::event(self.redactor, event);
+        if let Some(journal) = &mut self.journal {
+            let receive = &mut self.receive;
+            return journal.append_with(
+                &[
+                    json!({"type":"event","event":event}),
+                    json!({"type":"item","item":item}),
+                ],
+                || receive(event),
+            );
+        }
+        self.deliver(event)
+    }
+
     pub fn checkpoint(
         &mut self,
         item: serde_json::Value,

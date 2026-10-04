@@ -3,6 +3,8 @@ import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { isRecord } from "../../apps/cli/src/lib/json"
 import { loadSession } from "../../apps/cli/src/sessions/store"
+import { renderSessionMarkdown } from "../../apps/cli/src/sessions/export"
+import { createNativeSessionLock } from "../../apps/cli/src/native"
 import { readProviderUsageSummary } from "../../apps/cli/src/usage/summary"
 import { profilerTurnObservations } from "../context-efficiency"
 
@@ -75,6 +77,8 @@ try {
           answer("fixture answer"),
         ]
     let requests = 0
+    const requested = Promise.withResolvers<void>()
+    const release = Promise.withResolvers<void>()
     const server = Bun.serve({
       hostname: "127.0.0.1",
       port: 0,
@@ -82,6 +86,10 @@ try {
         const body: unknown = await request.json()
         if (!isRecord(body) || !Array.isArray(body.input)) return new Response("bad request", { status: 400 })
         const reply = replies[requests++]
+        if (requests === 1) {
+          requested.resolve()
+          await release.promise
+        }
         if (!reply) return new Response("unexpected request", { status: 400 })
         const events = [
           ...reply,
@@ -116,12 +124,34 @@ try {
       let stderr: string
       let code: number
       try {
+        await Promise.race([
+          requested.promise,
+          child.exited.then((code) => {
+            throw new Error(`native owner exited before request: ${code}`)
+          }),
+        ])
+        const active = (await readdir(join(home, "sessions"), { recursive: true })).filter((name) =>
+          name.endsWith(".jsonl"),
+        )
+        if (active.length !== 1) throw new Error("missing active Rust transcript")
+        let denied = false
+        try {
+          const owner = createNativeSessionLock(join(home, "sessions", active[0]!))
+          owner.close()
+        } catch (error) {
+          if (!(error instanceof Error) || !error.message.includes("transcript owner")) throw error
+          denied = true
+        } finally {
+          release.resolve()
+        }
+        if (!denied) throw new Error("Bun acquired a Rust-owned transcript")
         ;[stdout, stderr, code] = await Promise.all([
           new Response(child.stdout).text(),
           new Response(child.stderr).text(),
           child.exited,
         ])
       } finally {
+        release.resolve()
         clearTimeout(timeout)
       }
       if (code !== 0 || stderr || requests !== replies.length)
@@ -172,12 +202,53 @@ try {
       if (before.includes("synthetic-key")) throw new Error("credential leaked to journal")
       if (!compact && (await readFile(join(workspace, "sample.txt"), "utf8")) !== "after\n")
         throw new Error("fixture edit did not persist")
+      async function native(args: string[], expected = 0): Promise<string> {
+        const command = Bun.spawn([binary, ...args], {
+          cwd: workspace,
+          env: { ...process.env, HOME: home, XAL_HOME: home },
+          stdout: "pipe",
+          stderr: "pipe",
+        })
+        const [output, error, code] = await Promise.all([
+          new Response(command.stdout).text(),
+          new Response(command.stderr).text(),
+          command.exited,
+        ])
+        if (code !== expected) throw new Error(`native ${args.join(" ")}: ${code}: ${error}`)
+        return expected === 0 ? output : error
+      }
+      const owner = createNativeSessionLock(path)
+      try {
+        if (!(await native(["sessions", "title", path, "must not write"], 1)).includes("transcript owner"))
+          throw new Error("Rust acquired a Bun-owned transcript")
+      } finally {
+        owner.close()
+      }
+      await native(["sessions", "title", path, "  \ufeffShared export title  "])
+      const titled = await loadSession(path)
+      if (!titled || titled.title !== "Shared export title") throw new Error("native title normalization differs")
+      if ((await native(["sessions", "export", path])) !== renderSessionMarkdown(titled))
+        throw new Error("Bun and Rust Markdown exports differ")
+      const forkPath = (await native(["sessions", "fork", path])).trim()
+      const fork = await loadSession(forkPath)
+      if (
+        !fork ||
+        fork.meta.parentId !== session.meta.id ||
+        fork.meta.profile !== session.meta.profile ||
+        JSON.stringify(fork.items) !== JSON.stringify(titled.items)
+      )
+        throw new Error("native fork changed legacy account binding or replay history")
+      const complete = await readFile(forkPath)
+      await writeFile(forkPath, Buffer.concat([complete, Buffer.from([0x7b, 0x22, 0xf0, 0x9f])]))
+      await native(["sessions", "export", forkPath])
+      if (!complete.equals(await readFile(forkPath)))
+        throw new Error("native UTF-8 tail recovery changed complete records")
     } finally {
       await server.stop(true)
     }
   }
   console.log(
-    "Native read/edit/verify, compaction, eval JSONL, and legacy session/usage/profiler readers passed with synthetic homes",
+    "Native read/edit/verify, compaction, mixed-process ownership, fork/export/recovery, eval JSONL, and legacy session/usage/profiler readers passed with synthetic homes",
   )
 } finally {
   await rm(root, { recursive: true, force: true })

@@ -6,6 +6,7 @@ use serde_json::Value;
 use crate::*;
 
 pub struct PreparedTool {
+    pub(crate) approved: bool,
     pub(crate) name: String,
     session_id: String,
     cwd: std::path::PathBuf,
@@ -13,12 +14,12 @@ pub struct PreparedTool {
     pub(crate) args: JsonObject,
     pub(crate) effects: Effects,
     pub(crate) concurrency: Concurrency,
-    subject: Option<String>,
+    pub(crate) subject: Option<String>,
 }
 
 pub(crate) struct OutputPolicy {
-    redactor: std::sync::Arc<xal_services::redactor::Redactor>,
-    directory: Option<std::path::PathBuf>,
+    pub(crate) redactor: std::sync::Arc<xal_services::redactor::Redactor>,
+    pub(crate) directory: Option<std::path::PathBuf>,
 }
 
 impl Default for OutputPolicy {
@@ -175,6 +176,7 @@ impl Host {
             ));
         }
         Ok(PreparedTool {
+            approved: false,
             name: name.into(),
             session_id: session.id.clone(),
             cwd: session.cwd.clone(),
@@ -214,7 +216,8 @@ impl Host {
             read_only: prepared.effects == Effects::Read,
             subject: prepared.subject.clone(),
         };
-        let mut decision = match &self.permissions {
+        let permissions = self.permission_for(&session.id)?;
+        let mut decision = match &permissions {
             Some(permissions) => permissions.evaluate(&request, &session.cwd)?,
             None => PolicyDecision::Abstain,
         };
@@ -233,11 +236,17 @@ impl Host {
                 }
             }
         }
+        let granted = permissions
+            .as_ref()
+            .map(|permissions| permissions.granted(&request, &session.cwd))
+            .transpose()?
+            .unwrap_or(false);
         if matches!(decision, PolicyDecision::Ask(_))
-            && self
-                .permissions
-                .as_ref()
-                .is_some_and(|permissions| permissions.skip_ask)
+            && (prepared.approved
+                || granted
+                || permissions
+                    .as_ref()
+                    .is_some_and(|permissions| permissions.skip_ask))
         {
             return Ok(());
         }
@@ -246,6 +255,7 @@ impl Host {
             PolicyDecision::Ask(reason) | PolicyDecision::Deny(reason) => {
                 Err(Error::ApprovalRequired(reason))
             }
+            PolicyDecision::Abstain if prepared.approved || granted => Ok(()),
             PolicyDecision::Abstain => Err(Error::ApprovalRequired(format!(
                 "permission required for {}",
                 prepared.name
@@ -267,7 +277,18 @@ impl Host {
         session: &Session,
         output: Option<Sender<String>>,
     ) -> Result<ToolResult> {
-        self.execute_tool_with(prepared, session, output, false)
+        self.execute_tool_with(prepared, session, output, false, None)
+            .await
+    }
+
+    pub(crate) async fn execute_agent_tool(
+        &self,
+        prepared: PreparedTool,
+        session: &Session,
+        output: Sender<String>,
+        call_id: &str,
+    ) -> Result<ToolResult> {
+        self.execute_tool_with(prepared, session, Some(output), false, Some(call_id.into()))
             .await
     }
 
@@ -277,6 +298,7 @@ impl Host {
         session: &Session,
         output: Option<Sender<String>>,
         speculative: bool,
+        call_id: Option<String>,
     ) -> Result<ToolResult> {
         self.check()?;
         self.authorize_tool(&prepared, session).await?;
@@ -316,10 +338,41 @@ impl Host {
                 "tool effects changed after preparation".into(),
             ));
         }
+        let scope = entry.registration.snapshots.get(&prepared.name).copied();
+        let _undo_gate = if prepared.effects == Effects::Write
+            && matches!(
+                scope,
+                Some(crate::undo::Scope::Path(_) | crate::undo::Scope::Workspace)
+            ) {
+            Some(session.undo_gate.lock().await)
+        } else {
+            None
+        };
+        let capture = if prepared.effects == Effects::Write {
+            crate::undo::History::begin(
+                &session.undo,
+                &session.cwd,
+                &prepared.name,
+                scope,
+                &prepared.args,
+                session.jobs.unsettled()?,
+            )?
+        } else {
+            None
+        };
         let workspace = std::sync::Arc::new(std::sync::Mutex::new(None));
         let cancellation = session.cancellation.child();
         let (sender, mut receiver) = channel(16, Cancellation::default())?;
         let context = Context {
+            task_options: self
+                .session_options
+                .lock()
+                .map_err(|_| Error::Failed("session options poisoned".into()))?
+                .get(&session.id)
+                .cloned(),
+            task_permissions: self.permission_for(&session.id)?,
+            call_id,
+            interactions: self.interactions.get(&session.id)?,
             command_owners: self.command_owners(),
             workspace: (prepared.effects == Effects::Write
                 && prepared.concurrency == Concurrency::Exclusive)
@@ -405,6 +458,12 @@ impl Host {
             }
         }
         let result = settled.ok_or_else(|| Error::Failed("tool result missing".into()))?;
+        let captured = capture.map_or(Ok(()), crate::undo::Capture::finish);
+        let result = match (result, captured) {
+            (result, Ok(())) => result,
+            (Ok(_), Err(error)) => Err(error),
+            (Err(error), Err(capture)) => Err(Error::Failed(format!("{error}; {capture}"))),
+        };
         let changed = self.apply_workspace(session, workspace).await;
         let result = match (result, changed) {
             (result, Ok(())) => result,
@@ -463,6 +522,7 @@ impl Host {
             })
             .collect();
         Ok(PreparedTool {
+            approved: false,
             name: "submit_output".into(),
             session_id: session.id.clone(),
             cwd: session.cwd.clone(),
@@ -574,7 +634,10 @@ impl Host {
             Err(Error::Denied(_) | Error::ApprovalRequired(_)) => return Ok(None),
             result => result?,
         }
-        match self.execute_tool_with(prepared, session, None, true).await {
+        match self
+            .execute_tool_with(prepared, session, None, true, None)
+            .await
+        {
             Ok(result) => Ok(Some(result.output)),
             Err(Error::Cancelled) => Err(Error::Cancelled),
             Err(_) if session.cancellation.check().is_err() => Err(Error::Cancelled),
@@ -586,6 +649,22 @@ impl Host {
         session.cancellation.cancel();
         let session = self.effective_session(session)?;
         let result = self.dispose_resources(&session).await;
+        if let Some(tasks) = &session.tasks {
+            tasks.dispose(&session.id)?;
+        }
+        self.session_options
+            .lock()
+            .map_err(|_| Error::Failed("session options poisoned".into()))?
+            .remove(&session.id);
+        self.jobs
+            .lock()
+            .map_err(|_| Error::Failed("session jobs poisoned".into()))?
+            .remove(&session.id);
+        self.interactions.remove(&session.id)?;
+        self.session_permissions
+            .lock()
+            .map_err(|_| Error::Failed("session permissions poisoned".into()))?
+            .remove(&session.id);
         self.workspaces
             .lock()
             .map_err(|_| Error::Failed("workspace state lock poisoned".into()))?
@@ -595,9 +674,16 @@ impl Host {
 
     pub(crate) async fn dispose_resources(&self, session: &Session) -> Result<()> {
         let mut errors = Vec::new();
+        if let Err(error) = session.jobs.shutdown().await {
+            errors.push(error.to_string());
+        }
         for entry in self.ready().collect::<Vec<_>>().into_iter().rev() {
             for dispose in entry.registration.session_disposers.iter().rev() {
                 let context = Context {
+                    task_options: None,
+                    task_permissions: None,
+                    call_id: None,
+                    interactions: self.interactions.get(&session.id)?,
                     command_owners: self.command_owners(),
                     workspace: None,
                     session: session.clone(),

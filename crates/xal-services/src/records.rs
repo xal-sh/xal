@@ -5,6 +5,8 @@ use serde_json::{Map, Value};
 
 use crate::storage::{invalid, read_text};
 
+mod events;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RecordKind {
     Meta,
@@ -44,7 +46,7 @@ impl Record {
             }
             Some("event") => {
                 let event = object(&raw, "event")?;
-                text(event, "type", true)?;
+                events::validate(event)?;
                 RecordKind::Event
             }
             _ => return Err(invalid("unknown session record type")),

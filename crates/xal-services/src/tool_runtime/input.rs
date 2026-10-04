@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) fn request_input_prepare(value: &Value) -> napi::Result<Value> {
+pub fn request_input_prepare(value: &Value) -> io::Result<Value> {
     let request = object(value)?;
     let values = request
         .get("questions")
@@ -66,7 +66,7 @@ pub(super) fn request_input_prepare(value: &Value) -> napi::Result<Value> {
     Ok(json!({ "questions": questions }))
 }
 
-fn required_nested(value: &Map<String, Value>, key: &str, field: &str) -> napi::Result<String> {
+fn required_nested(value: &Map<String, Value>, key: &str, field: &str) -> io::Result<String> {
     string(value, key)
         .map(str::trim)
         .filter(|value| !value.is_empty())
@@ -74,7 +74,7 @@ fn required_nested(value: &Map<String, Value>, key: &str, field: &str) -> napi::
         .ok_or_else(|| invalid(format!("{field} is required")))
 }
 
-pub(super) fn request_input_finalize(value: &Value) -> napi::Result<Value> {
+pub fn request_input_finalize(value: &Value) -> io::Result<Value> {
     let request = object(value)?;
     if string(request, "status") == Some("rejected") {
         return Ok(json!({ "output": "{\"status\":\"rejected\"}" }));

@@ -11,6 +11,8 @@ use crate::{Error, Result};
 
 pub struct Journal {
     file: File,
+    owner: xal_services::session_lock::SessionLock,
+    records: Vec<Record>,
     failed: bool,
 }
 
@@ -19,12 +21,99 @@ impl Journal {
         if let Some(parent) = path.parent() {
             secure_directory(parent)?;
         }
+        let owner = xal_services::session_lock::SessionLock::acquire(path).map_err(failure)?;
         let mut journal = Self {
-            file: create_secure(path).map_err(failure)?,
+            file: create_secure(owner.path()).map_err(failure)?,
+            owner,
+            records: Vec::new(),
             failed: false,
         };
-        journal.append(meta)?;
+        if let Err(error) = journal.append(meta) {
+            let path = journal.path().to_path_buf();
+            drop(journal);
+            std::fs::remove_file(path).map_err(|cleanup| {
+                failure(format!(
+                    "{error}; incomplete journal cleanup failed: {cleanup}"
+                ))
+            })?;
+            return Err(error);
+        }
         Ok(journal)
+    }
+
+    pub fn resume(path: &Path) -> Result<(Self, xal_services::sessions::Loaded)> {
+        let owner = xal_services::session_lock::SessionLock::acquire(path).map_err(failure)?;
+        let loaded = xal_services::sessions::load(owner.path()).map_err(failure)?;
+        let mut file = owner.open().map_err(failure)?;
+        if loaded.incomplete_tail {
+            file.set_len(loaded.complete_bytes).map_err(failure)?;
+            file.sync_data().map_err(failure)?;
+        }
+        file.seek(SeekFrom::End(0)).map_err(failure)?;
+        Ok((
+            Self {
+                file,
+                owner,
+                records: loaded.records.clone(),
+                failed: false,
+            },
+            loaded,
+        ))
+    }
+
+    pub(crate) fn discard(self) -> Result<()> {
+        let Self { file, owner, .. } = self;
+        drop(file);
+        std::fs::remove_file(owner.path()).map_err(failure)
+    }
+
+    pub fn path(&self) -> &Path {
+        self.owner.path()
+    }
+
+    pub fn snapshot(&self) -> Result<xal_services::sessions::Loaded> {
+        xal_services::sessions::replay(&self.records).map_err(failure)
+    }
+
+    pub fn copy_history(&mut self, records: &[Record]) -> Result<()> {
+        xal_services::sessions::replay(records).map_err(failure)?;
+        if self.records == records {
+            return Ok(());
+        }
+        if self.records.len() != 1 {
+            return Err(failure("cannot replace recorded history"));
+        }
+        let values = records[1..]
+            .iter()
+            .map(|r| Value::Object(r.payload().clone()))
+            .collect::<Vec<_>>();
+        self.append_with(&values, || Ok(()))
+    }
+
+    pub fn fork(&self, path: &Path, id: &str, started_at: u64) -> Result<Self> {
+        let parent = self.snapshot()?.meta.id;
+        let mut meta = Value::Object(self.records[0].payload().clone());
+        meta["meta"]["parentId"] = Value::String(parent);
+        meta["meta"]["id"] = Value::String(id.into());
+        meta["meta"]["startedAt"] = Value::from(started_at);
+        let mut fork = Self::create(path, &meta)?;
+        let result = fork
+            .copy_history(&self.records)
+            .and_then(|()| fork.snapshot().map(|_| ()));
+        if let Err(error) = result {
+            drop(fork);
+            std::fs::remove_file(path).map_err(|cleanup| {
+                failure(format!(
+                    "{error}; removing incomplete fork failed: {cleanup}"
+                ))
+            })?;
+            return Err(error);
+        }
+        Ok(fork)
+    }
+
+    pub fn append_batch(&mut self, values: &[Value]) -> Result<()> {
+        self.append_with(values, || Ok(()))
     }
 
     pub(super) fn append_with(
@@ -32,10 +121,14 @@ impl Journal {
         values: &[Value],
         deliver: impl FnOnce() -> Result<()>,
     ) -> Result<()> {
+        if self.failed {
+            return Err(failure("session recording previously failed"));
+        }
         let offset = self.file.stream_position().map_err(failure)?;
+        let count = self.records.len();
         let result = (|| {
             for value in values {
-                self.append(value)?;
+                self.append_record(value)?;
             }
             deliver()
         })();
@@ -51,23 +144,30 @@ impl Journal {
                     "{error}; checkpoint rollback failed: {rollback}"
                 )));
             }
+            self.records.truncate(count);
+            self.failed = false;
             return Err(error);
         }
         Ok(())
     }
 
     pub fn append(&mut self, value: &Value) -> Result<()> {
+        self.append_batch(std::slice::from_ref(value))
+    }
+
+    fn append_record(&mut self, value: &Value) -> Result<()> {
         if self.failed {
             return Err(Error::Failed("session recording previously failed".into()));
         }
         self.failed = true;
         let line = serde_json::to_string(value).map_err(failure)?;
-        Record::parse(&line).map_err(failure)?;
+        let record = Record::parse(&line).map_err(failure)?;
         self.file
             .write_all(format!("{line}\n").as_bytes())
             .map_err(failure)?;
         self.file.flush().map_err(failure)?;
         self.file.sync_data().map_err(failure)?;
+        self.records.push(record);
         self.failed = false;
         Ok(())
     }

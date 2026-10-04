@@ -1,8 +1,13 @@
 pub mod agent;
 mod channel;
 mod conversation;
+pub mod interactions;
+pub mod jobs;
 pub mod permissions;
+pub mod tasks;
 mod tools;
+pub mod undo;
+pub mod workflows;
 mod workspace;
 pub fn sandbox_available() -> bool {
     cfg!(target_os = "macos") && std::path::Path::new("/usr/bin/sandbox-exec").is_file()
@@ -30,6 +35,8 @@ pub use registration::Registration;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Error {
     Cancelled,
+    Paused,
+    NeedsInput,
     Denied(String),
     ApprovalRequired(String),
     Failed(String),
@@ -44,6 +51,8 @@ impl fmt::Display for Error {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Cancelled => formatter.write_str("cancelled"),
+            Self::Paused => formatter.write_str("paused at a safe boundary"),
+            Self::NeedsInput => formatter.write_str("interactive input is required"),
             Self::Provider { message, .. } => formatter.write_str(message),
             Self::Denied(reason) | Self::ApprovalRequired(reason) | Self::Failed(reason) => {
                 formatter.write_str(reason)
@@ -176,12 +185,18 @@ impl Entry {
 }
 
 pub struct Host {
+    pub task_service: Option<std::sync::Arc<tasks::Service>>,
+    session_options: std::sync::Mutex<std::collections::BTreeMap<String, agent::Options>>,
+    pub interactions: std::sync::Arc<interactions::Registry>,
+    jobs: std::sync::Mutex<std::collections::BTreeMap<String, std::sync::Arc<jobs::Jobs>>>,
     workspaces: std::sync::Mutex<std::collections::BTreeMap<String, std::path::PathBuf>>,
     entries: Vec<Entry>,
     cancellation: Cancellation,
     state: State,
     failures: Vec<Failure>,
     permissions: Option<permissions::Permissions>,
+    session_permissions:
+        std::sync::Mutex<std::collections::BTreeMap<String, permissions::Permissions>>,
     output: tools::OutputPolicy,
     decision_settings: Option<decisions::Settings>,
     pub recorder: Option<std::sync::Arc<recording::Recorder>>,
@@ -190,6 +205,10 @@ pub struct Host {
 impl Host {
     pub fn new(plugins: Vec<Box<dyn Plugin>>, cancellation: Cancellation) -> Self {
         Self {
+            task_service: None,
+            session_options: std::sync::Mutex::default(),
+            interactions: std::sync::Arc::default(),
+            jobs: std::sync::Mutex::default(),
             workspaces: std::sync::Mutex::new(std::collections::BTreeMap::new()),
             entries: plugins
                 .into_iter()
@@ -204,6 +223,7 @@ impl Host {
             state: State::Created,
             failures: Vec::new(),
             permissions: None,
+            session_permissions: std::sync::Mutex::default(),
             output: tools::OutputPolicy::default(),
             decision_settings: None,
             recorder: None,
@@ -212,6 +232,37 @@ impl Host {
 
     pub fn permissions(&mut self, permissions: permissions::Permissions) {
         self.permissions = Some(permissions);
+    }
+
+    pub fn session_permissions(
+        &self,
+        id: &str,
+        permissions: permissions::Permissions,
+    ) -> Result<()> {
+        let mut permissions = permissions;
+        let mut sessions = self
+            .session_permissions
+            .lock()
+            .map_err(|_| Error::Failed("session permissions poisoned".into()))?;
+        if let Some(previous) = sessions.get(id) {
+            for rule in &previous.grants {
+                if !permissions.grants.contains(rule) {
+                    permissions.grants.push(rule.clone());
+                }
+            }
+        }
+        sessions.insert(id.into(), permissions);
+        Ok(())
+    }
+
+    fn permission_for(&self, id: &str) -> Result<Option<permissions::Permissions>> {
+        Ok(self
+            .session_permissions
+            .lock()
+            .map_err(|_| Error::Failed("session permissions poisoned".into()))?
+            .get(id)
+            .cloned()
+            .or_else(|| self.permissions.clone()))
     }
 
     pub async fn start(&mut self) -> Result<()> {
@@ -345,14 +396,31 @@ impl Host {
         read_only: bool,
     ) -> Result<Session> {
         self.check()?;
-        if id.is_empty() {
+        if id.is_empty() || id == "." || id == ".." || id.contains(['/', '\\', ':', '\0']) {
             return Err(Error::Failed("session ID must not be empty".into()));
         }
         self.workspaces
             .lock()
             .map_err(|_| Error::Failed("workspace state lock poisoned".into()))?
             .insert(id.clone(), cwd.clone());
+        let jobs = self
+            .jobs
+            .lock()
+            .map_err(|_| Error::Failed("session jobs poisoned".into()))?
+            .entry(id.clone())
+            .or_insert_with(|| {
+                std::sync::Arc::new(jobs::Jobs::new(
+                    self.output.directory.as_ref().map(|path| path.join(&id)),
+                    self.output.redactor.clone(),
+                ))
+            })
+            .clone();
         Ok(Session {
+            undo: std::sync::Arc::default(),
+            undo_gate: std::sync::Arc::default(),
+            tasks: self.task_service.clone(),
+            task: None,
+            jobs,
             id,
             cwd,
             kind,
@@ -380,6 +448,10 @@ impl Host {
     ) -> Result<O> {
         self.check()?;
         let context = Context {
+            task_options: None,
+            task_permissions: None,
+            call_id: None,
+            interactions: self.interactions.get(&session.id)?,
             command_owners: self.command_owners(),
             workspace: None,
             session: self.effective_session(session)?,
@@ -460,6 +532,10 @@ impl Host {
                     sender
                 };
                 let context = Context {
+                    task_options: None,
+                    task_permissions: None,
+                    call_id: None,
+                    interactions: self.interactions.get(&session.id)?,
                     command_owners: self.command_owners(),
                     workspace: None,
                     session: self.effective_session(session)?,
@@ -590,6 +666,25 @@ impl Host {
 
     pub async fn shutdown(&mut self) {
         self.cancellation.cancel();
+        let jobs = self.jobs.get_mut().map(std::mem::take);
+        match jobs {
+            Ok(jobs) => {
+                for (id, jobs) in jobs {
+                    if let Err(error) = jobs.shutdown().await {
+                        self.failures.push(Failure {
+                            plugin: format!("session-{id}"),
+                            phase: Phase::Dispose,
+                            error,
+                        });
+                    }
+                }
+            }
+            Err(_) => self.failures.push(Failure {
+                plugin: "jobs".into(),
+                phase: Phase::Dispose,
+                error: Error::Failed("session jobs poisoned".into()),
+            }),
+        }
         for entry in self.entries.iter_mut().rev() {
             entry.stop(&mut self.failures).await;
         }
