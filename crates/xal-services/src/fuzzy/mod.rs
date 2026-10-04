@@ -25,8 +25,7 @@ mod workspace;
 
 use score::{PreparedField, compact, score_terms, terms};
 
-pub use score::{FuzzyCandidate, FuzzyField, batch_scores};
 pub use workspace::{
-    PathRanker, WorkspaceIndex, WorkspaceIndexTask, WorkspaceSearchResult, WorkspaceSearchTask,
+    WorkspaceIndex, WorkspaceIndexTask, WorkspaceSearchResult, WorkspaceSearchTask,
     create_workspace_index,
 };

@@ -47,8 +47,8 @@ impl Plugin for Search {
                         let target = args.get("path").and_then(Value::as_str).map(|path| xal_host::permissions::resolve_path(&context.session.cwd, path).map(|path| path.to_string_lossy().into_owned())).transpose()?;
                         let pattern = Some(text(&args, "pattern")?);
                         let result = if name == "grep" {
-                            grep(GrepOptions { cwd, target, pattern, glob: args.get("glob").and_then(Value::as_str).map(str::to_owned), output_mode: args.get("output_mode").and_then(Value::as_str).map(str::to_owned), case_insensitive: args.get("case_insensitive").and_then(Value::as_bool), aborted: None }, flag).compute()
-                        } else { glob(GlobOptions { cwd, target, pattern, aborted: None }, flag).compute() }.map_err(failure)?;
+                            grep(GrepOptions { cwd, target, pattern, glob: args.get("glob").and_then(Value::as_str).map(str::to_owned), output_mode: args.get("output_mode").and_then(Value::as_str).map(str::to_owned), case_insensitive: args.get("case_insensitive").and_then(Value::as_bool) }, flag).compute()
+                        } else { glob(GlobOptions { cwd, target, pattern }, flag).compute() }.map_err(failure)?;
                         match result.kind {
                             ToolOutcomeKind::Completed => Ok(ToolResult { output: result.output.ok_or_else(|| Error::Failed("search output missing".into()))? }),
                             ToolOutcomeKind::Interrupted => Err(Error::Cancelled),

@@ -159,3 +159,18 @@ fn calendar_usage_filters_sessions_and_providers_and_rejects_corrupt_tails() {
     assert!(recording::read_usage(&home).is_err());
     std::fs::remove_dir_all(home).unwrap();
 }
+
+#[test]
+fn usage_written_by_the_typescript_app_matches_its_totals() {
+    let expected: Value =
+        serde_json::from_str(include_str!("fixtures/usage-summary.json")).unwrap();
+    let summary = recording::usage_summary(
+        std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/usage")),
+        Some("ts-fixture-session"),
+        &[],
+        xal_services::time::parse("2024-03-12T12:00:00.000Z").unwrap(),
+    )
+    .unwrap();
+    assert_eq!(summary["session"], expected["session"]);
+    assert_eq!(summary["allTime"], expected["allTime"]);
+}

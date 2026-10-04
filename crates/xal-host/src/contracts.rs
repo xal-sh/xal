@@ -84,9 +84,6 @@ impl Context {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Event {
-    SessionStarted {
-        id: String,
-    },
     ToolFinished {
         session: String,
         tool: String,
@@ -95,10 +92,6 @@ pub enum Event {
     ProviderFinished {
         session: String,
         provider: String,
-    },
-    Diagnostic {
-        session: String,
-        message: String,
     },
 }
 
@@ -261,7 +254,6 @@ pub struct DecisionResponse {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum UiContribution {
-    Status { label: String, value: String },
     Text { text: String },
     Tool { name: String, output: String },
 }

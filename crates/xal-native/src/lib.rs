@@ -1,3 +1,4 @@
+mod diff;
 mod file_tools;
 mod fuzzy;
 mod git;
@@ -6,8 +7,8 @@ mod mcp;
 mod memory;
 mod output_contract;
 mod process;
+mod redactor;
 mod search;
-mod session_lock;
 mod shell;
 mod skill;
 mod tool_contracts;
@@ -18,11 +19,11 @@ mod worktree;
 use napi::bindgen_prelude::Utf16String;
 use napi::{Error, Status};
 use napi_derive::napi;
-use xal_services::redactor::SecretMatcher;
+use redactor::SecretMatcher;
 
 #[napi(js_name = "apiVersion", catch_unwind)]
 pub fn api_version() -> u32 {
-    13
+    12
 }
 
 #[napi]

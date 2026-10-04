@@ -1,27 +1,21 @@
 use super::*;
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(tag = "transport", rename_all = "lowercase")]
+#[derive(Clone, Debug)]
 pub enum ServerConfig {
     Stdio {
         id: String,
         enabled: bool,
-        #[serde(rename = "timeoutMs")]
         timeout_ms: u64,
         command: String,
-        #[serde(default)]
         args: Vec<String>,
-        #[serde(default)]
         env: HashMap<String, String>,
         cwd: Option<PathBuf>,
     },
     Http {
         id: String,
         enabled: bool,
-        #[serde(rename = "timeoutMs")]
         timeout_ms: u64,
         url: String,
-        #[serde(default)]
         headers: HashMap<String, String>,
     },
 }

@@ -45,7 +45,7 @@ pub fn create_managed_worktree(
     request: &WorktreeRequest,
     cancelled: &dyn Fn() -> bool,
 ) -> std::io::Result<ManagedWorktree> {
-    if request.aborted.unwrap_or(false) || cancelled() {
+    if cancelled() {
         return Err(interrupted("Worktree creation interrupted"));
     }
     let _guard = mutation(cancelled)?;
@@ -98,7 +98,7 @@ pub fn create_managed_worktree(
             .ok_or_else(|| failed("worktree parent is unavailable"))?,
     )
     .map_err(|error| failed(error.to_string()))?;
-    if request.aborted.unwrap_or(false) || cancelled() {
+    if cancelled() {
         return Err(interrupted("Worktree creation interrupted"));
     }
     let parent = canonical(
@@ -178,7 +178,6 @@ fn require_current(
         name: None,
         worktree: None,
         force: None,
-        aborted: request.aborted,
     };
     let current = lookup(&lookup_request, cancelled)?;
     match current {
@@ -194,7 +193,7 @@ pub fn remove_managed_worktree(
     request: &WorktreeRequest,
     cancelled: &dyn Fn() -> bool,
 ) -> std::io::Result<()> {
-    if request.aborted.unwrap_or(false) || cancelled() {
+    if cancelled() {
         return Err(interrupted("Worktree removal interrupted"));
     }
     let _guard = mutation(cancelled)?;
@@ -233,7 +232,7 @@ pub fn unmanage_worktree(
     request: &WorktreeRequest,
     cancelled: &dyn Fn() -> bool,
 ) -> std::io::Result<()> {
-    if request.aborted.unwrap_or(false) || cancelled() {
+    if cancelled() {
         return Err(interrupted("Git command interrupted"));
     }
     let _guard = mutation(cancelled)?;

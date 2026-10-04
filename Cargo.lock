@@ -2833,13 +2833,28 @@ dependencies = [
 name = "xal-native"
 version = "0.1.0"
 dependencies = [
+ "bytes",
+ "encoding_rs",
+ "futures-util",
+ "globset",
+ "grep-matcher",
+ "grep-regex",
+ "grep-searcher",
+ "html2md",
+ "ignore",
+ "jsonschema",
+ "libc",
  "napi",
  "napi-build",
  "napi-derive",
+ "reqwest",
+ "rmcp",
  "serde",
  "serde_json",
+ "sha2",
+ "sse-stream",
  "tokio",
- "xal-services",
+ "which",
 ]
 
 [[package]]
@@ -2860,21 +2875,6 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
- "xal-host",
- "xal-services",
-]
-
-[[package]]
-name = "xal-plugin-diagnostics"
-version = "0.1.0"
-dependencies = [
- "xal-host",
-]
-
-[[package]]
-name = "xal-plugin-inspect"
-version = "0.1.0"
-dependencies = [
  "xal-host",
  "xal-services",
 ]
@@ -2950,8 +2950,6 @@ dependencies = [
  "xal-host",
  "xal-plugin-classify",
  "xal-plugin-context",
- "xal-plugin-diagnostics",
- "xal-plugin-inspect",
  "xal-plugin-lsp",
  "xal-plugin-mcp",
  "xal-plugin-providers",

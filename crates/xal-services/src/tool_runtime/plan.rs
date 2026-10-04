@@ -150,18 +150,18 @@ pub fn submit_plan_finalize(value: &Value) -> io::Result<Value> {
 
 #[cfg(test)]
 mod tests {
-    use super::{run, update_plan};
+    use super::update_plan;
+    use serde_json::json;
 
     #[test]
     fn validates_task_plans() {
-        let plan = run(
-            r#"{"explanation":"Starting work","plan":[{"step":"work","status":"in_progress"}]}"#
-                .to_owned(),
-            update_plan,
+        let plan = update_plan(
+            &json!({"explanation":"Starting work","plan":[{"step":"work","status":"in_progress"}]}),
         )
-        .unwrap();
+        .unwrap()
+        .to_string();
         assert!(plan.contains("Plan updated"));
         assert!(plan.contains("Starting work"));
-        assert!(run(r#"{"plan":[],"tasks":[]}"#.to_owned(), update_plan,).is_err());
+        assert!(update_plan(&json!({"plan":[],"tasks":[]})).is_err());
     }
 }

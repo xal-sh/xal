@@ -31,26 +31,22 @@ pub fn scheduler_finalize(value: &Value) -> io::Result<Value> {
 
 #[cfg(test)]
 mod tests {
-    use super::{run, scheduler_finalize, scheduler_prepare};
+    use super::{scheduler_finalize, scheduler_prepare};
+    use serde_json::json;
 
     #[test]
     fn validates_and_formats_scheduler_requests() {
-        let prepared = run(r#"{"duration_ms":10000}"#.to_owned(), scheduler_prepare).unwrap();
-        assert_eq!(prepared, r#"{"durationMs":10000}"#);
-        assert!(run(r#"{"duration_ms":0}"#.to_owned(), scheduler_prepare).is_err());
-        assert!(run(r#"{"duration_ms":1.5}"#.to_owned(), scheduler_prepare).is_err());
-        let finalized = run(
-            r#"{"elapsedSeconds":10.125,"outcome":"completed"}"#.to_owned(),
-            scheduler_finalize,
-        )
-        .unwrap();
-        assert!(finalized.contains("Wall time: 10.1250 seconds\\nWait completed."));
+        let prepared = scheduler_prepare(&json!({"duration_ms":10000})).unwrap();
+        assert_eq!(prepared, json!({"durationMs":10000}));
+        assert!(scheduler_prepare(&json!({"duration_ms":0})).is_err());
+        assert!(scheduler_prepare(&json!({"duration_ms":1.5})).is_err());
+        let finalized =
+            scheduler_finalize(&json!({"elapsedSeconds":10.125,"outcome":"completed"})).unwrap();
         assert!(
-            run(
-                r#"{"elapsedSeconds":1,"outcome":"unknown"}"#.to_owned(),
-                scheduler_finalize,
-            )
-            .is_err()
+            finalized
+                .to_string()
+                .contains("Wall time: 10.1250 seconds\\nWait completed.")
         );
+        assert!(scheduler_finalize(&json!({"elapsedSeconds":1,"outcome":"unknown"})).is_err());
     }
 }

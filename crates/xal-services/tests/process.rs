@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
-use xal_services::process::{EnvironmentVariable, Process, ProcessRequest};
+use xal_services::process::{EnvironmentVariable, ProcessTermination};
 use xal_services::shell::{ShellExecution, ShellManager, ShellRequest};
 
 struct Fixture(PathBuf);
@@ -64,7 +64,17 @@ fn environment() -> Vec<EnvironmentVariable> {
         .collect()
 }
 
-fn process(mode: &str, cwd: &Path) -> Process {
+fn fixture_request(mode: &str, cwd: &Path) -> ShellRequest {
+    let launch = vec![
+        std::env::current_exe()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned(),
+        "--exact".into(),
+        "process_fixture".into(),
+        "--ignored".into(),
+        "--nocapture".into(),
+    ];
     let mut environment = environment();
     environment.extend([
         EnvironmentVariable {
@@ -76,22 +86,21 @@ fn process(mode: &str, cwd: &Path) -> Process {
             value: cwd.join("heartbeat").to_string_lossy().into_owned(),
         },
     ]);
-    Process::spawn(ProcessRequest {
-        launch: vec![
-            std::env::current_exe()
-                .unwrap()
-                .to_string_lossy()
-                .into_owned(),
-            "--exact".into(),
-            "process_fixture".into(),
-            "--ignored".into(),
-            "--nocapture".into(),
-        ],
+    ShellRequest {
+        session_id: mode.into(),
+        sandbox_id: "plain".into(),
+        command: "unused".into(),
         cwd: cwd.to_string_lossy().into_owned(),
+        persistent_launch: launch.clone(),
+        isolated_launch: launch,
         environment,
-        stdin: mode.ends_with("block-input"),
-    })
-    .unwrap()
+    }
+}
+
+fn process(mode: &str, cwd: &Path) -> ShellExecution {
+    ShellManager::new()
+        .execute_isolated(fixture_request(mode, cwd))
+        .unwrap()
 }
 
 #[test]
@@ -181,14 +190,11 @@ fn wait_until(mut condition: impl FnMut() -> bool) {
     }
 }
 
-fn wait_process(process: &Process) -> xal_services::process::ProcessTermination {
-    let mut wait = process.wait();
+fn wait_execution(execution: &ShellExecution) -> std::io::Result<ProcessTermination> {
+    let mut wait = execution.wait();
     let (sender, receiver) = mpsc::channel();
     let thread = std::thread::spawn(move || sender.send(wait.compute()).unwrap());
-    let result = receiver
-        .recv_timeout(Duration::from_secs(5))
-        .unwrap()
-        .unwrap();
+    let result = receiver.recv_timeout(Duration::from_secs(5)).unwrap();
     thread.join().unwrap();
     result
 }
@@ -197,7 +203,7 @@ fn wait_process(process: &Process) -> xal_services::process::ProcessTermination 
 fn process_output_status_timeout_drop_and_parent_exit_own_the_entire_tree() {
     let fixture = Fixture::new();
     let output = process("output", &fixture.0);
-    assert_eq!(wait_process(&output).exit_code, Some(7));
+    assert_eq!(wait_execution(&output).unwrap().exit_code, Some(7));
     assert_eq!(
         output.drain().iter().filter(|byte| **byte == b'@').count(),
         1_000_000
@@ -219,7 +225,7 @@ fn process_output_status_timeout_drop_and_parent_exit_own_the_entire_tree() {
                 .unwrap();
             thread.join().unwrap();
         } else {
-            wait_process(&child);
+            wait_execution(&child).unwrap();
             if mode == "timeout" {
                 assert!(child.timed_out());
             }
@@ -233,15 +239,9 @@ fn process_output_status_timeout_drop_and_parent_exit_own_the_entire_tree() {
         );
         fs::remove_file(fixture.0.join("heartbeat")).unwrap();
     }
-    assert!(
-        Process::spawn(ProcessRequest {
-            launch: Vec::new(),
-            cwd: fixture.0.to_string_lossy().into_owned(),
-            environment: Vec::new(),
-            stdin: false
-        })
-        .is_err()
-    );
+    let mut request = fixture_request("output", &fixture.0);
+    request.isolated_launch = Vec::new();
+    assert!(ShellManager::new().execute_isolated(request).is_err());
 }
 
 fn shell_request(cwd: &Path, command: &str, session: &str) -> ShellRequest {
@@ -258,15 +258,7 @@ fn shell_request(cwd: &Path, command: &str, session: &str) -> ShellRequest {
 }
 
 fn shell_output(execution: &ShellExecution) -> String {
-    let mut wait = execution.wait();
-    let (sender, receiver) = mpsc::channel();
-    let thread = std::thread::spawn(move || sender.send(wait.compute()).unwrap());
-    let status = receiver
-        .recv_timeout(Duration::from_secs(5))
-        .unwrap()
-        .unwrap();
-    thread.join().unwrap();
-    assert_eq!(status.exit_code, Some(0));
+    assert_eq!(wait_execution(execution).unwrap().exit_code, Some(0));
     String::from_utf8(execution.drain()).unwrap()
 }
 
@@ -274,30 +266,30 @@ fn shell_output(execution: &ShellExecution) -> String {
 #[test]
 fn detached_stdin_cannot_block_a_writer_during_termination() {
     let fixture = Fixture::new();
-    let child = std::sync::Arc::new(process("detached-block-input", &fixture.0));
-    wait_until(|| fixture.0.join("heartbeat").exists());
-    let writing = child.clone();
+    let manager = std::sync::Arc::new(ShellManager::new());
+    let mut request = fixture_request("detached-block-input", &fixture.0);
+    request.command = "x".repeat(1024 * 1024);
+    let writing = manager.clone();
     let (sender, receiver) = mpsc::channel();
-    let writer = std::thread::spawn(move || {
-        sender
-            .send(writing.write(&vec![b'x'; 1024 * 1024]))
-            .unwrap();
-    });
+    let writer = std::thread::spawn(move || sender.send(writing.execute(request)).unwrap());
+    wait_until(|| fixture.0.join("heartbeat").exists());
     assert!(matches!(
         receiver.recv_timeout(Duration::from_millis(50)),
         Err(mpsc::RecvTimeoutError::Timeout)
     ));
-    child.kill();
+    let (stopped, stop) = mpsc::channel();
+    let stopper = std::thread::spawn(move || {
+        stopped
+            .send(manager.shutdown_session("detached-block-input"))
+            .unwrap()
+    });
     let result = receiver.recv_timeout(Duration::from_secs(2));
-    let mut wait = child.wait();
-    let (sender, receiver) = mpsc::channel();
-    let waiter = std::thread::spawn(move || sender.send(wait.compute()).unwrap());
-    let termination = receiver.recv_timeout(Duration::from_secs(2));
+    let shutdown = stop.recv_timeout(Duration::from_secs(2));
     fixture.stop_detached();
     writer.join().unwrap();
-    waiter.join().unwrap();
-    assert!(result.unwrap().is_err());
-    termination.unwrap().unwrap();
+    stopper.join().unwrap();
+    shutdown.unwrap().unwrap();
+    result.unwrap().unwrap();
 }
 
 #[cfg(unix)]
@@ -329,33 +321,11 @@ fn detached_pipes_do_not_block_process_wait_or_global_shell_shutdown() {
         fixture.stop_detached();
         worker.join().unwrap();
         result.unwrap().unwrap();
-        assert!(child.output_closed());
     }
     for mode in ["detached-hold", "detached-stream-hold"] {
         let fixture = Fixture::new();
         let manager = ShellManager::new();
-        let mut request = shell_request(&fixture.0, "unused", "detached");
-        request.persistent_launch = vec![
-            std::env::current_exe()
-                .unwrap()
-                .to_string_lossy()
-                .into_owned(),
-            "--exact".into(),
-            "process_fixture".into(),
-            "--ignored".into(),
-            "--nocapture".into(),
-        ];
-        request.environment.extend([
-            EnvironmentVariable {
-                name: "XAL_PROCESS_FIXTURE".into(),
-                value: mode.into(),
-            },
-            EnvironmentVariable {
-                name: "XAL_PROCESS_PATH".into(),
-                value: fixture.0.join("heartbeat").to_string_lossy().into_owned(),
-            },
-        ]);
-        let execution = manager.execute(request).unwrap();
+        let execution = manager.execute(fixture_request(mode, &fixture.0)).unwrap();
         wait_until(|| fixture.0.join("heartbeat").exists());
         let (sender, receiver) = mpsc::channel();
         let worker = std::thread::spawn(move || {
@@ -372,7 +342,7 @@ fn detached_pipes_do_not_block_process_wait_or_global_shell_shutdown() {
         fixture.stop_detached();
         worker.join().unwrap();
         result.unwrap().unwrap();
-        wait_until(|| execution.output_closed());
+        wait_execution(&execution).unwrap();
     }
 }
 

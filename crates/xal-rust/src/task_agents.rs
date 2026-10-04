@@ -38,7 +38,6 @@ async fn run(mut invocation: Invocation, home: &Path, redactor: &Arc<Redactor>) 
             name: Some(invocation.assignment.task.clone()),
             worktree: None,
             force: None,
-            aborted: None,
         };
         let token = cancellation.clone();
         Some(

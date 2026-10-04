@@ -5,14 +5,7 @@ import { backgroundSessionDir } from "../config/paths"
 import { describeError, isMissingPathError } from "../lib/error"
 import { selfCommand } from "../lib/process"
 import type { UserInput } from "../providers/types"
-import {
-  backgroundLogPath,
-  claimBgLease,
-  readBgLease,
-  readBgState,
-  removeBackgroundSession,
-  removeBgControl,
-} from "./state"
+import { backgroundLogPath, claimBgLease, readBgState, removeBackgroundSession, removeBgControl } from "./state"
 
 const HANDSHAKE_TIMEOUT_MS = 15_000
 const HANDSHAKE_POLL_MS = 50
@@ -20,7 +13,7 @@ const HANDSHAKE_POLL_MS = 50
 export type DetachOutcome =
   | { status: "detached"; id: string; pending: UserInput[] }
   | { status: "blocked"; reason: string }
-  | { status: "failed"; reason: string; pending: UserInput[] }
+  | { status: "failed"; reason: string }
 
 function describeJob(job: BackgroundJob): string {
   switch (job.kind) {
@@ -60,20 +53,17 @@ async function workerLogTail(sessionId: string): Promise<string> {
   return `\nworker log (${backgroundLogPath(sessionId)}):\n${lines.join("\n")}`
 }
 
-async function spawnWorker(session: AgentSession): Promise<void> {
-  const sessionId = session.id
-  const cwd = session.currentWorkingDirectory
+async function spawnWorker(sessionId: string, cwd: string): Promise<void> {
   if (await readBgState(sessionId)) throw new Error(`session ${sessionId.slice(0, 8)} already has a background entry`)
   await mkdir(backgroundSessionDir(sessionId), { recursive: true, mode: 0o700 })
   const workerId = crypto.randomUUID()
   let claimed = false
-  let child: ReturnType<typeof Bun.spawn> | undefined
   try {
     await claimBgLease(sessionId, workerId)
     claimed = true
-    await session.releasePersistence()
     await removeBgControl(sessionId)
     const log = await open(backgroundLogPath(sessionId), "w", 0o600)
+    let child: ReturnType<typeof Bun.spawn>
     try {
       child = Bun.spawn({
         cmd: selfCommand(["bg", "worker", sessionId, workerId]),
@@ -103,17 +93,7 @@ async function spawnWorker(session: AgentSession): Promise<void> {
     }
     child.unref()
   } catch (error) {
-    if (child && child.exitCode === null && child.signalCode === null) {
-      child.kill("SIGKILL")
-      await child.exited
-    }
-    if (claimed) {
-      session.reclaimPersistence()
-      if ((await readBgLease(sessionId))?.workerId !== workerId) {
-        throw new Error(`background lease changed during startup cleanup: ${describeError(error)}`, { cause: error })
-      }
-      await removeBackgroundSession(sessionId)
-    }
+    if (claimed) await removeBackgroundSession(sessionId)
     throw error
   }
 }
@@ -132,20 +112,11 @@ export async function detachSession(session: AgentSession): Promise<DetachOutcom
     await settleAsyncWork(session)
     await session.flushPersistence()
     session.disposeToolResources()
-    await spawnWorker(session)
+    await spawnWorker(session.id, session.currentWorkingDirectory)
   } catch (error) {
-    session.disposeAsyncDelivery()
-    let reason = describeError(error)
-    try {
-      await session.releasePersistence()
-    } catch (cleanup) {
-      reason += `; persistence cleanup failed: ${describeError(cleanup)}`
-    }
-    return {
-      status: "failed",
-      pending,
-      reason: `${reason}. Resume the saved session before continuing; the worker may have recorded progress.`,
-    }
+    const reason = describeError(error)
+    session.continueTurn()
+    return { status: "failed", reason }
   }
   session.disposeAsyncDelivery()
   return { status: "detached", id: session.id, pending }

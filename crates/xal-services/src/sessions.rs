@@ -3,7 +3,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value, json};
+use serde_json::{Value, json};
 
 pub mod export;
 
@@ -126,23 +126,6 @@ pub fn load(path: &Path) -> io::Result<Loaded> {
     let mut loaded = replay(&records)?;
     loaded.complete_bytes = complete_bytes;
     loaded.incomplete_tail = incomplete_tail;
-    Ok(loaded)
-}
-
-pub fn decode(text: &str) -> io::Result<Loaded> {
-    let complete = text.rfind('\n').map_or(0, |index| index + 1);
-    let records = text[..complete]
-        .lines()
-        .filter(|line| !line.is_empty())
-        .enumerate()
-        .map(|(index, line)| {
-            Record::parse(line)
-                .map_err(|error| invalid(format!("session record {}: {error}", index + 1)))
-        })
-        .collect::<io::Result<Vec<_>>>()?;
-    let mut loaded = replay(&records)?;
-    loaded.complete_bytes = complete.try_into().map_err(io::Error::other)?;
-    loaded.incomplete_tail = complete != text.len();
     Ok(loaded)
 }
 
@@ -447,10 +430,4 @@ fn optional_text(value: &Value, field: &str) -> io::Result<Option<String>> {
 
 fn invalid_json(error: serde_json::Error) -> io::Error {
     invalid(error.to_string())
-}
-
-pub fn event(kind: &str, fields: Map<String, Value>) -> Value {
-    let mut event = fields;
-    event.insert("type".into(), json!(kind));
-    json!({"type":"event","event":event})
 }

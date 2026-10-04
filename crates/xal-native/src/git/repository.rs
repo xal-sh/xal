@@ -23,13 +23,20 @@ enum RepositoryOperation {
 }
 
 pub struct RepositoryTask {
-    repository: Arc<service::Repository>,
+    workspace: String,
+    root: Arc<OnceLock<String>>,
     operation: Option<RepositoryOperation>,
 }
 
 impl RepositoryTask {
     fn top(&self) -> napi::Result<String> {
-        self.repository.root().map(str::to_owned).map_err(io_error)
+        if let Some(root) = self.root.get() {
+            return Ok(root.clone());
+        }
+        let root = repository_root(&self.workspace)?
+            .to_string_lossy()
+            .into_owned();
+        Ok(self.root.get_or_init(|| root).clone())
     }
 }
 
@@ -74,76 +81,90 @@ impl Task for RepositoryTask {
                 ready: None,
                 root: None,
                 reason: None,
-                tree: Some(self.repository.capture(&request.into()).map_err(io_error)?),
+                tree: Some(capture_tree(
+                    &self.workspace,
+                    &request.forced,
+                    request.full,
+                )?),
                 paths: None,
                 bytes: None,
                 text: None,
                 gitlinks: None,
             }),
-            RepositoryOperation::ChangedPaths(request) => Ok(NativeRepositoryOutput {
-                kind: "paths".to_owned(),
-                ready: None,
-                root: None,
-                reason: None,
-                tree: None,
-                paths: Some(
-                    self.repository
-                        .changed_paths(&request.into())
-                        .map_err(io_error)?,
-                ),
-                bytes: None,
-                text: None,
-                gitlinks: None,
-            }),
-            RepositoryOperation::IndexState(paths) => Ok(NativeRepositoryOutput {
-                kind: "bytes".to_owned(),
-                ready: None,
-                root: None,
-                reason: None,
-                tree: None,
-                paths: None,
-                bytes: Some(
-                    self.repository
-                        .index_state(&paths)
-                        .map_err(io_error)?
-                        .into(),
-                ),
-                text: None,
-                gitlinks: None,
-            }),
-            RepositoryOperation::HeadState => Ok(NativeRepositoryOutput {
-                kind: "text".to_owned(),
-                ready: None,
-                root: None,
-                reason: None,
-                tree: None,
-                paths: None,
-                bytes: None,
-                text: Some(self.repository.head_state().map_err(io_error)?),
-                gitlinks: None,
-            }),
-            RepositoryOperation::Gitlinks(request) => Ok(NativeRepositoryOutput {
-                kind: "gitlinks".to_owned(),
-                ready: None,
-                root: None,
-                reason: None,
-                tree: None,
-                paths: None,
-                bytes: None,
-                text: None,
-                gitlinks: Some(
-                    self.repository
-                        .gitlinks(&request.into())
-                        .map_err(io_error)?
-                        .into_iter()
-                        .map(Into::into)
-                        .collect(),
-                ),
-            }),
+            RepositoryOperation::ChangedPaths(request) => {
+                let top = self.top()?;
+                let output = checked_git(
+                    &top,
+                    &[
+                        "diff",
+                        "--name-only",
+                        "-z",
+                        "--no-renames",
+                        "--no-ext-diff",
+                        "--no-textconv",
+                        &request.before,
+                        &request.after,
+                        "--",
+                    ],
+                    None,
+                    None,
+                )?;
+                Ok(NativeRepositoryOutput {
+                    kind: "paths".to_owned(),
+                    ready: None,
+                    root: None,
+                    reason: None,
+                    tree: None,
+                    paths: Some(nul_paths(&output.stdout)?),
+                    bytes: None,
+                    text: None,
+                    gitlinks: None,
+                })
+            }
+            RepositoryOperation::IndexState(paths) => {
+                let top = self.top()?;
+                Ok(NativeRepositoryOutput {
+                    kind: "bytes".to_owned(),
+                    ready: None,
+                    root: None,
+                    reason: None,
+                    tree: None,
+                    paths: None,
+                    bytes: Some(index_state(&top, &paths)?.into()),
+                    text: None,
+                    gitlinks: None,
+                })
+            }
+            RepositoryOperation::HeadState => {
+                let top = self.top()?;
+                Ok(NativeRepositoryOutput {
+                    kind: "text".to_owned(),
+                    ready: None,
+                    root: None,
+                    reason: None,
+                    tree: None,
+                    paths: None,
+                    bytes: None,
+                    text: Some(head_state(&top)?),
+                    gitlinks: None,
+                })
+            }
+            RepositoryOperation::Gitlinks(request) => {
+                let top = self.top()?;
+                Ok(NativeRepositoryOutput {
+                    kind: "gitlinks".to_owned(),
+                    ready: None,
+                    root: None,
+                    reason: None,
+                    tree: None,
+                    paths: None,
+                    bytes: None,
+                    text: None,
+                    gitlinks: Some(gitlinks(&top, &request)?),
+                })
+            }
             RepositoryOperation::Apply(request) => {
-                self.repository
-                    .apply_snapshot(&request.into())
-                    .map_err(io_error)?;
+                apply_snapshot(&self.workspace, &request)?;
                 Ok(NativeRepositoryOutput {
                     kind: "applied".to_owned(),
                     ready: None,
@@ -166,16 +187,22 @@ impl Task for RepositoryTask {
 #[napi]
 pub struct NativeGitRepository {
     cwd: String,
-    repository: Arc<service::Repository>,
+    root: Arc<OnceLock<String>>,
 }
 
 #[napi]
 impl NativeGitRepository {
     #[napi(constructor, catch_unwind)]
     pub fn new(cwd: String) -> napi::Result<Self> {
+        if cwd.is_empty() {
+            return Err(Error::new(
+                Status::InvalidArg,
+                "Git repository path is required".to_owned(),
+            ));
+        }
         Ok(Self {
-            repository: Arc::new(service::Repository::new(cwd.clone()).map_err(io_error)?),
             cwd,
+            root: Arc::new(OnceLock::new()),
         })
     }
 
@@ -195,7 +222,8 @@ impl NativeGitRepository {
     #[napi(catch_unwind)]
     pub fn discover(&self) -> AsyncTask<RepositoryTask> {
         AsyncTask::new(RepositoryTask {
-            repository: self.repository.clone(),
+            workspace: self.cwd.clone(),
+            root: self.root.clone(),
             operation: Some(RepositoryOperation::Discover),
         })
     }
@@ -203,7 +231,8 @@ impl NativeGitRepository {
     #[napi(catch_unwind)]
     pub fn capture(&self, request: NativeCaptureRequest) -> AsyncTask<RepositoryTask> {
         AsyncTask::new(RepositoryTask {
-            repository: self.repository.clone(),
+            workspace: self.cwd.clone(),
+            root: self.root.clone(),
             operation: Some(RepositoryOperation::Capture(request)),
         })
     }
@@ -211,7 +240,8 @@ impl NativeGitRepository {
     #[napi(catch_unwind)]
     pub fn changed_paths(&self, request: NativeTreePairRequest) -> AsyncTask<RepositoryTask> {
         AsyncTask::new(RepositoryTask {
-            repository: self.repository.clone(),
+            workspace: self.cwd.clone(),
+            root: self.root.clone(),
             operation: Some(RepositoryOperation::ChangedPaths(request)),
         })
     }
@@ -219,7 +249,8 @@ impl NativeGitRepository {
     #[napi(catch_unwind)]
     pub fn index_state(&self, paths: Vec<String>) -> AsyncTask<RepositoryTask> {
         AsyncTask::new(RepositoryTask {
-            repository: self.repository.clone(),
+            workspace: self.cwd.clone(),
+            root: self.root.clone(),
             operation: Some(RepositoryOperation::IndexState(paths)),
         })
     }
@@ -227,7 +258,8 @@ impl NativeGitRepository {
     #[napi(catch_unwind)]
     pub fn head_state(&self) -> AsyncTask<RepositoryTask> {
         AsyncTask::new(RepositoryTask {
-            repository: self.repository.clone(),
+            workspace: self.cwd.clone(),
+            root: self.root.clone(),
             operation: Some(RepositoryOperation::HeadState),
         })
     }
@@ -235,7 +267,8 @@ impl NativeGitRepository {
     #[napi(catch_unwind)]
     pub fn gitlinks(&self, request: NativeGitlinksRequest) -> AsyncTask<RepositoryTask> {
         AsyncTask::new(RepositoryTask {
-            repository: self.repository.clone(),
+            workspace: self.cwd.clone(),
+            root: self.root.clone(),
             operation: Some(RepositoryOperation::Gitlinks(request)),
         })
     }
@@ -243,7 +276,8 @@ impl NativeGitRepository {
     #[napi(catch_unwind)]
     pub fn apply_snapshot(&self, request: NativeApplySnapshotRequest) -> AsyncTask<RepositoryTask> {
         AsyncTask::new(RepositoryTask {
-            repository: self.repository.clone(),
+            workspace: self.cwd.clone(),
+            root: self.root.clone(),
             operation: Some(RepositoryOperation::Apply(request)),
         })
     }

@@ -1,0 +1,18 @@
+{
+  "session": {
+    "requests": 2,
+    "totalTokens": 170,
+    "totalInputTokens": 160,
+    "cacheReadInputTokens": 50,
+    "cacheWriteInputTokens": 10,
+    "outputTokens": 10
+  },
+  "allTime": {
+    "requests": 3,
+    "totalTokens": 220,
+    "totalInputTokens": 210,
+    "cacheReadInputTokens": 50,
+    "cacheWriteInputTokens": 10,
+    "outputTokens": 10
+  }
+}

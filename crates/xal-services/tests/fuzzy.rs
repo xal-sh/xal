@@ -1,7 +1,7 @@
 use std::fs;
 use std::sync::{Arc, atomic::AtomicBool};
 
-use xal_services::fuzzy::{PathRanker, create_workspace_index};
+use xal_services::fuzzy::create_workspace_index;
 use xal_services::tool_contracts::ToolOutcomeKind;
 
 #[test]
@@ -64,10 +64,6 @@ fn fuzzy_workspace_filters_ignored_secret_and_unsafe_paths_with_stable_bounds() 
     let filtered = index.search("".into(), cancel).compute().unwrap().paths;
     assert_eq!(filtered.len(), 20);
     assert!(!filtered.iter().any(|path| path.starts_with("entry-0")));
-    assert_eq!(
-        PathRanker::new(vec!["src/test.rs".into(), "test.rs".into()]).rank("test.rs".into(), 1),
-        ["src/test.rs"]
-    );
     let cancelled = Arc::new(AtomicBool::new(true));
     assert_eq!(
         index

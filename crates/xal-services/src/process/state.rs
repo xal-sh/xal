@@ -20,8 +20,6 @@ pub(crate) struct ProcessState {
     reader_error: Mutex<Option<String>>,
     termination: Mutex<Option<ProcessTermination>>,
     terminated: Condvar,
-    deadline: Mutex<Option<Instant>>,
-    timed_out: AtomicBool,
     #[cfg(unix)]
     pid: u32,
     #[cfg(windows)]
@@ -106,14 +104,6 @@ fn signal_name(_status: &std::process::ExitStatus) -> Option<String> {
 
 fn watch_process(state: Arc<ProcessState>) {
     let status = loop {
-        let timed_out = lock(&state.deadline).is_some_and(|deadline| Instant::now() >= deadline);
-        if timed_out {
-            *lock(&state.deadline) = None;
-            state
-                .timed_out
-                .store(true, std::sync::atomic::Ordering::Relaxed);
-            signal_process_tree(&state, true);
-        }
         let result = {
             let mut child = lock(&state.child);
             let Some(child) = child.as_mut() else {
@@ -265,8 +255,6 @@ pub(crate) fn spawn_process(request: ProcessRequest) -> std::io::Result<Arc<Proc
         reader_error: Mutex::new(None),
         termination: Mutex::new(None),
         terminated: Condvar::new(),
-        deadline: Mutex::new(None),
-        timed_out: AtomicBool::new(false),
     });
     let stdout_state = state.clone();
     thread::spawn(move || read_stream(stdout_state, stdout));
@@ -311,18 +299,6 @@ pub(crate) fn process_write(state: &ProcessState, bytes: &[u8]) -> std::io::Resu
     stdin
         .flush()
         .map_err(|error| Error::other(error.to_string()))
-}
-
-pub(super) fn process_set_timeout(state: &ProcessState, milliseconds: u32) {
-    *lock(&state.deadline) = Some(Instant::now() + Duration::from_millis(u64::from(milliseconds)));
-}
-
-pub(super) fn process_clear_timeout(state: &ProcessState) {
-    *lock(&state.deadline) = None;
-}
-
-pub(super) fn process_timed_out(state: &ProcessState) -> bool {
-    state.timed_out.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 pub(crate) fn process_signal(state: &ProcessState, force: bool) {

@@ -16,8 +16,7 @@ mod content;
 mod fetch;
 mod security;
 
-pub use content::html_to_markdown;
-use content::{binary_type, charset};
+use content::{binary_type, charset, html_to_markdown};
 pub use fetch::{FetchRequest, fetch};
 use security::resolve_target;
 

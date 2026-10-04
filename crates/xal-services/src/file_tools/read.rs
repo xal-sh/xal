@@ -14,10 +14,6 @@ pub struct ReadTask {
 }
 
 impl ReadTask {
-    pub fn compute(&mut self) -> std::io::Result<FileToolOutput> {
-        self.compute_with_cancel(&|| false)
-    }
-
     pub fn compute_with_cancel(
         &mut self,
         cancelled: &dyn Fn() -> bool,
@@ -175,7 +171,9 @@ mod tests {
             offset: 1,
             limit: 2000,
         };
-        let output = task.compute().expect("read should succeed");
+        let output = task
+            .compute_with_cancel(&|| false)
+            .expect("read should succeed");
         fs::remove_file(&path).ok();
         output.content_hash
     }
@@ -203,7 +201,7 @@ mod tests {
             calls.get() > 3
         });
         assert!(matches!(result, Err(error) if error.kind() == std::io::ErrorKind::Interrupted));
-        let result = task.compute().unwrap();
+        let result = task.compute_with_cancel(&|| false).unwrap();
         assert_eq!(
             result.content_hash,
             super::content_hash(contents.as_bytes())

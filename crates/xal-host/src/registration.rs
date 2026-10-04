@@ -24,7 +24,6 @@ pub struct Registration {
     pub(crate) policies: BTreeMap<String, Handler<PermissionRequest, PolicyDecision>>,
     pub(crate) ui: BTreeMap<String, Handler<UiContribution, String>>,
     pub(crate) warnings: Vec<String>,
-    pub(crate) prompts: BTreeMap<String, String>,
     pub(crate) subscriptions: Vec<Sender<Event>>,
     pub(crate) disposers: Vec<Disposer>,
     pub(crate) session_disposers: Vec<Handler<(), ()>>,
@@ -46,7 +45,6 @@ impl Registration {
             policies: BTreeMap::new(),
             ui: BTreeMap::new(),
             warnings: Vec::new(),
-            prompts: BTreeMap::new(),
             subscriptions: Vec::new(),
             disposers: Vec::new(),
             session_disposers: Vec::new(),
@@ -105,11 +103,7 @@ impl Registration {
 
     pub fn prompt_source(&mut self, name: &str, source: PromptSource) -> Result<()> {
         self.cancellation.check()?;
-        check_name(
-            name,
-            self.prompts.contains_key(name)
-                || self.prompt_sources.iter().any(|(key, _)| key == name),
-        )?;
+        check_name(name, self.prompt_sources.iter().any(|(key, _)| key == name))?;
         self.prompt_sources.push((name.into(), source));
         Ok(())
     }
@@ -158,12 +152,6 @@ impl Registration {
         self.cancellation.check()?;
         self.warnings.push(message);
         Ok(())
-    }
-
-    pub fn prompt(&mut self, name: &str, text: String) -> Result<()> {
-        self.cancellation.check()?;
-        check_name(name, self.prompt_sources.iter().any(|(key, _)| key == name))?;
-        insert(&mut self.prompts, name, text)
     }
 
     pub fn subscribe(&mut self, capacity: usize) -> Result<Receiver<Event>> {
@@ -234,11 +222,6 @@ impl Registration {
                     .map(|name| ("policy".into(), name.clone())),
             )
             .chain(self.ui.keys().map(|name| ("ui".into(), name.clone())))
-            .chain(
-                self.prompts
-                    .keys()
-                    .map(|name| ("prompt".into(), name.clone())),
-            )
             .collect()
     }
 
@@ -262,7 +245,6 @@ impl Registration {
         self.policies.clear();
         self.ui.clear();
         self.warnings.clear();
-        self.prompts.clear();
         self.subscriptions.clear();
         self.session_disposers.clear();
     }

@@ -98,25 +98,6 @@ pub fn task_prepare(value: &Value) -> io::Result<Value> {
     Ok(json!({ "context": context, "tasks": tasks }))
 }
 
-pub fn task_context(value: &Value) -> io::Result<Value> {
-    let request = object(value)?;
-    let mut complete = request.clone();
-    complete.insert(
-        "tasks".to_owned(),
-        json!([{ "task": "validation", "access": "read" }]),
-    );
-    let prepared = task_prepare(&Value::Object(complete))?;
-    Ok(json!({ "context": prepared.get("context").cloned().unwrap_or(Value::Null) }))
-}
-
-pub fn task_items(value: &Value) -> io::Result<Value> {
-    let request = object(value)?;
-    let mut complete = request.clone();
-    complete.insert("context".to_owned(), json!("validation"));
-    let prepared = task_prepare(&Value::Object(complete))?;
-    Ok(json!({ "tasks": prepared.get("tasks").cloned().unwrap_or(Value::Null) }))
-}
-
 pub fn task_finalize(value: &Value) -> io::Result<Value> {
     let request = object(value)?;
     let jobs = request
@@ -141,21 +122,18 @@ pub fn task_finalize(value: &Value) -> io::Result<Value> {
 
 #[cfg(test)]
 mod tests {
-    use super::{run, task_finalize, task_prepare};
+    use super::{task_finalize, task_prepare};
+    use serde_json::json;
 
     #[test]
     fn validates_and_formats_tasks() {
-        let prepared = run(
-            r#"{"context":" goal ","tasks":[{"task":" work ","access":"read"}]}"#.to_owned(),
-            task_prepare,
-        )
-        .unwrap();
-        assert!(prepared.contains("\"context\":\"goal\""));
-        let output = run(
-            r#"{"jobs":[{"id":"agent-1","access":"read","isolation":"shared"}]}"#.to_owned(),
-            task_finalize,
-        )
-        .unwrap();
-        assert!(output.contains("Spawned 1 background agent"));
+        let prepared =
+            task_prepare(&json!({"context":" goal ","tasks":[{"task":" work ","access":"read"}]}))
+                .unwrap();
+        assert_eq!(prepared["context"], "goal");
+        let output =
+            task_finalize(&json!({"jobs":[{"id":"agent-1","access":"read","isolation":"shared"}]}))
+                .unwrap();
+        assert!(output.to_string().contains("Spawned 1 background agent"));
     }
 }

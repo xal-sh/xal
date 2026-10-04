@@ -209,7 +209,6 @@ class WorkerDriver {
     }
     this.touch({ status: terminal, activity: terminal.replaceAll("_", " "), detail: terminalDetail })
     await this.writes
-    await this.session.releasePersistence()
     await releaseBgLease(this.state.sessionId, this.state.workerId)
     this.resolveDone?.()
   }
@@ -240,7 +239,7 @@ export async function runBackgroundWorker(
 
   const setup = await createSession({ persist: true, interactive: true, deferInteractiveTools: true })
   const session = setup.session
-  const notices = await resumeSession(session, summary, { backgroundWorkerId: workerId, deferGoalResume: true })
+  const notices = await resumeSession(session, summary, { backgroundWorkerId: workerId })
   for (const notice of notices) ctx.print(JSON.stringify({ type: "error", message: notice }))
 
   const driver = new WorkerDriver(session, summary, workerId, ctx.print)

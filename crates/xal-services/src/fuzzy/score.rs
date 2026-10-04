@@ -1,14 +1,5 @@
 use super::*;
 
-pub struct FuzzyField {
-    pub text: String,
-    pub weight: f64,
-}
-
-pub struct FuzzyCandidate {
-    pub fields: Vec<FuzzyField>,
-}
-
 #[derive(Clone)]
 pub(super) struct Compact {
     chars: Vec<u16>,
@@ -135,16 +126,6 @@ fn score_term(term: &[u16], candidate: &Compact) -> Option<f64> {
     Some(score)
 }
 
-fn prepare(fields: Vec<FuzzyField>) -> Vec<PreparedField> {
-    fields
-        .into_iter()
-        .map(|field| PreparedField {
-            compact: compact(&field.text),
-            weight: field.weight,
-        })
-        .collect()
-}
-
 pub(super) fn score_terms(query_terms: &[Vec<u16>], fields: &[PreparedField]) -> Option<f64> {
     if query_terms.is_empty() {
         return Some(0.0);
@@ -160,30 +141,20 @@ pub(super) fn score_terms(query_terms: &[Vec<u16>], fields: &[PreparedField]) ->
     Some(total)
 }
 
-pub fn batch_scores(query: String, candidates: Vec<FuzzyCandidate>) -> Vec<f64> {
-    let query_terms = terms(&query);
-    candidates
-        .into_iter()
-        .map(|candidate| score_terms(&query_terms, &prepare(candidate.fields)).unwrap_or(f64::NAN))
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{FuzzyField, compact, prepare, score_terms, terms};
+    use super::{PreparedField, compact, score_terms, terms};
 
     fn score(query: &str, fields: Vec<(&str, f64)>) -> Option<f64> {
         score_terms(
             &terms(query),
-            &prepare(
-                fields
-                    .into_iter()
-                    .map(|(text, weight)| FuzzyField {
-                        text: text.to_owned(),
-                        weight,
-                    })
-                    .collect(),
-            ),
+            &fields
+                .into_iter()
+                .map(|(text, weight)| PreparedField {
+                    compact: compact(text),
+                    weight,
+                })
+                .collect::<Vec<_>>(),
         )
     }
 

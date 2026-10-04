@@ -30,63 +30,85 @@ pub struct NativeWorktreeToolFormatRequest {
 pub fn native_prepare_worktree_tool(
     request: NativeWorktreeToolRequest,
 ) -> napi::Result<NativeWorktreeToolPreparation> {
-    let prepared = service::WorktreeTool::prepare(
-        &request.operation,
-        request.name.as_deref(),
-        request.action.as_deref(),
-        request.path.as_deref(),
-        request.force.unwrap_or(false),
-    )
-    .map_err(io_error)?;
-    let (name, action, path, force) = match prepared {
-        service::WorktreeTool::Enter { name } => (Some(name), None, None, false),
-        service::WorktreeTool::Exit { action, force } => (
-            None,
-            Some(
-                match action {
-                    service::WorktreeAction::Keep => "keep",
-                    service::WorktreeAction::Remove => "remove",
-                }
-                .to_owned(),
-            ),
-            None,
-            force,
-        ),
-        service::WorktreeTool::Remove { path, force } => (None, None, Some(path), force),
-    };
-    Ok(NativeWorktreeToolPreparation {
-        operation: request.operation,
-        name,
-        action,
-        path,
-        force,
-    })
+    match request.operation.as_str() {
+        "enter" => {
+            let name = request.name.as_deref().map(str::trim).unwrap_or("");
+            if name.is_empty() {
+                return Err(failed("name is required"));
+            }
+            if name.encode_utf16().count() > 80 {
+                return Err(failed("name must be at most 80 characters"));
+            }
+            Ok(NativeWorktreeToolPreparation {
+                operation: request.operation,
+                name: Some(name.to_owned()),
+                action: None,
+                path: None,
+                force: false,
+            })
+        }
+        "exit" => {
+            let action = request.action.as_deref().unwrap_or("");
+            if action != "keep" && action != "remove" {
+                return Err(failed("action must be \"keep\" or \"remove\""));
+            }
+            let force = request.force.unwrap_or(false);
+            if action == "keep" && force {
+                return Err(failed("force is valid only when removing a worktree"));
+            }
+            Ok(NativeWorktreeToolPreparation {
+                operation: request.operation,
+                name: None,
+                action: Some(action.to_owned()),
+                path: None,
+                force,
+            })
+        }
+        "remove" => {
+            let path = request.path.as_deref().map(str::trim).unwrap_or("");
+            if path.is_empty() {
+                return Err(failed("path is required"));
+            }
+            Ok(NativeWorktreeToolPreparation {
+                operation: request.operation,
+                name: None,
+                action: None,
+                path: Some(path.to_owned()),
+                force: request.force.unwrap_or(false),
+            })
+        }
+        _ => Err(failed("native worktree tool operation is invalid")),
+    }
 }
 
 #[napi(js_name = "nativeFormatWorktreeTool", catch_unwind)]
 pub fn native_format_worktree_tool(
     request: NativeWorktreeToolFormatRequest,
 ) -> napi::Result<NativeToolOutput> {
-    let tool = service::WorktreeTool::prepare(
-        &request.operation,
-        Some("worktree"),
-        request.action.as_deref(),
-        Some("worktree"),
-        false,
-    )
-    .map_err(|_| {
-        napi::Error::new(
-            napi::Status::GenericFailure,
-            "native worktree tool format request is invalid",
-        )
-    })?;
+    let output = match request.operation.as_str() {
+        "enter" => [
+            format!("Entered isolated worktree {}.", request.display_path),
+            format!("Branch: {}", request.worktree.branch),
+            format!("Base: {}", request.worktree.base_commit),
+            "Task agents now inherit this worktree.".to_owned(),
+        ]
+        .join("\n"),
+        "exit" if request.action.as_deref() == Some("keep") => format!(
+            "Left {} intact on branch {}.",
+            request.display_path, request.worktree.branch
+        ),
+        "exit" if request.action.as_deref() == Some("remove") => format!(
+            "Removed {}. Branch {} remains available.",
+            request.display_path, request.worktree.branch
+        ),
+        "remove" => format!(
+            "Removed {}. Branch {} remains available.",
+            request.display_path, request.worktree.branch
+        ),
+        _ => return Err(failed("native worktree tool format request is invalid")),
+    };
     Ok(NativeToolOutput {
-        output: service::format_worktree_tool(
-            &tool,
-            &request.display_path,
-            &request.worktree.into(),
-        )
-        .into(),
+        output: output.into(),
     })
 }
 

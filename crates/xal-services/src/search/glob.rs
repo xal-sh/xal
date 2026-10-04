@@ -4,7 +4,6 @@ pub struct GlobOptions {
     pub cwd: String,
     pub target: Option<String>,
     pub pattern: Option<String>,
-    pub aborted: Option<bool>,
 }
 struct GlobMatch {
     modified: SystemTime,
@@ -25,9 +24,6 @@ pub struct GlobTask {
 
 impl GlobTask {
     pub fn compute(&mut self) -> std::io::Result<SearchResult> {
-        if self.options.aborted.unwrap_or(false) {
-            return Ok(search_result(ToolOutcomeKind::Interrupted));
-        }
         let deadline = Instant::now() + SEARCH_TIMEOUT;
         let cwd = PathBuf::from(&self.options.cwd);
         let root = absolute_target(&cwd, self.options.target.as_deref());

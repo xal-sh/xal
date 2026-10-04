@@ -42,8 +42,7 @@ pub(super) async fn await_response(
     }
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Clone, Debug)]
 pub struct ToolCallRequest {
     pub server: String,
     pub name: String,

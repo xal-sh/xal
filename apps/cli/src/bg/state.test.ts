@@ -4,9 +4,6 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { appEnvVar, appInfo } from "../app-info"
 import { backgroundSessionDir } from "../config/paths"
-import { createNativeSessionLock } from "../native"
-import { stopBackgroundWorker, takeOverBackgroundSession } from "./attach"
-import { loadSession } from "../sessions/store"
 import {
   assertBgLease,
   backgroundStatePath,
@@ -46,7 +43,7 @@ function state(sessionId: string, pid: number, overrides: Partial<BgState> = {})
     version: 1,
     appVersion: appInfo.version,
     sessionId,
-    sessionPath: join(backgroundSessionDir(sessionId), "..", "..", `${sessionId}.jsonl`),
+    sessionPath: `/sessions/${sessionId}.jsonl`,
     cwd: "/workspace",
     log: `/logs/${sessionId}.log`,
     pid,
@@ -147,13 +144,6 @@ test("clears only sessions whose worker is no longer running", async () => {
     await expect(clearBackgroundSessions("alive")).rejects.toThrow("is still running; stop it first")
     await expect(clearBackgroundSessions("missing")).rejects.toThrow("no background session matches missing")
 
-    const owner = createNativeSessionLock(state("gone", 1).sessionPath)
-    try {
-      await expect(clearBackgroundSessions("gone")).rejects.toThrow("transcript owner")
-      expect(await readBgState("gone")).toBeDefined()
-    } finally {
-      owner.close()
-    }
     expect(await clearBackgroundSessions()).toEqual(["gone"])
     expect((await listBackgroundSessions()).map((view) => view.state.sessionId)).toEqual(["alive"])
   })
@@ -163,96 +153,4 @@ test("refuses a background session id that would escape its directory", () => {
   for (const id of ["..", ".", "", "../escape", "nested/id"]) {
     expect(() => backgroundSessionDir(id)).toThrow("invalid background session id")
   }
-})
-
-test("takeover uses the recorded external journal path and refuses another transcript owner", async () => {
-  await withAgentHome(async () => {
-    const saved = state("external", await deadPid(), { status: "done" })
-    const messageId = crypto.randomUUID()
-    await mkdir(backgroundSessionDir(saved.sessionId), { recursive: true })
-    await writeFile(
-      saved.sessionPath,
-      [
-        {
-          type: "meta",
-          meta: {
-            version: 2,
-            id: saved.sessionId,
-            cwd: saved.cwd,
-            provider: "fixture",
-            profile: "fixture",
-            model: "fixture",
-            mode: "normal",
-            startedAt: 1,
-          },
-        },
-        { type: "event", event: { type: "user_message", messageId, text: "fixture", imageCount: 0 } },
-        { type: "item", item: { type: "user_message", messageId, text: "fixture", images: [] } },
-      ]
-        .map((value) => JSON.stringify(value) + "\n")
-        .join(""),
-    )
-    await writeBgState(saved)
-    const owner = createNativeSessionLock(saved.sessionPath)
-    try {
-      await expect(takeOverBackgroundSession(saved.sessionId)).rejects.toThrow("transcript owner")
-      await writeBgState({ ...saved, status: "needs_input" })
-      await expect(
-        stopBackgroundWorker({ state: { ...saved, status: "needs_input" }, alive: false, effective: "needs_input" }),
-      ).rejects.toThrow("transcript owner")
-      expect(await readBgState(saved.sessionId)).toBeDefined()
-    } finally {
-      owner.close()
-    }
-    await writeBgState(saved)
-    const outcome = await takeOverBackgroundSession(saved.sessionId)
-    expect(outcome.summary.path).toBe(saved.sessionPath)
-    expect(outcome.continueWork).toBe(false)
-    expect(await readBgState(saved.sessionId)).toBeUndefined()
-  })
-})
-
-test("stop persists denial before recovering a dead needs-input worker lease", async () => {
-  await withAgentHome(async () => {
-    const saved = state("waiting", await deadPid(), { status: "needs_input" })
-    await mkdir(backgroundSessionDir(saved.sessionId), { recursive: true })
-    await writeFile(
-      saved.sessionPath,
-      [
-        {
-          type: "meta",
-          meta: {
-            version: 2,
-            id: saved.sessionId,
-            cwd: saved.cwd,
-            provider: "fixture",
-            profile: "fixture",
-            model: "fixture",
-            mode: "normal",
-            startedAt: 1,
-          },
-        },
-        {
-          type: "item",
-          item: {
-            type: "tool_call",
-            callId: "pending",
-            name: "write",
-            args: { file_path: "untouched", content: "must not run" },
-          },
-        },
-      ]
-        .map((value) => JSON.stringify(value) + "\n")
-        .join(""),
-    )
-    await writeBgState(saved)
-    await claimBgLease(saved.sessionId, saved.workerId)
-    expect(await stopBackgroundWorker({ state: saved, alive: false, effective: "needs_input" })).toBe("stopped")
-    expect((await readBgState(saved.sessionId))?.status).toBe("stopped")
-    expect(await readBgLease(saved.sessionId)).toBeUndefined()
-    expect((await loadSession(saved.sessionPath))?.items.at(-1)).toMatchObject({
-      type: "tool_result",
-      callId: "pending",
-    })
-  })
 })

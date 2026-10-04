@@ -53,12 +53,12 @@ fn rank_workspace(
     query: &str,
     entries: &[WorkspaceEntry],
     limit: usize,
-    cancelled: Option<&AtomicBool>,
+    cancelled: &AtomicBool,
 ) -> Option<Vec<String>> {
     let query_terms = terms(query);
     let mut matches = Vec::<(f64, String)>::new();
     for entry in entries {
-        if cancelled.is_some_and(|cancelled| cancelled.load(Ordering::Relaxed)) {
+        if cancelled.load(Ordering::Relaxed) {
             return None;
         }
         let Some(score) = score_terms(&query_terms, &entry.fields) else {
@@ -74,22 +74,6 @@ fn rank_workspace(
         }
     }
     Some(matches.into_iter().map(|(_, path)| path).collect())
-}
-
-pub struct PathRanker {
-    entries: Vec<WorkspaceEntry>,
-}
-
-impl PathRanker {
-    pub fn new(paths: Vec<String>) -> Self {
-        Self {
-            entries: paths.into_iter().map(workspace_entry).collect(),
-        }
-    }
-
-    pub fn rank(&self, query: String, limit: u32) -> Vec<String> {
-        rank_workspace(&query, &self.entries, limit as usize, None).unwrap_or_default()
-    }
 }
 
 pub struct WorkspaceIndex {
@@ -197,7 +181,7 @@ impl WorkspaceSearchTask {
             &self.query,
             &self.entries,
             WORKSPACE_RESULT_LIMIT,
-            Some(&self.cancelled),
+            &self.cancelled,
         ) else {
             return Ok(WorkspaceSearchResult {
                 kind: ToolOutcomeKind::Interrupted,

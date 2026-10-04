@@ -193,7 +193,6 @@ async function nativeInputs(target: NativeTarget, portable: boolean): Promise<Na
     join(ROOT, "scripts/native/targets.ts"),
     ...(await cargoManifests(join(ROOT, "crates"))),
     ...(await rustSourceFiles(join(ROOT, "crates/xal-native"))),
-    ...(await rustSourceFiles(join(ROOT, "crates/xal-services"))),
     toolchain.path,
   ]
   const sourceHash = await hashFiles(sourcePaths)

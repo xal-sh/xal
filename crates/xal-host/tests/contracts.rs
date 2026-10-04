@@ -86,14 +86,12 @@ impl Plugin for Capabilities {
                 })
             }),
         )?;
-        registration.prompt("instructions", "read only".into())?;
         registration.ui(
-            "plain",
+            "text",
             Box::new(|contribution, _| {
                 Box::pin(async move {
                     Ok(match contribution {
                         UiContribution::Text { text } => text,
-                        UiContribution::Status { label, value } => format!("{label}: {value}"),
                         UiContribution::Tool { name, output } => format!("{name}: {output}"),
                     })
                 })
@@ -149,7 +147,6 @@ async fn all_capabilities_are_staged_and_failed_owner_loses_subscriptions_and_re
     assert!(disposed.load(Ordering::Acquire));
     let mut receiver = receiver.lock().unwrap().take().unwrap();
     assert_eq!(receiver.recv().await, Err(Error::Cancelled));
-    assert!(host.prompts().unwrap().is_empty());
     let session = host
         .session("s".into(), ".".into(), SessionKind::Headless, true)
         .unwrap();
@@ -159,7 +156,7 @@ async fn all_capabilities_are_staged_and_failed_owner_loses_subscriptions_and_re
             .is_err()
     );
     assert!(
-        host.render("plain", UiContribution::Text { text: "x".into() }, &session)
+        host.render("text", UiContribution::Text { text: "x".into() }, &session)
             .await
             .is_err()
     );
@@ -192,8 +189,11 @@ async fn policies_cannot_override_denials_or_read_only_and_hooks_run_before_poli
             PolicyDecision::Allow => {
                 assert_eq!(output.unwrap().output, "rewritten");
                 assert!(
-                    host.publish(Event::SessionStarted { id: "full".into() })
-                        .is_err()
+                    host.publish(Event::ProviderFinished {
+                        session: "s".into(),
+                        provider: "full".into()
+                    })
+                    .is_err()
                 );
                 let mut events = receiver.lock().unwrap().take().unwrap();
                 assert!(matches!(
@@ -236,7 +236,7 @@ async fn provider_stream_backpressure_cancellation_and_session_isolation() {
     let (sender, mut stream) = channel(1, session.cancellation.clone()).unwrap();
     let request = ProviderRequest {
         model: "local".into(),
-        instructions: host.prompts().unwrap().join("\n"),
+        instructions: String::new(),
         input: vec![Item::user("hello".into())],
         profile: None,
         tools: Vec::new(),

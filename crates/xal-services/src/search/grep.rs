@@ -7,7 +7,6 @@ pub struct GrepOptions {
     pub pattern: Option<String>,
     pub output_mode: Option<String>,
     pub case_insensitive: Option<bool>,
-    pub aborted: Option<bool>,
 }
 enum SearchFile {
     Bytes(Vec<u8>),
@@ -67,9 +66,6 @@ pub struct GrepTask {
 
 impl GrepTask {
     pub fn compute(&mut self) -> std::io::Result<SearchResult> {
-        if self.options.aborted.unwrap_or(false) {
-            return Ok(search_result(ToolOutcomeKind::Interrupted));
-        }
         let deadline = Instant::now() + SEARCH_TIMEOUT;
         let cwd = PathBuf::from(&self.options.cwd);
         let root = absolute_target(&cwd, self.options.target.as_deref());

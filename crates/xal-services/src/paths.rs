@@ -11,10 +11,6 @@ pub struct Paths {
 }
 
 impl Paths {
-    pub fn credentials(&self) -> PathBuf {
-        self.home.join("credentials.json")
-    }
-
     pub fn background_session(&self, id: &str) -> io::Result<PathBuf> {
         if id.is_empty() || id == "." || id == ".." || id.contains(['/', '\\', ':', '\0']) {
             return Err(invalid("invalid background session ID"));

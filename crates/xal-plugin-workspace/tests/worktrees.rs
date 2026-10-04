@@ -82,7 +82,6 @@ impl Fixture {
             name: Some("side".into()),
             worktree: None,
             force: None,
-            aborted: None,
         }
     }
 }

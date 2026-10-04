@@ -1,142 +1,66 @@
-use std::path::Path;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+#![cfg_attr(test, allow(dead_code))]
+
+use std::collections::{HashMap, HashSet};
+use std::fs;
+use std::io::{BufRead, BufReader, Read, Write};
+use std::path::{Path, PathBuf};
+use std::process::{Child, ChildStdin, Command, Stdio};
+use std::sync::{Arc, Mutex, MutexGuard, mpsc};
+use std::thread;
+use std::time::{Duration, Instant};
 
 use napi::bindgen_prelude::{AbortSignal, AsyncTask};
 use napi::{Env, Error, Status, Task};
 use napi_derive::napi;
-use xal_services::lsp::{Manager, Query};
+use serde::Deserialize;
+use serde_json::{Map, Value, json};
 
 use crate::tool_contracts::cancellation_flag;
 
-fn native_error(error: std::io::Error) -> Error {
-    Error::new(
-        if error.kind() == std::io::ErrorKind::InvalidInput {
-            Status::InvalidArg
-        } else {
-            Status::GenericFailure
-        },
-        error.to_string(),
-    )
+const MAX_HEADER_BYTES: usize = 8 * 1024;
+const MAX_CONTENT_BYTES: usize = 16 * 1024 * 1024;
+const STDERR_LIMIT: usize = 16 * 1024;
+const STDERR_DISPLAY_LIMIT: usize = 500;
+const MAX_ITEMS: usize = 250;
+
+fn lock<'a, T>(mutex: &'a Mutex<T>) -> MutexGuard<'a, T> {
+    mutex
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
-#[napi]
-pub struct NativeLspManager {
-    manager: Arc<Manager>,
+fn invalid(message: impl Into<String>) -> Error {
+    Error::new(Status::InvalidArg, message.into())
 }
 
-pub struct QueryTask {
-    manager: Arc<Manager>,
-    request: String,
-    cwd: String,
-    cancelled: Arc<AtomicBool>,
+fn failed(message: impl Into<String>) -> Error {
+    Error::new(Status::GenericFailure, message.into())
 }
 
-impl Task for QueryTask {
-    type Output = String;
-    type JsValue = String;
-
-    fn compute(&mut self) -> napi::Result<String> {
-        let query: Query = serde_json::from_str(&self.request).map_err(|error| {
-            Error::new(
-                Status::InvalidArg,
-                format!("invalid native LSP request: {error}"),
-            )
-        })?;
-        self.manager
-            .query(&query, Path::new(&self.cwd), &|| {
-                self.cancelled.load(Ordering::Acquire)
-            })
-            .map_err(native_error)
+fn cancelled(cancelled: &std::sync::atomic::AtomicBool) -> napi::Result<()> {
+    if cancelled.load(std::sync::atomic::Ordering::Relaxed) {
+        return Err(failed("LSP operation was cancelled"));
     }
-
-    fn resolve(&mut self, _env: Env, output: String) -> napi::Result<String> {
-        Ok(output)
-    }
+    Ok(())
 }
 
-pub struct ActionTask {
-    manager: Arc<Manager>,
-    action: Action,
-}
+mod client;
+mod config;
+mod format;
+mod manager;
+mod query;
+mod transport;
 
-enum Action {
-    Restart(Option<String>),
-    Close,
-}
-
-impl Task for ActionTask {
-    type Output = ();
-    type JsValue = ();
-
-    fn compute(&mut self) -> napi::Result<()> {
-        match &self.action {
-            Action::Restart(server) => self.manager.restart(server.as_deref()),
-            Action::Close => self.manager.close(),
-        }
-        .map_err(native_error)
-    }
-
-    fn resolve(&mut self, _env: Env, _output: ()) -> napi::Result<()> {
-        Ok(())
-    }
-}
-
-#[napi]
-impl NativeLspManager {
-    #[napi(constructor, catch_unwind)]
-    pub fn new(definitions: String, app_name: String, app_version: String) -> napi::Result<Self> {
-        let definitions = serde_json::from_str(&definitions).map_err(|error| {
-            Error::new(
-                Status::InvalidArg,
-                format!("invalid native LSP configuration: {error}"),
-            )
-        })?;
-        Ok(Self {
-            manager: Arc::new(
-                Manager::new(definitions, app_name, app_version).map_err(native_error)?,
-            ),
-        })
-    }
-
-    #[napi(catch_unwind)]
-    pub fn has_available_server(&self, cwd: String) -> bool {
-        self.manager.has_available_server(Path::new(&cwd))
-    }
-
-    #[napi(catch_unwind)]
-    pub fn status_lines(&self, cwd: String) -> Vec<String> {
-        self.manager.status_lines(Path::new(&cwd))
-    }
-
-    #[napi(catch_unwind)]
-    pub fn query(
-        &self,
-        request: String,
-        cwd: String,
-        signal: Option<AbortSignal>,
-    ) -> AsyncTask<QueryTask> {
-        AsyncTask::new(QueryTask {
-            manager: self.manager.clone(),
-            request,
-            cwd,
-            cancelled: cancellation_flag(signal),
-        })
-    }
-
-    #[napi(catch_unwind)]
-    pub fn restart(&self, server: Option<String>) -> AsyncTask<ActionTask> {
-        AsyncTask::new(ActionTask {
-            manager: self.manager.clone(),
-            action: Action::Restart(server),
-        })
-    }
-
-    #[napi(catch_unwind)]
-    pub fn close(&self) -> AsyncTask<ActionTask> {
-        AsyncTask::new(ActionTask {
-            manager: self.manager.clone(),
-            action: Action::Close,
-        })
-    }
-}
+use client::RpcClient;
+use config::{
+    ServerConfig, ServerDefinition, client_key, environment, executable, match_server,
+    may_resolve_from_another_root, server_root, unavailable_reason,
+};
+use format::{
+    first_item, format_calls, format_diagnostics, format_hover, format_locations, format_symbols,
+};
+use manager::ManagerState;
+use query::manager_query;
+use transport::{
+    file_uri, json_id, read_messages, read_stderr, terminate_process_tree, uri_path, write_message,
+};

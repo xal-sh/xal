@@ -584,27 +584,6 @@ impl Host {
         Err(Error::Failed(format!("unknown provider: {name}")))
     }
 
-    pub async fn decide(
-        &self,
-        name: &str,
-        request: DecisionRequest,
-        session: &Session,
-    ) -> Result<DecisionResponse> {
-        if name == "typesafe" {
-            return self
-                .decision_service()?
-                .ok_or_else(|| Error::Failed("TypeSafe AI is off".into()))?
-                .evaluate(request, session)
-                .await;
-        }
-        for entry in self.ready() {
-            if let Some(handler) = entry.registration.decisions.get(name) {
-                return self.call(entry, handler, request, session).await;
-            }
-        }
-        Err(Error::Failed(format!("unknown decision provider: {name}")))
-    }
-
     pub fn warnings(&self) -> Vec<&str> {
         self.ready()
             .flat_map(|entry| entry.registration.warnings.iter().map(String::as_str))
@@ -640,20 +619,11 @@ impl Host {
         Err(Error::Failed(format!("unknown UI: {name}")))
     }
 
-    pub fn prompts(&self) -> Result<Vec<&str>> {
-        self.check()?;
-        Ok(self
-            .ready()
-            .flat_map(|entry| entry.registration.prompts.values().map(String::as_str))
-            .collect())
-    }
-
     pub fn session_prompts(&self, session: &Session) -> Result<Vec<String>> {
         self.check()?;
         let session = self.effective_session(session)?;
         let mut prompts = Vec::new();
         for entry in self.ready() {
-            prompts.extend(entry.registration.prompts.values().cloned());
             for (_, source) in &entry.registration.prompt_sources {
                 let text = guarded(|| source(&session))?;
                 if !text.is_empty() {

@@ -14,10 +14,6 @@ pub struct WriteTask {
 }
 
 impl WriteTask {
-    pub fn compute(&mut self) -> std::io::Result<FileToolOutput> {
-        self.compute_with_cancel(&|| false)
-    }
-
     pub fn compute_with_cancel(
         &mut self,
         cancelled: &dyn Fn() -> bool,
@@ -122,7 +118,7 @@ mod tests {
             display_path: path.display().to_string(),
             content: units("�"),
         };
-        assert!(task.compute().is_err());
+        assert!(task.compute_with_cancel(&|| false).is_err());
         fs::remove_file(path).expect("fixture should clean up");
     }
 }

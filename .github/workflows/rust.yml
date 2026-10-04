@@ -1,0 +1,108 @@
+name: Rust
+
+on:
+  push:
+    branches: [rust]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: rust-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Check ${{ matrix.runner }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, macos-15, windows-2025]
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.92.0
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: rust-${{ matrix.runner }}
+          cache-on-failure: true
+
+      - &windows-shell
+        name: Configure installed Windows POSIX shell
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $git = (Get-Command git.exe -ErrorAction Stop).Source
+          $root = Split-Path (Split-Path $git)
+          $shell = Join-Path $root 'bin/bash.exe'
+          if (!(Test-Path $shell)) { throw 'A supported POSIX shell is required; install Git for Windows.' }
+          "SHELL=$shell" >> $env:GITHUB_ENV
+          (Join-Path $root 'bin') >> $env:GITHUB_PATH
+          (Join-Path $root 'usr/bin') >> $env:GITHUB_PATH
+
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --workspace --exclude xal-native --all-targets --locked -- -D warnings
+      - run: cargo test --workspace --exclude xal-native --all-targets --locked
+
+  targets:
+    name: Target ${{ matrix.target }}
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-apple-darwin
+            runner: macos-15-intel
+            deployment_target: "10.13"
+          - target: aarch64-apple-darwin
+            runner: macos-15
+            deployment_target: "11.0"
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-24.04
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-24.04-arm
+          - target: x86_64-unknown-linux-musl
+            runner: ubuntu-24.04
+          - target: aarch64-unknown-linux-musl
+            runner: ubuntu-24.04-arm
+          - target: x86_64-pc-windows-msvc
+            runner: windows-2025
+          - target: aarch64-pc-windows-msvc
+            runner: windows-11-arm
+    env:
+      MACOSX_DEPLOYMENT_TARGET: ${{ matrix.deployment_target || '' }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.92.0
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: target-${{ matrix.target }}
+          cache-on-failure: true
+
+      - name: Install musl linker
+        if: endsWith(matrix.target, '-musl')
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+          echo 'RUSTFLAGS=-C linker=musl-gcc' >> "$GITHUB_ENV"
+
+      - *windows-shell
+
+      - run: cargo test --workspace --exclude xal-native --all-targets --target ${{ matrix.target }} --locked --no-fail-fast
+      - run: cargo build -p xal-rust --release --target ${{ matrix.target }} --locked

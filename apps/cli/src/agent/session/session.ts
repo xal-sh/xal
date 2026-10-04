@@ -446,20 +446,6 @@ export class AgentSession {
     await this.asyncState.cancelAndReap(graceMs)
   }
 
-  persistenceOwner(path: string) {
-    return this.recorder?.ownership(path)
-  }
-
-  async releasePersistence(): Promise<void> {
-    await this.recorder?.flush()
-    this.recorder?.release()
-    await this.recorder?.flush()
-  }
-
-  reclaimPersistence(): void {
-    this.recorder?.reclaim()
-  }
-
   disposeAsyncDelivery(): void {
     this.asyncState.dispose()
   }
@@ -601,7 +587,6 @@ export class AgentSession {
       return false
     }
     this.disposeToolResources()
-    this.recorder?.attach(target.path, target.owner)
     this.asyncState.advanceEpoch()
     forgetOwner(this.sessionId)
     this.sessionId = meta.id
@@ -660,6 +645,7 @@ export class AgentSession {
     this.thinking = target.thinking
     this.mode = target.mode
     this.asyncState.register()
+    this.recorder?.attach(target.path)
     try {
       this.emit(this.startEvent(true))
       for (const event of target.session.events) this.notify(event)

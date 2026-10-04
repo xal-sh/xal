@@ -52,7 +52,6 @@ impl Fixture {
             name: Some("Fix Login Bug".into()),
             worktree: None,
             force: None,
-            aborted: None,
         }
     }
 }
@@ -419,8 +418,7 @@ fn pre_cancelled_operations_do_not_create_or_remove_worktrees() {
     );
     let worktree = create_managed_worktree(&request, &|| false).unwrap();
     request.worktree = Some(worktree.clone());
-    request.aborted = Some(true);
-    assert!(remove_managed_worktree(&request, &|| false).is_err());
+    assert!(remove_managed_worktree(&request, &|| true).is_err());
     assert!(Path::new(&worktree.path).is_dir());
     assert_eq!(
         git(&fixture.root, &["worktree", "list", "--porcelain"])

@@ -1,7 +1,0 @@
-{
-  "model": "global-model",
-  "permissions": { "allow": ["read"], "deny": ["bash"] },
-  "pluginConfig": { "mcp": { "keep": true, "replace": true } },
-  "redaction": { "values": ["global-secret"], "environment": [] },
-  "unknown": { "preserved": 1 }
-}

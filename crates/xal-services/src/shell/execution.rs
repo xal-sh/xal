@@ -155,10 +155,6 @@ impl ShellExecution {
         bytes
     }
 
-    pub fn output_closed(&self) -> bool {
-        self.state.done()
-    }
-
     pub fn wait(&self) -> WaitShellTask {
         WaitShellTask {
             state: self.state.clone(),

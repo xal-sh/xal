@@ -31,7 +31,6 @@ impl Worktrees {
             name: None,
             worktree: None,
             force: None,
-            aborted: None,
         })
     }
 

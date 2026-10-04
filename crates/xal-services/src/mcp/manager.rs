@@ -72,20 +72,6 @@ impl McpManager {
             .collect()
     }
 
-    pub fn status_lines(&self, server: Option<&str>) -> Vec<String> {
-        let lines: Vec<_> = self
-            .servers()
-            .iter()
-            .filter(|status| server.is_none_or(|server| status.id == server))
-            .map(ServerStatus::line)
-            .collect();
-        if lines.is_empty() {
-            vec!["No MCP servers configured.".into()]
-        } else {
-            lines
-        }
-    }
-
     pub fn has_resources(&self) -> bool {
         lock(&self.state).entries.values().any(|entry| {
             entry.state == ConnectionState::Connected

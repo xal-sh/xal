@@ -110,7 +110,7 @@ pub fn lookup(
     request: &WorktreeRequest,
     cancelled: &dyn Fn() -> bool,
 ) -> std::io::Result<Option<ManagedWorktree>> {
-    if request.aborted.unwrap_or(false) || cancelled() {
+    if cancelled() {
         return Err(interrupted("Git command interrupted"));
     }
     let cwd = PathBuf::from(&request.cwd);

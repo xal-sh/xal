@@ -199,10 +199,6 @@ export async function startTui(events: EventService, config: TuiConfig, options:
         exitNotes.push(`session ${short} continues in background; ${appInfo.name} bg attach ${short}`)
         for (const pending of outcome.pending) exitNotes.push(`not sent: ${pending.text}`)
         quit()
-      } else if (outcome.status === "failed") {
-        exitNotes.push(outcome.reason)
-        for (const pending of outcome.pending) exitNotes.push(`not sent: ${pending.text}`)
-        quit()
       }
       return outcome
     },

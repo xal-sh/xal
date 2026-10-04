@@ -8,8 +8,6 @@ rust-version = "1.92"
 [dependencies]
 xal-host = { path = "../xal-host" }
 xal-services = { path = "../xal-services" }
-xal-plugin-inspect = { path = "../xal-plugin-inspect" }
-xal-plugin-diagnostics = { path = "../xal-plugin-diagnostics" }
 xal-plugin-providers = { path = "../xal-plugin-providers" }
 xal-plugin-classify = { path = "../xal-plugin-classify" }
 xal-providers = { path = "../xal-providers" }

@@ -1,0 +1,19 @@
+{"type":"meta","meta":{"version":2,"id":"ts-fixture-session","cwd":"/synthetic/workspace","provider":"openai","profile":"fixture-profile","model":"gpt-4.1","thinking":"medium","mode":"normal","startedAt":1700000000000}}
+{"type":"event","event":{"type":"user_message","messageId":"00000000-0000-4000-8000-000000000001","text":"Fix the Unicode 🔐 bug","imageCount":0,"sentAt":1700000001000}}
+{"type":"item","item":{"type":"user_message","messageId":"00000000-0000-4000-8000-000000000001","text":"Fix the Unicode 🔐 bug","images":[]}}
+{"type":"event","event":{"type":"session_title_changed","title":"Unicode fix"}}
+{"type":"event","event":{"type":"reasoning_summary","text":"Look at the file first."}}
+{"type":"item","item":{"type":"tool_call","callId":"call-1","name":"read","args":{"file_path":"src/lib.rs"},"replay":{"provider":"openai","model":"gpt-4.1","data":{"id":"fc_1"}}}}
+{"type":"event","event":{"type":"tool_finished","callId":"call-1","tool":"read","title":"Read src/lib.rs","readOnly":true,"output":"1\tfn main() {}\n2\t"}}
+{"type":"item","item":{"type":"tool_result","callId":"call-1","output":"1\tfn main() {}\n2\t"}}
+{"type":"event","event":{"type":"hook_finished","hook":"fixture-hook","event":"turn_end","action":"continued","elapsedMs":12}}
+{"type":"event","event":{"type":"assistant_message","text":"Fixed it.\n\n```rust\nfn main() {}\n```"}}
+{"type":"item","item":{"type":"assistant_message","text":"Fixed it.\n\n```rust\nfn main() {}\n```"}}
+{"type":"event","event":{"type":"turn_ended","usage":{"totalInputTokens":120,"outputTokens":7}}}
+{"type":"event","event":{"type":"model_changed","provider":"anthropic","profile":"other-profile","model":"claude-sonnet"}}
+{"type":"event","event":{"type":"mode_changed","mode":"plan"}}
+{"type":"event","event":{"type":"compacted","summary":"Fixed the Unicode bug.","replaced":4,"tokensBefore":900}}
+{"type":"item","item":{"type":"compaction","strategy":"jev_v1","summary":"Fixed the Unicode bug.","replaced":4,"tokensBefore":900,"retained":[{"type":"user_message","messageId":"00000000-0000-4000-8000-000000000001","text":"Fix the Unicode 🔐 bug","images":[]}]}}
+{"type":"event","event":{"type":"user_message","messageId":"00000000-0000-4000-8000-000000000002","text":"Now run the tests","imageCount":0,"sentAt":1700000002000}}
+{"type":"item","item":{"type":"user_message","messageId":"00000000-0000-4000-8000-000000000002","text":"Now run the tests","images":[]}}
+{"type":"event","event":{"type":"turn_failed","message":"provider unavailable"}}

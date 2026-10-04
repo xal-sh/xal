@@ -74,42 +74,15 @@ fn required_nested(value: &Map<String, Value>, key: &str, field: &str) -> io::Re
         .ok_or_else(|| invalid(format!("{field} is required")))
 }
 
-pub fn request_input_finalize(value: &Value) -> io::Result<Value> {
-    let request = object(value)?;
-    if string(request, "status") == Some("rejected") {
-        return Ok(json!({ "output": "{\"status\":\"rejected\"}" }));
-    }
-    if string(request, "status") != Some("answered") {
-        return Err(invalid("native input result is invalid"));
-    }
-    let answers = request
-        .get("answers")
-        .and_then(Value::as_array)
-        .ok_or_else(|| invalid("native input result is invalid"))?;
-    let mut output = Map::new();
-    for answer in answers {
-        let answer = object(answer)?;
-        output.insert(
-            required_string(answer, "questionId")?,
-            Value::String(required_string(answer, "value")?),
-        );
-    }
-    Ok(
-        json!({ "output": serde_json::to_string(&json!({ "status": "answered", "answers": output })).map_err(|error| invalid(error.to_string()))? }),
-    )
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{request_input_prepare, run};
+    use super::request_input_prepare;
+    use serde_json::json;
 
     #[test]
     fn validates_questions() {
-        let question = run(
-            r#"{"questions":[{"id":"choice","header":"Choice","question":"Choose","options":[{"label":"One","description":"First"}]}]}"#.to_owned(),
-            request_input_prepare,
-        )
+        let question = request_input_prepare(&json!({"questions":[{"id":"choice","header":"Choice","question":"Choose","options":[{"label":"One","description":"First"}]}]}))
         .unwrap();
-        assert!(question.contains("choice"));
+        assert!(question.to_string().contains("choice"));
     }
 }

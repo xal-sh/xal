@@ -237,7 +237,28 @@ async fn execute(
     }
     .await;
     host.shutdown().await;
-    crate::host_result(&host, result)
+    host_result(&host, result)
+}
+
+fn host_result(host: &Host, output: Result<String>) -> Result<String> {
+    let failures = host
+        .failures()
+        .iter()
+        .filter(|failure| {
+            !(output == Err(Error::Cancelled)
+                && matches!(failure.phase, Phase::Register | Phase::Bootstrap)
+                && failure.error == Error::Cancelled)
+        })
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join("\n");
+    if !failures.is_empty() {
+        return Err(Error::Failed(match output {
+            Err(error) => format!("{error}\n{failures}"),
+            Ok(_) => failures,
+        }));
+    }
+    output
 }
 
 async fn paths(

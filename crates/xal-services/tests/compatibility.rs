@@ -155,6 +155,53 @@ fn settings_schema_and_secure_round_trip_preserve_unknown_fields_and_trust() {
 }
 
 #[test]
+fn project_config_requires_exact_root_trust_and_malformed_files_fail() {
+    let fixture = Fixture::new();
+    let home = fixture.0.join("home");
+    let workspace = fixture.0.join("project");
+    fs::create_dir_all(&home).unwrap();
+    fs::create_dir_all(workspace.join(".git")).unwrap();
+    fs::create_dir_all(workspace.join(".xal")).unwrap();
+    fs::create_dir(workspace.join("nested")).unwrap();
+    #[cfg(unix)]
+    let workspace = workspace.canonicalize().unwrap();
+    fs::write(workspace.join(".xal/config.json"), "malformed").unwrap();
+    let config = Configuration::load(&home, &workspace.join("nested")).unwrap();
+    assert!(!config.trusted);
+    assert_eq!(config.project_root, workspace);
+    fs::write(
+        home.join("trust.json"),
+        serde_json::to_vec(&[format!("{}/", workspace.display())]).unwrap(),
+    )
+    .unwrap();
+    assert!(!Configuration::load(&home, &workspace).unwrap().trusted);
+    fs::write(
+        home.join("trust.json"),
+        serde_json::to_vec(&[&workspace]).unwrap(),
+    )
+    .unwrap();
+    assert!(Configuration::load(&home, &workspace.join("nested")).is_err());
+    for malformed in ["{}", "[1]", "null", "invalid"] {
+        fs::write(home.join("trust.json"), malformed).unwrap();
+        assert!(Configuration::load(&home, &workspace).is_err());
+    }
+    fs::remove_file(home.join("trust.json")).unwrap();
+    for malformed in [
+        "[]",
+        "null",
+        "invalid",
+        r#"{"redaction":{"values":[1]}}"#,
+        r#"{"redaction":null}"#,
+    ] {
+        fs::write(home.join("config.json"), malformed).unwrap();
+        assert!(
+            Configuration::load(&home, &workspace).is_err(),
+            "{malformed}"
+        );
+    }
+}
+
+#[test]
 fn credentials_legacy_wire_identity_cas_and_concurrent_updates() {
     let fixture = Fixture::new();
     let path = fixture.0.join("credentials.json");
@@ -341,4 +388,20 @@ fn journal_and_paths_preserve_legacy_envelopes_opaque_replay_and_nulls() {
     for id in ["", ".", "..", "a/b", "a\\b", "C:escape"] {
         assert!(paths.background_session(id).is_err());
     }
+}
+
+#[test]
+fn sessions_written_by_the_typescript_app_load_and_export_identically() {
+    let path = PathBuf::from(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/ts/session.jsonl"
+    ));
+    let before = fs::read(&path).unwrap();
+    let loaded = xal_services::sessions::load(&path).unwrap();
+    assert!(!loaded.incomplete_tail);
+    assert_eq!(
+        xal_services::sessions::export::markdown(&loaded).unwrap(),
+        include_str!("fixtures/ts/session.md")
+    );
+    assert_eq!(fs::read(&path).unwrap(), before);
 }

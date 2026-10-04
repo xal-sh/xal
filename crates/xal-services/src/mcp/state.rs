@@ -1,7 +1,6 @@
 use super::*;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ConnectionState {
     Disabled,
     Idle,
@@ -22,8 +21,7 @@ impl ConnectionState {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ConnectionTransport {
     Stdio,
     Http,
@@ -40,8 +38,7 @@ impl ConnectionTransport {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Debug)]
 pub struct ToolDescriptor {
     pub name: String,
     pub server: String,
@@ -51,25 +48,22 @@ pub struct ToolDescriptor {
     pub title: String,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug)]
 pub struct ToolSnapshot {
     pub revision: u64,
     pub tools: Vec<ToolDescriptor>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Debug)]
 pub struct ServerStatus {
     pub id: String,
     pub configured_transport: ConnectionTransport,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub connection_transport: Option<ConnectionTransport>,
     pub state: ConnectionState,
     pub tools: usize,
     pub resources: usize,
     pub resource_templates: usize,
     pub prompts: usize,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub warning: Option<String>,
 }
 

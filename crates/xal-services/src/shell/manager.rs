@@ -151,24 +151,6 @@ impl ShellManager {
         Err(std::io::Error::other(errors.join("\n")))
     }
 
-    pub fn dispose_session(&self, session_id: String) {
-        let prefix = format!("{session_id}\0");
-        let removed = {
-            let mut entries = lock(&self.entries);
-            let keys = entries
-                .keys()
-                .filter(|key| key.starts_with(&prefix))
-                .cloned()
-                .collect::<Vec<_>>();
-            keys.into_iter()
-                .filter_map(|key| entries.remove(&key))
-                .collect::<Vec<_>>()
-        };
-        for entry in removed {
-            process_signal(&entry.process, true);
-        }
-    }
-
     pub fn shutdown_all(&self) -> std::io::Result<()> {
         let removed = lock(&self.entries)
             .drain()
@@ -186,16 +168,6 @@ impl ShellManager {
             return Ok(());
         }
         Err(Error::other(errors.join("\n")))
-    }
-
-    pub fn dispose_all(&self) {
-        let removed = {
-            let mut entries = lock(&self.entries);
-            entries.drain().map(|(_, entry)| entry).collect::<Vec<_>>()
-        };
-        for entry in removed {
-            process_signal(&entry.process, true);
-        }
     }
 }
 impl Drop for ShellManager {

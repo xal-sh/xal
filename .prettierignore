@@ -1,2 +1,3 @@
 design/
 scripts/evals/cases/*/repo/
+crates/*/tests/fixtures/

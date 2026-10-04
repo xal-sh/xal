@@ -176,10 +176,6 @@ pub struct EditTask {
 }
 
 impl EditTask {
-    pub fn compute(&mut self) -> std::io::Result<FileToolOutput> {
-        self.compute_with_cancel(&|| false)
-    }
-
     pub fn compute_with_cancel(
         &mut self,
         cancelled: &dyn Fn() -> bool,

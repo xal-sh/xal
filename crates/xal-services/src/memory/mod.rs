@@ -15,7 +15,6 @@ use crate::redactor::Redactor;
 
 mod storage;
 mod store;
-pub use storage::Snapshot;
 pub use store::Store;
 
 pub const MAX_BYTES: usize = 16 * 1024;

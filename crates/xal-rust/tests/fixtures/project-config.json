@@ -1,6 +1,0 @@
-{
-  "model": "project-model",
-  "permissions": { "deny": ["write"] },
-  "pluginConfig": { "mcp": { "replace": false } },
-  "redaction": { "values": ["workspace"] }
-}

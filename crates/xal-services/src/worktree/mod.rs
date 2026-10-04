@@ -40,7 +40,6 @@ pub struct WorktreeRequest {
     pub name: Option<String>,
     pub worktree: Option<ManagedWorktree>,
     pub force: Option<bool>,
-    pub aborted: Option<bool>,
 }
 
 fn failed(message: impl Into<String>) -> Error {
