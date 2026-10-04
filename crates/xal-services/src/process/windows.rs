@@ -9,8 +9,9 @@ use windows_sys::Win32::System::Diagnostics::ToolHelp::{
 };
 use windows_sys::Win32::System::JobObjects::{
     AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
-    JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
-    SetInformationJobObject, TerminateJobObject,
+    JOBOBJECT_BASIC_ACCOUNTING_INFORMATION, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+    JobObjectBasicAccountingInformation, JobObjectExtendedLimitInformation,
+    QueryInformationJobObject, SetInformationJobObject, TerminateJobObject,
 };
 use windows_sys::Win32::System::Threading::{
     CREATE_NO_WINDOW, CREATE_SUSPENDED, OpenThread, ResumeThread, THREAD_SUSPEND_RESUME,
@@ -96,7 +97,33 @@ impl Tree {
         if unsafe { TerminateJobObject(self.0.as_raw_handle(), 1) } == 0 {
             return Err(io::Error::last_os_error());
         }
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while self.active_processes()? > 0 {
+            if std::time::Instant::now() >= deadline {
+                return Err(io::Error::other(
+                    "process tree did not exit after termination",
+                ));
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
         Ok(())
+    }
+
+    fn active_processes(&self) -> io::Result<u32> {
+        let mut accounting = JOBOBJECT_BASIC_ACCOUNTING_INFORMATION::default();
+        if unsafe {
+            QueryInformationJobObject(
+                self.0.as_raw_handle(),
+                JobObjectBasicAccountingInformation,
+                (&mut accounting as *mut JOBOBJECT_BASIC_ACCOUNTING_INFORMATION).cast(),
+                u32::try_from(std::mem::size_of_val(&accounting)).map_err(io::Error::other)?,
+                std::ptr::null_mut(),
+            )
+        } == 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(accounting.ActiveProcesses)
     }
 }
 

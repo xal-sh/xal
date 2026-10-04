@@ -297,6 +297,26 @@ fn submodule_restore_reapply_and_dirty_denial_preserve_superproject_index() {
         "agent\n"
     );
     fs::remove_file(sub.join("new.ignored")).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let status = git(
+            &sub,
+            &[
+                "status",
+                "--porcelain",
+                "--untracked-files=all",
+                "--ignored",
+            ],
+        );
+        if status.is_empty() {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "submodule stayed dirty: {status}"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
     repository
         .apply_snapshot(&ApplySnapshotRequest {
             snapshot: snapshot.clone(),
