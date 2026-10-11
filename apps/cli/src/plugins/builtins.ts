@@ -3,6 +3,7 @@ import alibabaCloud from "./alibaba-cloud/plugin"
 import anthropic from "./anthropic/plugin"
 import ask from "./ask/plugin"
 import codeReview from "./code-review/plugin"
+import codeMode from "./code-mode/plugin"
 import classify from "./classify/plugin"
 import deepseek from "./deepseek/plugin"
 import google from "./google/plugin"
@@ -26,6 +27,7 @@ import typesafe from "./typesafe/plugin"
 
 export const builtinPlugins: Plugin[] = [
   codeReview,
+  codeMode,
   promptCommands,
   memory,
   projectInstructions,

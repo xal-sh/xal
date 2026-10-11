@@ -73,10 +73,13 @@ describe("ToolLoopDetector", () => {
     expect(detector.inspect(retry)).toBe("allow")
     detector.record(retry, "unchanged")
     expect(detector.inspect(call("steer", { path: "notes.md" }))).toBe("steer")
+    expect(detector.failure).toBeUndefined()
     expect(detector.inspect(call("stop", { path: "notes.md" }))).toBe("stop")
+    expect(detector.failure?.message).toBe("turn stopped after repeated read_file tool calls")
 
     detector.reset()
 
+    expect(detector.failure).toBeUndefined()
     expect(detector.inspect(call("after-reset", { path: "notes.md" }))).toBe("allow")
   })
 

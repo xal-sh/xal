@@ -25,8 +25,17 @@ export class PendingInteractions {
 
   constructor(private readonly host: InteractionHost) {}
 
-  awaitApproval(resolve: (result: ApprovalResult) => void): void {
-    this.approval = resolve
+  awaitApproval(resolve: (result: ApprovalResult) => void, signal: AbortSignal): void {
+    if (this.approval) throw new Error("another approval request is already pending")
+    const abort = (): void => {
+      this.resolveApproval({ decision: "deny", cause: "user" })
+    }
+    this.approval = (result) => {
+      signal.removeEventListener("abort", abort)
+      resolve(result)
+    }
+    signal.addEventListener("abort", abort, { once: true })
+    if (signal.aborted) abort()
   }
 
   resolveApproval(result: ApprovalResult): void {

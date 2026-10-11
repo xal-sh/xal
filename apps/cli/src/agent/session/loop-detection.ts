@@ -154,10 +154,18 @@ export class OutputLoopDetector {
 export class ToolLoopDetector {
   private results: ToolResultRecord[] = []
   private readonly steered = new Set<string>()
+  private stopped: Error | undefined
+
+  get failure(): Error | undefined {
+    return this.stopped
+  }
 
   inspect(call: ToolCallItem): ToolLoopAction {
     const signature = toolSignature(call)
-    if (this.steered.has(signature)) return "stop"
+    if (this.steered.has(signature)) {
+      this.stopped ??= new Error(`turn stopped after repeated ${call.name} tool calls`)
+      return "stop"
+    }
 
     const matching = this.results.filter((result) => result.signature === signature)
     const latest = matching.at(-1)
@@ -180,5 +188,6 @@ export class ToolLoopDetector {
   reset(): void {
     this.results = []
     this.steered.clear()
+    this.stopped = undefined
   }
 }

@@ -49,6 +49,10 @@ export class LiveTools {
   }
 
   request(callId: string, tool: string, title: string, readOnly: boolean): void {
+    if (this.rows.has(callId)) {
+      this.update(callId, `Approval requested: ${commandLabel(tool, title)}\n`)
+      return
+    }
     this.add(callId, tool, title, readOnly, "requested")
   }
 
