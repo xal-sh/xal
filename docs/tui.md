@@ -8,7 +8,7 @@ Run `/config` in the TUI to change display preferences. Changes save immediately
 
 | Option           | Type      | Default | Description                                                                                             |
 | ---------------- | --------- | ------- | ------------------------------------------------------------------------------------------------------- |
-| `showOutputs`    | `boolean` | `false` | Expand tool outputs and other transcript details.                                                       |
+| `showOutputs`    | `boolean` | `false` | Expand tool outputs, live bash previews, and other transcript details.                                  |
 | `showThinking`   | `boolean` | `false` | Include model reasoning in the transcript.                                                              |
 | `scrollbackRows` | `number`  | `1000`  | Rows of transcript rebuilt into terminal scrollback, as a non-negative integer. `0` disables the limit. |
 
@@ -31,6 +31,8 @@ These values live under `pluginConfig.tui`:
 The terminal owns wrapping for rows Xal has already written, so a terminal that changes width leaves the transcript above wrapped for the old one. Xal rebuilds instead: on a width change it clears its scrollback and re-prints the transcript from the session's own blocks at the new width, after the resize has been quiet for a moment. Resuming a session prints the same rebuilt transcript.
 
 `scrollbackRows` bounds that rebuild. Xal prints the most recent rows up to the limit and marks the top of the transcript when anything was left out, so rebuild cost stays flat as a session grows. A response still being written counts against the limit but is never itself trimmed, so a single very long response can carry the rebuild past it until that response finishes. Set the limit near what your terminal actually retains — rows beyond that are dropped by the terminal anyway. Set it to `0` to rebuild the whole transcript every time, which is exact but grows more expensive the longer a session runs.
+
+Foreground bash commands appear with ordinary executions above the composer, using the same compact command titles as completed commands once execution starts. Pending approvals keep their uncompacted titles. Their live output previews follow `showOutputs` and `display.toggle-details` (Ctrl+O by default), so compact mode keeps each running command on one line. Only commands explicitly started in the background or moved there with `jobs.background` (Ctrl+B by default) appear as `shell` rows in the navigator below the composer.
 
 A settled tool stays a single line until its details are expanded. When a tool fails, that line names the reason — the exit code, a timeout, a signal, or the first line of the error — rather than a bare failure marker, and a multi-line shell command is titled by its first real command rather than whatever boilerplate happened to be on its first line. Expanding the block shows the full script above its output.
 

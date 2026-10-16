@@ -395,7 +395,7 @@ export class BackgroundTasks {
       state.running && !(this.focusedFlag && active)
         ? new StyledText([paint(COLORS.agent, spinnerGlyph())])
         : this.navigationMarker(active, viewed || !state.running)
-    const name = `${entry.task.id} · ${firstLine(redactText(entry.task.title))}${this.ownerSuffix(entry.task)}`
+    const name = `${entry.task.kind === "process" ? "shell " : ""}${entry.task.id} · ${firstLine(redactText(entry.task.title))}${this.ownerSuffix(entry.task)}`
     entry.text.content = active
       ? new StyledText([paint(COLORS.accent, name)])
       : new StyledText([state.running || viewed ? paint(COLORS.foreground, name) : muted(name)])

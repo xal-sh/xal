@@ -93,6 +93,10 @@ export class Scrollback {
     return this.origin + this.committed
   }
 
+  get detailsExpanded(): boolean {
+    return this.expanded
+  }
+
   get endsWithTool(): boolean {
     return this.blocks.findLast((block) => this.visible(block))?.kind === "tool"
   }
