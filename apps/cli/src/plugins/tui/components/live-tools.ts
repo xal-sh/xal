@@ -1,4 +1,5 @@
 import type { BoxRenderable, RenderContext, TextRenderable } from "@opentui/core"
+import { getToolRenderer } from "../../../ui/extension"
 import { formatDuration } from "../lib/format"
 import { column, label, row } from "../lib/renderables"
 import { spinnerGlyph, spinnerHandle } from "../lib/spinner"
@@ -11,6 +12,8 @@ const PREVIEW_KEPT_CHARS = 4_000
 
 interface LiveRow {
   view: BoxRenderable
+  heading: TextRenderable
+  title: string
   status: TextRenderable
   preview: BoxRenderable
   previewLabels: TextRenderable[]
@@ -31,7 +34,7 @@ export class LiveTools {
   constructor(
     private readonly ctx: RenderContext,
     private readonly onChange: () => void,
-    private readonly backgroundShortcut: string | undefined,
+    private expanded: boolean,
   ) {
     this.view = column(ctx, {})
   }
@@ -39,8 +42,17 @@ export class LiveTools {
   get height(): number {
     if (this.rows.size === 0) return 0
     let height = this.grouped ? 0 : 1
-    for (const entry of this.rows.values()) height += 1 + entry.previewLabels.length
+    for (const entry of this.rows.values()) height += 1 + (entry.preview.visible ? entry.previewLabels.length : 0)
     return height
+  }
+
+  setExpanded(expanded: boolean): void {
+    if (this.expanded === expanded) return
+    this.expanded = expanded
+    for (const entry of this.rows.values()) {
+      if (entry.tool === "bash") entry.preview.visible = expanded
+    }
+    this.sync()
   }
 
   setGrouped(grouped: boolean): void {
@@ -141,23 +153,24 @@ export class LiveTools {
     const view = column(this.ctx, {})
     const header = row(this.ctx, { height: 1, alignItems: "center" })
     header.add(label(this.ctx, { content: readOnly ? ">" : "*", width: 2, color: COLORS.faint }))
-    header.add(
-      label(this.ctx, {
-        content: commandLabel(tool, title),
-        flexGrow: 1,
-        flexShrink: 1,
-        minWidth: 1,
-        color: COLORS.faint,
-      }),
-    )
+    const heading = label(this.ctx, {
+      content: "",
+      flexGrow: 1,
+      flexShrink: 1,
+      minWidth: 1,
+      color: COLORS.faint,
+    })
+    header.add(heading)
     const status = label(this.ctx, { content: "", flexShrink: 0, marginLeft: 1 })
     header.add(status)
     view.add(header)
-    const preview = column(this.ctx, { paddingLeft: 2 })
+    const preview = column(this.ctx, { paddingLeft: 2, visible: tool !== "bash" || this.expanded })
     view.add(preview)
     this.view.add(view)
     this.rows.set(callId, {
       view,
+      heading,
+      title,
       status,
       preview,
       previewLabels: [],
@@ -192,11 +205,12 @@ export class LiveTools {
 
   private render(): void {
     for (const entry of this.rows.values()) {
-      const suffix =
-        entry.tool === "bash" && entry.phase === "running" && this.backgroundShortcut
-          ? ` · ${this.backgroundShortcut} background`
-          : ""
-      entry.status.content = liveStatus(entry.phase, formatDuration(this.elapsed(entry)), spinnerGlyph(), suffix)
+      const title =
+        entry.phase === "requested"
+          ? entry.title
+          : (getToolRenderer(entry.tool)?.compactTitle?.(entry.title) ?? entry.title)
+      entry.heading.content = commandLabel(entry.tool, title)
+      entry.status.content = liveStatus(entry.phase, formatDuration(this.elapsed(entry)), spinnerGlyph())
     }
   }
 }

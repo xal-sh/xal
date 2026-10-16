@@ -3,7 +3,9 @@ import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { appInfo } from "../../app-info"
-import { getJob, stopJob, suppressDelivery, waitForProcessOutput } from "../../background/jobs"
+import { getJob, reapOwnerJobs, stopJob, suppressDelivery, waitForProcessOutput } from "../../background/jobs"
+import { requestBackground } from "../../background/promotion"
+import { listBackgroundTasks, removeBackgroundTask } from "../../background/registry"
 import { createNativeProcess } from "../../native"
 import { REDACTION_MARKER, replaceSecretValues } from "../../secrets/redactor"
 import { spawnCommand } from "./process"
@@ -159,6 +161,68 @@ test("redacts cross-drain secrets and generations added while Bash is running", 
     expect(updates).not.toContain("dynamic-secret")
   } finally {
     replaceSecretValues(source, [])
+  }
+})
+
+test.each([undefined, false])("foreground Bash with background=%s never registers a job", async (background) => {
+  const sessionId = crypto.randomUUID()
+  sessions.add(sessionId)
+  const tasks = () => listBackgroundTasks().filter((task) => task.ownerId === sessionId)
+  let output = ""
+  const result = await bashTool.execute(
+    { command: "printf foreground", ...(background === undefined ? {} : { background }) },
+    {
+      cwd: process.cwd(),
+      sessionId,
+      sessionKind: "primary",
+      directory: process.cwd(),
+      signal: new AbortController().signal,
+      update(text) {
+        output += text
+        expect(tasks()).toHaveLength(0)
+      },
+    },
+  )
+  expect(output).toBe("foreground")
+  expect(result.execution).toEqual({ status: "exited", exitCode: 0 })
+  expect(result.output).toBe("foreground\n(exit code 0)")
+  expect(tasks()).toHaveLength(0)
+})
+
+test("foreground Bash becomes a shell job only when promoted and lets other commands run", async () => {
+  const sessionId = crypto.randomUUID()
+  sessions.add(sessionId)
+  const directory = await mkdtemp(join(tmpdir(), `${appInfo.name}-shell-promotion-test-`))
+  const ctx = {
+    cwd: process.cwd(),
+    sessionId,
+    sessionKind: "primary" as const,
+    directory,
+    signal: new AbortController().signal,
+    update() {},
+  }
+  const tasks = () => listBackgroundTasks().filter((task) => task.ownerId === sessionId)
+  try {
+    const execution = bashTool.execute({ command: "echo promoted; sleep 30" }, ctx)
+    expect(tasks()).toHaveLength(0)
+    expect(requestBackground(sessionId)).toBe(true)
+    const result = await execution
+    const task = tasks()[0]
+    if (!task) throw new Error("promoted command was not registered")
+    expect(result.output).toContain(`Moved to background job ${task.id}`)
+    expect(tasks()).toHaveLength(1)
+    expect(task.state().running).toBe(true)
+    expect((await bashTool.execute({ command: "printf independent" }, ctx)).output).toBe("independent\n(exit code 0)")
+    expect(task.state().running).toBe(true)
+    const job = getJob(task.id)
+    if (!job || job.kind !== "process") throw new Error("promoted process job missing")
+    await stopJob(job, "user")
+    await job.completion
+    expect(job.history.text()).toContain("promoted")
+  } finally {
+    await reapOwnerJobs(sessionId, 2_000)
+    for (const task of tasks()) removeBackgroundTask(task.id)
+    await rm(directory, { recursive: true, force: true })
   }
 })
 

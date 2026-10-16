@@ -175,7 +175,7 @@ export function bindKeys(renderer: CliRenderer, deps: KeymapDeps): void {
         screen.activeScrollback.clearTranscript()
         return
       case "display.toggle-details":
-        screen.activeScrollback.toggleExpanded()
+        screen.toggleDetails()
         return
       case "display.toggle-todos": {
         const visible = screen.taskList.toggleVisibility()

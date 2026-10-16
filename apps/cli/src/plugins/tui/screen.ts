@@ -131,7 +131,7 @@ export class Screen {
     )
     this.view = column(renderer, { width: "100%", height: "100%" })
     this.jobViewer = new JobViewer(renderer)
-    this.live = new LiveTools(renderer, () => this.syncFooter(), shortcuts.help("jobs.background"))
+    this.live = new LiveTools(renderer, () => this.syncFooter(), preferences.showOutputs)
     this.queued = new QueuedInputs(renderer, () => this.syncFooter())
     this.taskList = new TaskList(renderer, () => this.syncFooter())
     this.permission = new PermissionPopover(renderer, actions)
@@ -158,6 +158,7 @@ export class Screen {
           switch (key) {
             case "showOutputs":
               this.scrollback.setExpanded(config.showOutputs)
+              this.live.setExpanded(config.showOutputs)
               return
             case "showThinking":
               this.scrollback.setReasoningVisible(config.showThinking)
@@ -315,6 +316,11 @@ export class Screen {
       changed = store.scrollback.setTerminalBackground(background) || changed
     }
     return changed
+  }
+
+  toggleDetails(): void {
+    this.activeScrollback.toggleExpanded()
+    this.live.setExpanded(this.scrollback.detailsExpanded)
   }
 
   replayActiveTranscript(): void {

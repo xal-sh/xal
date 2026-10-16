@@ -37,6 +37,71 @@ test("renders replayed task-agent questions as historical notices", () => {
   })
 })
 
+test("foreground bash stays in the execution flow above the composer", async () => {
+  const harness = await setupAgentSessionTests("tui-foreground-bash-")
+  const session = harness.createSession(new ScriptedProvider([]))
+  const setup = await createTestRenderer({
+    width: 100,
+    height: 30,
+    screenMode: "split-footer",
+    externalOutputMode: "capture-stdout",
+  })
+  await setup.renderer.setupTerminal()
+  const screen = new Screen(
+    setup.renderer,
+    session,
+    0,
+    await MessageHistory.load(session.currentWorkingDirectory),
+    parseTuiConfig({}),
+    new ResolvedShortcuts({}),
+    { submit: () => true, approve() {}, deny() {}, cancel() {}, answer() {}, reject() {} },
+  )
+  setup.renderer.root.add(screen.view)
+  const controller = new AgentEventController(screen, session)
+
+  try {
+    controller.handle({ type: "assistant_message", text: "Checking the workspace." })
+    controller.handle({
+      type: "tool_started",
+      callId: "foreground",
+      tool: "bash",
+      title: "printf ready",
+      readOnly: true,
+    })
+    controller.handle({ type: "tool_updated", callId: "foreground", text: "ready\n" })
+    await setup.renderOnce()
+    expect(screen.tasks.count).toBe(0)
+    expect(screen.live.view.y).toBeLessThan(screen.composer.view.y)
+    expect(screen.live.height).toBe(2)
+    screen.toggleDetails()
+    expect(screen.live.height).toBe(3)
+    screen.toggleDetails()
+    expect(screen.live.height).toBe(2)
+    controller.handle({
+      type: "tool_finished",
+      callId: "foreground",
+      tool: "bash",
+      title: "printf ready",
+      readOnly: true,
+      denial: undefined,
+      output: "ready\n(exit code 0)",
+      execution: { status: "exited", exitCode: 0 },
+    })
+    expect(screen.live.height).toBe(0)
+    expect(screen.scrollback.endsWithTool).toBe(true)
+    expect(screen.tasks.count).toBe(0)
+  } finally {
+    screen.live.clear()
+    session.disposeAsyncDelivery()
+    session.disposeToolResources()
+    const paletteChildren = screen.palette.view.getChildren()
+    screen.palette.view.destroy()
+    for (const child of paletteChildren) child.destroyRecursively()
+    setup.renderer.destroy()
+    await harness.cleanup()
+  }
+})
+
 test("dismisses settled navigator rows only on a live accepted user message", async () => {
   const harness = await setupAgentSessionTests("tui-job-dismissal-")
   const session = harness.createSession(new ScriptedProvider([]))

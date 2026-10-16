@@ -25,8 +25,8 @@ export function settledStatus(
   return new StyledText([paint(color, glyph)])
 }
 
-export function liveStatus(phase: LivePhase, elapsed: string, glyph: string, suffix = ""): StyledText {
+export function liveStatus(phase: LivePhase, elapsed: string, glyph: string): StyledText {
   if (phase === "requested") return new StyledText([paint(COLORS.warning, "needs approval")])
   if (phase === "waiting") return new StyledText([paint(COLORS.agent, "?"), muted(" waiting for input")])
-  return new StyledText([paint(COLORS.agent, glyph), muted(` ${elapsed}${suffix}`)])
+  return new StyledText([paint(COLORS.agent, glyph), muted(` ${elapsed}`)])
 }
