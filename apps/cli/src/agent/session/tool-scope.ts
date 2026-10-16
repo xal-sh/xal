@@ -26,7 +26,11 @@ export class ToolCallScope {
     private readonly parent: ToolCallItem,
     directory: string,
     signal: AbortSignal,
-    private readonly prepare: (call: ToolCallItem, signal: AbortSignal) => Promise<ToolCallPreparation>,
+    private readonly prepare: (
+      call: ToolCallItem,
+      signal: AbortSignal,
+      updateCall: (call: ToolCallItem) => Promise<void>,
+    ) => Promise<ToolCallPreparation>,
     private readonly execute: (prepared: PreparedToolCall, signal: AbortSignal) => Promise<ToolCallOutcome>,
     private readonly update: (text: string) => void,
   ) {
@@ -61,9 +65,7 @@ export class ToolCallScope {
       await withAbortSignal(this.signal, () => Promise.all(this.pending))
       if (this.failure) throw this.failure
       this.signal.throwIfAborted()
-      return { ...result, output: `${result.output}\n\nTool trace: ${this.directory}` }
-    } catch (error) {
-      throw new Error(`${redactText(describeError(error))}\nTool trace: ${this.directory}`, { cause: error })
+      return result
     } finally {
       this.controller.abort()
       await Promise.allSettled(this.pending)
@@ -81,6 +83,7 @@ export class ToolCallScope {
         path,
         JSON.stringify({ version: 1, parentCallId: this.parent.callId, status: "started", call }) + "\n",
       )
+      let recording = Promise.resolve()
       let outcome: ToolCallOutcome
       try {
         const previous = this.preparing
@@ -90,7 +93,19 @@ export class ToolCallScope {
         try {
           await previous
           signal.throwIfAborted()
-          preparation = await withAbortSignal(signal, () => this.prepare(call, signal))
+          preparation = await withAbortSignal(signal, () =>
+            this.prepare(call, signal, (effective) => {
+              signal.throwIfAborted()
+              call = effective
+              recording = writeSecureJson(path, {
+                version: 1,
+                parentCallId: this.parent.callId,
+                status: "started",
+                call,
+              })
+              return recording
+            }),
+          )
         } finally {
           next.resolve()
         }
@@ -99,6 +114,7 @@ export class ToolCallScope {
             ? preparation.outcome
             : await withAbortSignal(signal, () => this.execute(preparation.prepared, signal))
       } catch (error) {
+        await recording
         await writeSecureJson(path, {
           version: 1,
           parentCallId: this.parent.callId,

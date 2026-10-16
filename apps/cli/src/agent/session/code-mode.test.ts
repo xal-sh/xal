@@ -1,7 +1,7 @@
-import { afterAll, beforeAll, expect, test } from "bun:test"
+import { afterAll, beforeAll, expect, spyOn, test } from "bun:test"
 import { readFile, readdir, stat } from "node:fs/promises"
 import { join } from "node:path"
-import { registerHook } from "../../hooks/registry"
+import { registerHook, removeHooks } from "../../hooks/registry"
 import type { Hook } from "../../hooks/types"
 import { isRecord } from "../../lib/json"
 import { contributeRules, setUserRules } from "../../permissions/rules"
@@ -202,7 +202,14 @@ test("serializes approvals for parallel child calls", async () => {
   }
 })
 
-test("cancels a pending child approval without executing it", async () => {
+test("cancels a pending child approval and retains its rewritten arguments without executing it", async () => {
+  const hook: Hook = {
+    name: "rewrite-approval",
+    beforeTool(input) {
+      if (input.tool === "webfetch") return { type: "replace", args: { url: "ask-fixture-rewritten" } }
+    },
+  }
+  registerHook("code-mode-test", 1, 0, hook)
   contributeRules({ ask: ["webfetch(ask-fixture-*)"] })
   let calls = 0
   const tool = fetchTool(async () => {
@@ -228,8 +235,25 @@ test("cancels a pending child approval without executing it", async () => {
     expect(observed.filter((event) => event.type === "approval_requested")).toHaveLength(1)
     expect(observed.filter((event) => event.type === "tool_started")).toHaveLength(1)
     expect(observed.filter((event) => event.type === "tool_finished")).toHaveLength(1)
+    const finished = observed.find((event) => event.type === "tool_finished")
+    if (finished?.type !== "tool_finished") throw new Error("missing parent result")
+    const path = /Tool trace: (.+)/.exec(finished.output)?.[1]
+    if (!path) throw new Error("missing approval trace")
+    const traces = await Promise.all(
+      (await readdir(path)).map(async (name) => {
+        const trace: unknown = JSON.parse(await readFile(join(path, name), "utf8"))
+        return trace
+      }),
+    )
+    expect(traces).toContainEqual(
+      expect.objectContaining({
+        status: "failed",
+        call: expect.objectContaining({ args: { url: "ask-fixture-rewritten" } }),
+      }),
+    )
   } finally {
     unregisterTool(tool)
+    removeHooks(1)
   }
 })
 
@@ -252,13 +276,72 @@ test("stops the turn when a different program retries a warned child loop", asyn
   }
 })
 
-test("interrupts an uncooperative child and records cancellation before accepting late results", async () => {
+test.each(['emit("same")', 'throw new Error("same")'])(
+  "stops repeated programs independently of their trace paths: %s",
+  async (code) => {
+    const provider = new ScriptedProvider([
+      ...Array.from({ length: 4 }, (_, index) => toolRound(`program-${index}`, "code_mode", { code })),
+      completedRound("must not reach this round"),
+    ])
+    const result = await runSettledTurn(harness.createSession(provider), { text: "Stop repeated programs", images: [] })
+    expect(result).toMatchObject({ status: "failed", error: expect.stringContaining("repeated code_mode tool calls") })
+    expect(provider.requests).toHaveLength(4)
+  },
+)
+
+test.each(["policy", "hook"])("stops repeated %s denials across different programs", async (denial) => {
+  let calls = 0
+  const tool = fetchTool(async () => {
+    calls += 1
+    return { output: "must not execute" }
+  })
+  const hook: Hook = {
+    name: "repeat-denial",
+    beforeTool(input) {
+      if (denial === "hook" && input.tool === "webfetch" && input.args.url === "repeat-denied")
+        return { type: "block", reason: "denied fixture" }
+    },
+  }
+  registerHook("code-mode-test", 1, 0, hook)
+  setUserRules(denial === "policy" ? { deny: ["webfetch(repeat-denied)"] } : {})
+  registerTool(tool)
+  try {
+    const provider = new ScriptedProvider([
+      ...Array.from({ length: 4 }, (_, index) =>
+        toolRound(`program-${index}`, "code_mode", {
+          code: `await callTool("webfetch", {url: "repeat-denied"}); emit(${index})`,
+        }),
+      ),
+      completedRound("must not reach this round"),
+    ])
+    const result = await runSettledTurn(harness.createSession(provider), { text: "Stop repeated denials", images: [] })
+    expect(result).toMatchObject({ status: "failed", error: expect.stringContaining("repeated webfetch tool calls") })
+    expect(provider.requests).toHaveLength(4)
+    expect(calls).toBe(0)
+  } finally {
+    unregisterTool(tool)
+    removeHooks(1)
+    setUserRules({})
+  }
+})
+
+test("interrupts an uncooperative child and records effective arguments before accepting late results", async () => {
   const started = Promise.withResolvers<void>()
   const pending = Promise.withResolvers<{ output: string }>()
-  const tool = fetchTool(() => {
+  let executedUrl: unknown
+  const tool = fetchTool((args) => {
+    executedUrl = args.url
     started.resolve()
     return pending.promise
   })
+  const hook: Hook = {
+    name: "rewrite-cancelled",
+    beforeTool(input) {
+      if (input.tool === "webfetch" && input.args.url === "uncooperative")
+        return { type: "replace", args: { url: "rewritten-uncooperative" } }
+    },
+  }
+  registerHook("code-mode-test", 1, 0, hook)
   const provider = new ScriptedProvider([
     toolRound("program", "code_mode", { code: 'emit(await callTool("webfetch", {url: "uncooperative"}))' }),
   ])
@@ -270,18 +353,52 @@ test("interrupts an uncooperative child and records cancellation before acceptin
     await started.promise
     session.interrupt()
     expect((await turn).status).toBe("interrupted")
+    expect(executedUrl).toBe("rewritten-uncooperative")
     const finished = observed.find((event) => event.type === "tool_finished")
     if (finished?.type !== "tool_finished") throw new Error("missing parent result")
     const path = /Tool trace: (.+)/.exec(finished.output)?.[1]
     if (!path) throw new Error("missing cancellation trace")
     const trace: unknown = JSON.parse(await readFile(join(path, "01.json"), "utf8"))
     if (!isRecord(trace)) throw new Error("invalid cancellation trace")
-    expect(trace.status).toBe("failed")
+    expect(trace).toMatchObject({ status: "failed", call: { args: { url: "rewritten-uncooperative" } } })
     pending.resolve({ output: "late result" })
     await Bun.sleep(0)
     expect(observed.filter((event) => event.type === "tool_finished")).toHaveLength(1)
   } finally {
     pending.resolve({ output: "late result" })
     unregisterTool(tool)
+    removeHooks(1)
+  }
+})
+
+test("preserves the trace location when the program deadline expires", async () => {
+  const deadline = new AbortController()
+  const timeout = spyOn(AbortSignal, "timeout").mockReturnValue(deadline.signal)
+  const started = Promise.withResolvers<void>()
+  const pending = Promise.withResolvers<{ output: string }>()
+  const tool = fetchTool(() => {
+    started.resolve()
+    return pending.promise
+  })
+  const provider = new ScriptedProvider([
+    toolRound("program", "code_mode", { code: 'emit(await callTool("webfetch", {url: "deadline-fixture"}))' }),
+    completedRound("done"),
+  ])
+  registerTool(tool)
+  try {
+    const turn = runSettledTurn(harness.createSession(provider), { text: "Read before the deadline", images: [] })
+    await started.promise
+    deadline.abort(new DOMException("Code Mode deadline expired", "TimeoutError"))
+    await turn
+    const output = outputOf(provider)
+    expect(output).toStartWith("Tool failed: Code Mode deadline expired")
+    const path = /Tool trace: (.+)/.exec(output)?.[1]
+    if (!path) throw new Error("missing timeout trace")
+    const trace: unknown = JSON.parse(await readFile(join(path, "01.json"), "utf8"))
+    expect(trace).toMatchObject({ status: "failed", error: "Code Mode deadline expired" })
+  } finally {
+    pending.resolve({ output: "late result" })
+    unregisterTool(tool)
+    timeout.mockRestore()
   }
 })

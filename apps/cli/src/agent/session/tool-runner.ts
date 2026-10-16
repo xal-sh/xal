@@ -30,7 +30,6 @@ import type {
   ElicitationResult,
   ProcessExecution,
   RegisteredTool,
-  Tool,
   ToolConcurrency,
   ToolEvent,
   ToolExecutionContext,
@@ -75,6 +74,7 @@ export interface ToolCallOutcome {
   title: string
   readOnly: boolean
   output: string
+  loopOutput?: string
   execution?: ProcessExecution
   events: ToolEvent[]
   failure?: string
@@ -283,7 +283,7 @@ export class ToolCallRunner {
         this.commit(
           prefetch?.target === outcome ? { ...outcome, output: `${outcome.output}\n\n${prefetch.text}` } : outcome,
         )
-        if (recorded[index]) toolLoops.record(outcome.call, outcome.output)
+        if (recorded[index]) toolLoops.record(outcome.call, outcome.loopOutput ?? outcome.output)
       }
       profileToolBatchFinished(profile, loopError ? "failed" : signal.aborted ? "interrupted" : "completed")
       return loopError
@@ -383,15 +383,22 @@ export class ToolCallRunner {
     signal: AbortSignal,
     loops: ToolLoopDetector,
     parentCallId: string,
+    updateCall: (call: ToolCallItem) => Promise<void>,
   ): Promise<ToolCallPreparation> {
-    if (!PROGRAMMATIC_TOOLS.has(call.name)) {
-      return { type: "outcome", outcome: this.skippedOutcome(call, `Code Mode cannot call ${call.name}.`, "policy") }
-    }
-    const entry = await this.applyBeforeToolHook(call, signal, false)
-    if (entry.type === "outcome") return entry
-    call = entry.call
+    const entry: ToolCallEntry = PROGRAMMATIC_TOOLS.has(call.name)
+      ? await this.applyBeforeToolHook(call, signal, false)
+      : { type: "outcome", outcome: this.skippedOutcome(call, `Code Mode cannot call ${call.name}.`, "policy") }
+    call = entry.type === "call" ? entry.call : entry.outcome.call
+    await updateCall(call)
+    signal.throwIfAborted()
     const tool = this.host.availableTool(call.name)
     const context = { cwd: this.host.cwd() }
+    const loop = tool?.allowRepeatedCalls?.(call.args, context) ? "allow" : loops.inspect(call)
+    if (loop !== "allow") {
+      const outcome = this.loopOutcome(call, loop)
+      return { type: "outcome", outcome: { ...outcome, output: `${TOOL_FAILED_PREFIX}${outcome.output}` } }
+    }
+    if (entry.type === "outcome") return entry
     if (
       !tool ||
       isInteractiveTool(tool) ||
@@ -409,11 +416,6 @@ export class ToolCallRunner {
           "policy",
         ),
       }
-    }
-    const loop = tool.allowRepeatedCalls?.(call.args, context) ? "allow" : loops.inspect(call)
-    if (loop !== "allow") {
-      const outcome = this.loopOutcome(call, loop)
-      return { type: "outcome", outcome: { ...outcome, output: `${TOOL_FAILED_PREFIX}${outcome.output}` } }
     }
     return this.prepare(call, signal, parentCallId)
   }
@@ -447,6 +449,7 @@ export class ToolCallRunner {
       const redacted = updates.write(text)
       if (redacted && !parentCallId) this.host.emit({ type: "tool_updated", callId: call.callId, text: redacted })
     }
+    const scope = program ? this.toolScope(call, signal, toolLoops, update) : undefined
     try {
       const execute = (): Promise<ToolResult> =>
         isInteractiveTool(tool)
@@ -487,8 +490,10 @@ export class ToolCallRunner {
                 signal,
                 update,
               })
-            : tool.orchestrates
-              ? this.executeProgram(prepared.call, tool, signal, toolLoops, update)
+            : scope
+              ? scope.run((scopeSignal) =>
+                  tool.execute(call.args, { ...this.toolContext(scopeSignal, update), callTool: scope.callTool }),
+                )
               : tool.execute(call.args, this.toolContext(signal, update))
       let result: ToolResult
       switch (undo.type) {
@@ -526,7 +531,10 @@ export class ToolCallRunner {
         )
       output = redactText(await (parentCallId || program ? withAbortSignal(signal, after) : after()))
     } catch (error) {
-      if (!isAbortError(error)) {
+      if ((parentCallId || program) && signal.aborted) {
+        output = failure ?? redactText(`${TOOL_FAILED_PREFIX}${describeError(signal.reason)}`)
+        failure ??= output
+      } else if (!isAbortError(error)) {
         output = redactText(
           `${TOOL_FAILED_PREFIX}${describeError(error)}. The tool may have changed state; inspect it before retrying.`,
         )
@@ -542,6 +550,8 @@ export class ToolCallRunner {
         ...(failure ? { failure } : {}),
       }
     }
+    const loopOutput = output
+    if (scope) output = redactText(`${output}\n\nTool trace: ${scope.directory}`)
     const originalOutput = output
     let bounded = false
     try {
@@ -551,21 +561,30 @@ export class ToolCallRunner {
       output = `${TOOL_OUTPUT_UNSAVED_PREFIX}${describeError(error)}. The operation may have changed state; inspect it before retrying.`
     }
     profileToolOutputShape(this.host.sessionId(), this.host.kind, call.name, originalOutput, output, bounded)
-    return this.outcome(call, title, readOnly, output, undefined, events, execution)
+    return {
+      ...this.outcome(call, title, readOnly, output, undefined, events, execution),
+      ...(scope ? { loopOutput } : {}),
+    }
   }
 
-  private executeProgram(
+  private toolScope(
     call: ToolCallItem,
-    tool: Tool,
     signal: AbortSignal,
     loops: ToolLoopDetector,
     update: (text: string) => void,
-  ): Promise<ToolResult> {
-    const scope = new ToolCallScope(
+  ): ToolCallScope {
+    return new ToolCallScope(
       call,
       this.host.outputDirectory(),
       signal,
-      (child, childSignal) => this.prepareChild(child, childSignal, loops, call.callId),
+      async (child, childSignal, updateCall) => {
+        const preparation = await this.prepareChild(child, childSignal, loops, call.callId, updateCall)
+        childSignal.throwIfAborted()
+        if (preparation.type === "outcome" && preparation.outcome.denial) {
+          loops.record(preparation.outcome.call, preparation.outcome.output)
+        }
+        return preparation
+      },
       async (child, childSignal) => {
         const outcome = await this.execute(child, childSignal, loops, call.callId)
         childSignal.throwIfAborted()
@@ -573,9 +592,6 @@ export class ToolCallRunner {
         return outcome
       },
       update,
-    )
-    return scope.run((signal) =>
-      tool.execute(call.args, { ...this.toolContext(signal, update), callTool: scope.callTool }),
     )
   }
 
