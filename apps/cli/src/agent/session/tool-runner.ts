@@ -1,5 +1,6 @@
 import { runAfterToolHooks, runBeforeToolHooks, type HookReporter } from "../../hooks/registry"
 import type { HookContext } from "../../hooks/types"
+import { withAbortSignal } from "../../lib/abort"
 import { describeError } from "../../lib/error"
 import { modeDefinition } from "../../permissions/modes"
 import { evaluatePolicy } from "../../permissions/service"
@@ -22,6 +23,7 @@ import {
   toolFailed,
 } from "../../tools/output"
 import { getTool } from "../../tools/registry"
+import { PROGRAMMATIC_TOOLS } from "../../tools/programmatic"
 import { isInteractiveTool, isSessionTool } from "../../tools/types"
 import type {
   ElicitationRequest,
@@ -36,7 +38,8 @@ import type {
 } from "../../tools/types"
 import type { WorkspaceUndo } from "../../tools/undo"
 import type { AgentEvent, AgentState, DenialCause } from "../events"
-import type { ToolLoopDetector, ToolLoopAction } from "./loop-detection"
+import { ToolLoopDetector, type ToolLoopAction } from "./loop-detection"
+import { ToolCallScope } from "./tool-scope"
 import type { OutputContract } from "./output-contract"
 import { READ_AHEAD_TOOLS, readAheadOrNotice } from "./read-ahead"
 import { isAbortError } from "./types"
@@ -71,8 +74,10 @@ export interface ToolCallOutcome {
   title: string
   readOnly: boolean
   output: string
+  loopOutput?: string
   execution?: ProcessExecution
   events: ToolEvent[]
+  failure?: string
   denial?: DenialCause
 }
 
@@ -116,7 +121,7 @@ export interface ToolRunnerHost {
   updateToolCall(call: ToolCallItem): void
   publishToolEvent(event: ToolEvent): void
   requestInput(callId: string, request: ElicitationRequest, signal: AbortSignal): Promise<ElicitationResult>
-  requestApproval(resolve: (result: ApprovalResult) => void): void
+  requestApproval(resolve: (result: ApprovalResult) => void, signal: AbortSignal): void
   changeWorkspace(cwd: string): void
   askParent(question: string, signal: AbortSignal): Promise<ParentQuestionResult>
   receiveAgentQuestion(question: DeliveredAgentQuestion): boolean
@@ -153,6 +158,7 @@ export class ToolCallRunner {
   concurrency(entry: ToolCallEntry): ToolConcurrency {
     if (entry.type === "outcome") return "exclusive"
     const tool = this.host.availableTool(entry.call.name) ?? getTool(entry.call.name)
+    if (tool && !isInteractiveTool(tool) && !isSessionTool(tool) && tool.orchestrates) return "exclusive"
     return tool?.concurrency?.(entry.call.args, { cwd: this.host.cwd() }) ?? "exclusive"
   }
 
@@ -255,15 +261,16 @@ export class ToolCallRunner {
       }
 
       if (batch.concurrency === "shared") {
-        const completed = await Promise.all(ready.map(({ prepared }) => this.execute(prepared, signal)))
+        const completed = await Promise.all(ready.map(({ prepared }) => this.execute(prepared, signal, toolLoops)))
         completed.forEach((outcome, index) => {
           const entry = ready[index]
           if (!entry) throw new Error("tool scheduler lost a shared call")
           outcomes[entry.index] = outcome
         })
       } else {
-        for (const entry of ready) outcomes[entry.index] = await this.execute(entry.prepared, signal)
+        for (const entry of ready) outcomes[entry.index] = await this.execute(entry.prepared, signal, toolLoops)
       }
+      loopError ??= toolLoops.failure
       const prefetch = loopError
         ? undefined
         : await this.readAhead(
@@ -276,7 +283,7 @@ export class ToolCallRunner {
         this.commit(
           prefetch?.target === outcome ? { ...outcome, output: `${outcome.output}\n\n${prefetch.text}` } : outcome,
         )
-        if (recorded[index]) toolLoops.record(outcome.call, outcome.output)
+        if (recorded[index]) toolLoops.record(outcome.call, outcome.loopOutput ?? outcome.output)
       }
       profileToolBatchFinished(profile, loopError ? "failed" : signal.aborted ? "interrupted" : "completed")
       return loopError
@@ -286,7 +293,7 @@ export class ToolCallRunner {
     }
   }
 
-  async prepare(call: ToolCallItem, signal: AbortSignal): Promise<ToolCallPreparation> {
+  async prepare(call: ToolCallItem, signal: AbortSignal, parentCallId?: string): Promise<ToolCallPreparation> {
     const tool = this.host.availableTool(call.name)
     const known = tool ?? getTool(call.name)
     const title = known?.title(call.args, { cwd: this.host.cwd() }) ?? JSON.stringify(call.args)
@@ -335,12 +342,12 @@ export class ToolCallRunner {
 
     if (decision === "ask") {
       const asked = new Promise<ApprovalResult>((resolve) => {
-        this.host.requestApproval(resolve)
+        this.host.requestApproval(resolve, signal)
       })
       this.host.setState("awaiting_approval")
       this.host.emit({
         type: "approval_requested",
-        callId: call.callId,
+        callId: parentCallId ?? call.callId,
         tool: call.name,
         title,
         readOnly,
@@ -371,23 +378,78 @@ export class ToolCallRunner {
     return { type: "ready", prepared: { call, tool, title, readOnly, undo } }
   }
 
-  async execute(prepared: PreparedToolCall, signal: AbortSignal): Promise<ToolCallOutcome> {
+  private async prepareChild(
+    call: ToolCallItem,
+    signal: AbortSignal,
+    loops: ToolLoopDetector,
+    parentCallId: string,
+    updateCall: (call: ToolCallItem) => Promise<void>,
+  ): Promise<ToolCallPreparation> {
+    const entry: ToolCallEntry = PROGRAMMATIC_TOOLS.has(call.name)
+      ? await this.applyBeforeToolHook(call, signal, false)
+      : { type: "outcome", outcome: this.skippedOutcome(call, `Code Mode cannot call ${call.name}.`, "policy") }
+    call = entry.type === "call" ? entry.call : entry.outcome.call
+    await updateCall(call)
+    signal.throwIfAborted()
+    const tool = this.host.availableTool(call.name)
+    const context = { cwd: this.host.cwd() }
+    const loop = tool?.allowRepeatedCalls?.(call.args, context) ? "allow" : loops.inspect(call)
+    if (loop !== "allow") {
+      const outcome = this.loopOutcome(call, loop)
+      return { type: "outcome", outcome: { ...outcome, output: `${TOOL_FAILED_PREFIX}${outcome.output}` } }
+    }
+    if (entry.type === "outcome") return entry
+    if (
+      !tool ||
+      isInteractiveTool(tool) ||
+      isSessionTool(tool) ||
+      tool.orchestrates ||
+      !tool.readOnly?.(call.args, context) ||
+      tool.concurrency?.(call.args, context) !== "shared" ||
+      (tool.undo?.(call.args, context).type ?? "none") !== "none"
+    ) {
+      return {
+        type: "outcome",
+        outcome: this.skippedOutcome(
+          call,
+          `Code Mode requires an available, shared, read-only tool: ${call.name}.`,
+          "policy",
+        ),
+      }
+    }
+    return this.prepare(call, signal, parentCallId)
+  }
+
+  async execute(
+    prepared: PreparedToolCall,
+    signal: AbortSignal,
+    toolLoops = new ToolLoopDetector(),
+    parentCallId?: string,
+  ): Promise<ToolCallOutcome> {
     const { call, tool, title, readOnly, undo } = prepared
+    const program = !isInteractiveTool(tool) && !isSessionTool(tool) && tool.orchestrates
+    if (program) signal = AbortSignal.any([signal, AbortSignal.timeout(60_000)])
     if (signal.aborted) {
       return this.outcome(call, title, readOnly, "Interrupted by user before execution.")
     }
 
     this.host.setState("running_tool")
-    this.host.emit({ type: "tool_started", callId: call.callId, tool: call.name, title, readOnly })
+    if (parentCallId) {
+      this.host.emit({ type: "tool_updated", callId: parentCallId, text: `${call.name}: ${redactText(title)}\n` })
+    } else {
+      this.host.emit({ type: "tool_started", callId: call.callId, tool: call.name, title, readOnly })
+    }
     let output: string
+    let failure: string | undefined
     let execution: ProcessExecution | undefined
     let events: ToolEvent[] = []
     let maxOutputBytes: number | undefined
     const updates = createRedactedStream()
     const update = (text: string): void => {
       const redacted = updates.write(text)
-      if (redacted) this.host.emit({ type: "tool_updated", callId: call.callId, text: redacted })
+      if (redacted && !parentCallId) this.host.emit({ type: "tool_updated", callId: call.callId, text: redacted })
     }
+    const scope = program ? this.toolScope(call, signal, toolLoops, update) : undefined
     try {
       const execute = (): Promise<ToolResult> =>
         isInteractiveTool(tool)
@@ -428,7 +490,11 @@ export class ToolCallRunner {
                 signal,
                 update,
               })
-            : tool.execute(call.args, this.toolContext(signal, update))
+            : scope
+              ? scope.run((scopeSignal) =>
+                  tool.execute(call.args, { ...this.toolContext(scopeSignal, update), callTool: scope.callTool }),
+                )
+              : tool.execute(call.args, this.toolContext(signal, update))
       let result: ToolResult
       switch (undo.type) {
         case "none":
@@ -445,31 +511,47 @@ export class ToolCallRunner {
           break
       }
       output = redactText(result.output)
+      if (toolFailed(output)) failure = output
       execution = result.execution
       events = result.events ?? []
       maxOutputBytes = result.maxOutputBytes
     } catch (error) {
       output = redactText(`${TOOL_FAILED_PREFIX}${describeError(error)}`)
+      failure = output
     } finally {
       const tail = updates.end()
-      if (tail) this.host.emit({ type: "tool_updated", callId: call.callId, text: tail })
+      if (tail && !parentCallId) this.host.emit({ type: "tool_updated", callId: call.callId, text: tail })
     }
     try {
-      output = redactText(
-        await runAfterToolHooks(
+      const after = (): Promise<string> =>
+        runAfterToolHooks(
           { callId: call.callId, tool: call.name, args: call.args, title, readOnly, output },
           this.host.hookContext(signal),
           this.host.hookReporter,
-        ),
-      )
+        )
+      output = redactText(await (parentCallId || program ? withAbortSignal(signal, after) : after()))
     } catch (error) {
-      if (!isAbortError(error)) {
+      if ((parentCallId || program) && signal.aborted) {
+        output = failure ?? redactText(`${TOOL_FAILED_PREFIX}${describeError(signal.reason)}`)
+        failure ??= output
+      } else if (!isAbortError(error)) {
         output = redactText(
           `${TOOL_FAILED_PREFIX}${describeError(error)}. The tool may have changed state; inspect it before retrying.`,
         )
+        failure ??= output
       }
     }
     output = redactText(output)
+    if (program && failure && !toolFailed(output)) output = `${failure}\n\n${output}`
+    if (parentCallId) {
+      profileToolOutputShape(this.host.sessionId(), this.host.kind, call.name, output, "", true)
+      return {
+        ...this.outcome(call, title, readOnly, output, undefined, events, execution),
+        ...(failure ? { failure } : {}),
+      }
+    }
+    const loopOutput = output
+    if (scope) output = redactText(`${output}\n\nTool trace: ${scope.directory}`)
     const originalOutput = output
     let bounded = false
     try {
@@ -479,7 +561,38 @@ export class ToolCallRunner {
       output = `${TOOL_OUTPUT_UNSAVED_PREFIX}${describeError(error)}. The operation may have changed state; inspect it before retrying.`
     }
     profileToolOutputShape(this.host.sessionId(), this.host.kind, call.name, originalOutput, output, bounded)
-    return this.outcome(call, title, readOnly, output, undefined, events, execution)
+    return {
+      ...this.outcome(call, title, readOnly, output, undefined, events, execution),
+      ...(scope ? { loopOutput } : {}),
+    }
+  }
+
+  private toolScope(
+    call: ToolCallItem,
+    signal: AbortSignal,
+    loops: ToolLoopDetector,
+    update: (text: string) => void,
+  ): ToolCallScope {
+    return new ToolCallScope(
+      call,
+      this.host.outputDirectory(),
+      signal,
+      async (child, childSignal, updateCall) => {
+        const preparation = await this.prepareChild(child, childSignal, loops, call.callId, updateCall)
+        childSignal.throwIfAborted()
+        if (preparation.type === "outcome" && preparation.outcome.denial) {
+          loops.record(preparation.outcome.call, preparation.outcome.output)
+        }
+        return preparation
+      },
+      async (child, childSignal) => {
+        const outcome = await this.execute(child, childSignal, loops, call.callId)
+        childSignal.throwIfAborted()
+        loops.record(outcome.call, outcome.output)
+        return outcome
+      },
+      update,
+    )
   }
 
   private toolContext(signal: AbortSignal, update: (text: string) => void, speculative = false): ToolExecutionContext {

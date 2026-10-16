@@ -337,6 +337,7 @@ async function buildArtifact(target: NativeTarget, inputs: NativeInputs, portabl
   const buildDirectory = join(ROOT, "target/native-build", portable ? "portable" : "host")
   env.CARGO_TARGET_DIR = buildDirectory
   if (portable && target.deploymentTarget) env.MACOSX_DEPLOYMENT_TARGET = target.deploymentTarget
+  if (target.os === "darwin") env.CARGO_PROFILE_RELEASE_STRIP = "none"
   if (musl) env.RUSTFLAGS = "-C target-feature=-crt-static"
   await run([...cargo.command, "-p", "xal-native"], env)
 

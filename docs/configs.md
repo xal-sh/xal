@@ -60,6 +60,26 @@ Built-in configuration is documented with the feature that consumes it:
 - [Commands and skills](/docs/commands-and-skills) covers project instruction limits.
 - [Scheduler](/docs/scheduler) covers delayed model continuation.
 
+## Code Mode
+
+The built-in `code-mode` plugin offers an experimental, provider-independent `code_mode` tool for combining read-only tools and filtering their results before they enter model context. It is off by default and does not require TypeSafe AI or another provider connection.
+
+Enable it in user configuration or trusted project configuration, then restart Xal:
+
+```json
+{
+  "pluginConfig": {
+    "code-mode": {
+      "enabled": true
+    }
+  }
+}
+```
+
+`enabled` is the only supported field and must be a boolean. Missing or `false` leaves the tool unregistered, with no added model-facing schema or JavaScript runtime initialization. Invalid fields or values report a plugin registration failure and leave Code Mode unavailable. Standard configuration merge rules apply; set `enabled` to `false` in the higher-priority project file to override a user setting.
+
+The initial release permits only `read`, `glob`, `grep`, and `webfetch`, with ordinary per-call permissions and hooks. Runtime and call limits are fixed rather than configurable. See [Code Mode](/docs/tools#code-mode) for the JavaScript API, limits, local traces, and an example. Keep it opt-in while evaluating task success, token usage, and latency with your models; no particular saving is guaranteed.
+
 ## Thinking effort
 
 Thinking preferences use this shape:

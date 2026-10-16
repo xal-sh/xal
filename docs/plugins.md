@@ -101,6 +101,14 @@ Built-in plugin options are documented with their features in [TUI](/docs/tui), 
 
 The built-in `classify` plugin exposes the general-purpose [classification tool](/docs/configs#classification-tool). It uses `ctx.runtime.decisions`, independently of the `typesafe` provider plugin. It contributes a tool definition, not a system-prompt instruction or automatic planning/review workflow. The existing TypeSafe AI switch controls availability and inference. [Jev read-ahead](/docs/configs#jev-read-ahead) is part of the harness tool runner rather than a plugin: it reads the results of the registered `read`, `grep`, and `glob` tools by name and prefetches through whichever `read` tool is registered, so a plugin that replaces those tools keeps read-ahead working as long as the output still lists workspace paths.
 
+## Programmatic tool dispatch
+
+The built-in `code-mode` plugin uses the harness's guarded child-tool dispatcher rather than importing the file, search, or web plugins. See [Code Mode configuration](/docs/configs#code-mode) and [tool behavior](/docs/tools#code-mode).
+
+A standard `Tool` with `orchestrates: true` receives `ctx.callTool(name, args, signal)` during agent execution. The harness supplies a deadline-bound `ctx.signal`, serializes approval preparation, limits concurrency and call/result budgets, and retains private child traces. The dispatcher accepts only the initial read-only allowlist; this flag does not grant arbitrary tool access. The harness always schedules orchestrating tools exclusively so they cannot race session interactions with another batch. The flag is not an isolation boundary for trusted plugin code: Code Mode separately uses QuickJS to isolate model-written JavaScript.
+
+Child calls run the same lifecycle hooks as ordinary calls, but `afterTool` output is routed to the program instead of directly to model history. Hook implementations should not assume every invocation corresponds to its own model-facing tool result. The parent trace location is appended after its `afterTool` hooks, independently of the logical output used for repeat-loop detection. Child traces retain the effective arguments before permission approval and execution, including on cancellation, while the parent remains the only conversation-level call/result pair. Do not invoke another plugin's tool implementation directly to bypass this dispatcher.
+
 ## Decision models
 
 Providers and models have explicit kinds. `Provider` and `TextModelInfo` have `kind: "text"`; `DecisionProvider` and `DecisionModelInfo` have `kind: "decision"`. `AnyProvider` and `ModelInfo` are their respective unions. Existing text-provider plugins must add `kind: "text"` to their provider and model metadata. `ModelCatalog` defaults to text models; decision providers return `ModelCatalog<DecisionModelInfo>`.

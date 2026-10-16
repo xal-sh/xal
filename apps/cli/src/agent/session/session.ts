@@ -247,7 +247,7 @@ export class AgentSession {
       updateToolCall: (call) => this.updateToolCall(call),
       publishToolEvent: (event) => this.publishToolEvent(event),
       requestInput: (callId, request, signal) => this.interactions.requestInput(callId, request, signal),
-      requestApproval: (resolve) => this.interactions.awaitApproval(resolve),
+      requestApproval: (resolve, signal) => this.interactions.awaitApproval(resolve, signal),
       changeWorkspace: (cwd) => this.changeWorkspace(cwd),
       askParent: (question, signal) => this.askParent(question, signal),
       receiveAgentQuestion: (question) => this.receiveAgentQuestion(question),
