@@ -53,6 +53,8 @@ Run with `--profile` to store anonymous session diagnostics and print the profil
 
 Local development requires Bun 1.3.14 and Rust 1.92.0. The first development or test run builds the native addon for the host and caches it under `apps/cli/.native`. Restart `bun dev` after changing Rust code.
 
+On macOS, native builds disable Rust's release debug-info stripping to avoid [a Rust toolchain bug](https://github.com/rust-lang/rust/issues/157750) that produces misaligned libraries rejected by macOS 27. The build configuration is part of the cache key, so `bun dev` rebuilds affected cached addons automatically.
+
 ```bash
 bun install
 bun dev

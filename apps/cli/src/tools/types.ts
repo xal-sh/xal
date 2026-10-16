@@ -5,6 +5,7 @@ import type { PlanUpdatedEvent } from "../plans/types"
 import type { ContextUsage, ModelInputModality, Provider, ThinkingEffort, ToolDefinition } from "../providers/types"
 import type { TaskListUpdatedEvent } from "../tasks/types"
 import type { WorkspaceUndo } from "./undo"
+import type { ToolInvoker } from "./programmatic"
 
 export type ProcessSandbox = "read" | "workspace"
 
@@ -84,11 +85,13 @@ export interface ToolExecutionContext extends ToolCallContext {
   sessionKind: SessionKind
   directory: string
   speculative?: boolean
+  callTool?: ToolInvoker
   signal: AbortSignal
   update(text: string): void
 }
 
 export interface Tool extends ToolContract {
+  orchestrates?: true
   execute(args: Record<string, unknown>, ctx: ToolExecutionContext): Promise<ToolResult>
 }
 
