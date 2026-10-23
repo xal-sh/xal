@@ -1,4 +1,4 @@
-import { homedir, tmpdir } from "node:os"
+import { homedir } from "node:os"
 import { forgetFileStates } from "../../tools/file-state"
 import type { Plugin } from "../types"
 import { editTool } from "./edit"
@@ -23,17 +23,12 @@ const plugin: Plugin = {
     ctx.registerToolSessionDisposer(forgetFileStates)
     ctx.registerPermissionRules({
       ask: [
-        "write(/*)",
-        "edit(/*)",
         "read(*.env)",
         "read(*.env.*)",
         `read(${homedir()}/.ssh/*)`,
         `read(${homedir()}/.aws/*)`,
         `read(${homedir()}/.gnupg/*)`,
       ],
-    })
-    ctx.registerPermissionRules({
-      allow: [`write(${tmpdir()}/*)`, `edit(${tmpdir()}/*)`, "write(/tmp/*)", "edit(/tmp/*)"],
     })
     ctx.registerToolRenderer({
       tool: "write",

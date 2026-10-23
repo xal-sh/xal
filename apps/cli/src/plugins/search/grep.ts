@@ -1,5 +1,7 @@
+import { resolve } from "node:path"
 import { asBoolean, asString } from "../../lib/json"
-import { displayPath } from "../../lib/path"
+import { displayPath, resolveFilePath } from "../../lib/path"
+import { pathPermission } from "../../permissions/path"
 import { nativeGrep } from "../../native"
 import type { Tool } from "../../tools/types"
 const LIMIT = 250
@@ -48,6 +50,10 @@ export const grepTool: Tool = {
   concurrency() {
     return "shared"
   },
+  permission(args, ctx) {
+    const permission = pathPermission("grep", resolve(resolveFilePath(asString(args.path) ?? ".", ctx.cwd)), ctx.cwd)
+    return { ...permission, suggestion: `grep(${permission.subject})` }
+  },
   async execute(args, ctx) {
     const pattern = asString(args.pattern)
     const target = asString(args.path)
@@ -58,7 +64,7 @@ export const grepTool: Tool = {
       {
         cwd: ctx.cwd,
         aborted: ctx.signal.aborted,
-        ...(target === undefined ? {} : { target }),
+        ...(target === undefined ? {} : { target: resolve(resolveFilePath(target, ctx.cwd)) }),
         ...(glob === undefined ? {} : { glob }),
         ...(pattern === undefined ? {} : { pattern }),
         ...(outputMode === undefined ? {} : { outputMode }),

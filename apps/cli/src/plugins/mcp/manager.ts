@@ -354,7 +354,11 @@ export class McpManager {
       available: (ctx) => this.toolAvailable(ctx.sessionId, descriptor.name),
       title: () => descriptor.title,
       undo: () => ({ type: "invalidate" }),
-      permission: () => ({ subject: `${descriptor.server}/${descriptor.remoteName}`, suggestion: descriptor.name }),
+      permission: () => ({
+        subject: `${descriptor.server}/${descriptor.remoteName}`,
+        suggestion: descriptor.name,
+        outsideWorkspace: true,
+      }),
       execute: async (args, ctx) => {
         const call = this.native.startToolCall(
           JSON.stringify({ server: descriptor.server, name: descriptor.remoteName, arguments: args }),

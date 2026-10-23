@@ -1,4 +1,6 @@
+import { resolve } from "node:path"
 import { asString } from "../lib/json"
+import { pathPermission } from "../permissions/path"
 import { getSkill } from "./registry"
 import type { Skill } from "./types"
 import type { Tool } from "../tools/types"
@@ -51,6 +53,16 @@ export const skillTool: Tool = {
   },
   concurrency() {
     return "shared"
+  },
+  permission(args, ctx) {
+    const skill = requiredSkill(args)
+    const resource = asString(args.path)
+    const permission = pathPermission(
+      "skill",
+      resource === undefined ? skill.directory : resolve(skill.directory, resource),
+      ctx.cwd,
+    )
+    return { ...permission, suggestion: `skill(${permission.subject})` }
   },
   async execute(args) {
     const skill = requiredSkill(args)

@@ -47,6 +47,10 @@ export const worktreeEnterTool: SessionTool = {
   readOnly() {
     return false
   },
+  permission(args) {
+    const subject = asString(args.name)?.trim() ?? ""
+    return { subject, suggestion: `worktree_enter(${subject})`, outsideWorkspace: true }
+  },
   async execute(args, ctx) {
     if (ctx.session.kind !== "primary") throw new Error("worktree_enter is available only to primary sessions")
     const prepared = nativePrepareWorktreeTool({ operation: "enter", name: asString(args.name) })
@@ -96,7 +100,8 @@ export const worktreeExitTool: SessionTool = {
   },
   permission(args) {
     const action = asString(args.action) ?? ""
-    return { subject: `${action}${asBoolean(args.force) ? " force" : ""}` }
+    const subject = `${action}${asBoolean(args.force) ? " force" : ""}`
+    return { subject, suggestion: `worktree_exit(${subject})`, outsideWorkspace: true }
   },
   async execute(args, ctx) {
     if (ctx.session.kind !== "primary") throw new Error("worktree_exit is available only to primary sessions")
@@ -154,7 +159,8 @@ export const worktreeRemoveTool: SessionTool = {
   },
   permission(args) {
     const path = asString(args.path) ?? ""
-    return { subject: `${path}${asBoolean(args.force) ? " force" : ""}` }
+    const subject = `${path}${asBoolean(args.force) ? " force" : ""}`
+    return { subject, suggestion: `worktree_remove(${subject})`, outsideWorkspace: true }
   },
   async execute(args, ctx) {
     if (ctx.session.kind !== "primary") throw new Error("worktree_remove is available only to primary sessions")

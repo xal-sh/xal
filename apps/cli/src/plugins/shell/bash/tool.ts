@@ -48,7 +48,7 @@ function parameters(): Record<string, unknown> {
       type: "string",
       enum: ["read", "workspace"],
       description:
-        'Use "read" to enforce no filesystem state changes, or "workspace" to allow writes only in the workspace and temporary directories. Both block network access and run without approval',
+        'Use "read" to enforce no filesystem state changes, or "workspace" to allow writes only in the workspace and temporary directories. Both block network access, but neither confines reads to the workspace; normal and plan modes still require approval unless whitelisted',
     }
   }
   return {
@@ -91,18 +91,19 @@ export const bashTool: Tool = {
   },
   permission(args) {
     const command = commandOf(args)
+    const permission = { subject: command, outsideWorkspace: true }
     const segments = splitCommand(command)
-    if (!segments) return { subject: command }
+    if (!segments) return { ...permission, suggestion: `bash(${command})` }
     const first = segments[0]!
     if (segments.length > 1) {
       const prefix = commandPrefix(command)
-      if (prefix && prefix.prefix === first) return { subject: command, suggestion: `bash(${first}*)` }
-      return { subject: command }
+      if (prefix && prefix.prefix === first) return { ...permission, suggestion: `bash(${first}*)` }
+      return { ...permission, suggestion: `bash(${command})` }
     }
     const words = first.split(/\s+/)
-    if (words.length < 2) return { subject: command, suggestion: `bash(${command})` }
-    if (isAssignmentPrefix(words[0]!)) return { subject: command }
-    return { subject: command, suggestion: `bash(${words[0]} ${words[1]}*)` }
+    if (words.length < 2) return { ...permission, suggestion: `bash(${command})` }
+    if (isAssignmentPrefix(words[0]!)) return { ...permission, suggestion: `bash(${command})` }
+    return { ...permission, suggestion: `bash(${words[0]} ${words[1]}*)` }
   },
   async execute(args, ctx) {
     const command = commandOf(args)

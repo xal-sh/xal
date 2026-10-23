@@ -79,7 +79,10 @@ export function mcpTools(manager: McpManager): Tool[] {
       title: (args) => `${asString(args.server) ?? "MCP"}: ${asString(args.uri) ?? "resource"}`,
       undo: () => ({ type: "invalidate" }),
       concurrency: () => "shared",
-      permission: (args) => ({ subject: `${asString(args.server) ?? ""}/${asString(args.uri) ?? ""}` }),
+      permission: (args) => {
+        const subject = `${asString(args.server) ?? ""}/${asString(args.uri) ?? ""}`
+        return { subject, suggestion: `mcp_read_resource(${subject})`, outsideWorkspace: true }
+      },
       async execute(args, ctx) {
         const server = requiredString(args, "server")
         const uri = requiredString(args, "uri")
@@ -126,7 +129,10 @@ export function mcpTools(manager: McpManager): Tool[] {
       title: (args) => `${asString(args.server) ?? "MCP"}: ${asString(args.name) ?? "prompt"}`,
       undo: () => ({ type: "invalidate" }),
       concurrency: () => "shared",
-      permission: (args) => ({ subject: `${asString(args.server) ?? ""}/${asString(args.name) ?? ""}` }),
+      permission: (args) => {
+        const subject = `${asString(args.server) ?? ""}/${asString(args.name) ?? ""}`
+        return { subject, suggestion: `mcp_get_prompt(${subject})`, outsideWorkspace: true }
+      },
       async execute(args, ctx) {
         const server = requiredString(args, "server")
         const name = requiredString(args, "name")

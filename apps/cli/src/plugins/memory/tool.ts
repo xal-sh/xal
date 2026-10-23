@@ -57,7 +57,8 @@ export function createMemoryTool(store: GlobalMemoryStore): Tool {
       return "exclusive"
     },
     permission(args) {
-      return { subject: operationValue(args) ?? "invalid" }
+      const subject = operationValue(args) ?? "invalid"
+      return { subject, suggestion: `memory(${subject})`, outsideWorkspace: true }
     },
     async execute(args, ctx) {
       const prepared = nativeToolRecord("memory_prepare", args)

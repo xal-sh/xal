@@ -1,5 +1,7 @@
+import { resolve } from "node:path"
 import { asString } from "../../lib/json"
-import { displayPath } from "../../lib/path"
+import { displayPath, resolveFilePath } from "../../lib/path"
+import { pathPermission } from "../../permissions/path"
 import { nativeGlob } from "../../native"
 import type { Tool } from "../../tools/types"
 const LIMIT = 100
@@ -34,6 +36,10 @@ export const globTool: Tool = {
   concurrency() {
     return "shared"
   },
+  permission(args, ctx) {
+    const permission = pathPermission("glob", resolve(resolveFilePath(asString(args.path) ?? ".", ctx.cwd)), ctx.cwd)
+    return { ...permission, suggestion: `glob(${permission.subject})` }
+  },
   async execute(args, ctx) {
     const pattern = asString(args.pattern)
     const target = asString(args.path)
@@ -41,7 +47,7 @@ export const globTool: Tool = {
       {
         cwd: ctx.cwd,
         aborted: ctx.signal.aborted,
-        ...(target === undefined ? {} : { target }),
+        ...(target === undefined ? {} : { target: resolve(resolveFilePath(target, ctx.cwd)) }),
         ...(pattern === undefined ? {} : { pattern }),
       },
       ctx.signal,
