@@ -4,7 +4,7 @@ Connect a built-in or plugin-provided model service, select a model, and configu
 
 ## Built-in providers
 
-Built-in provider IDs are `anthropic`, `google`, `openai`, `openai-chatgpt`, `openrouter`, `github-copilot`, `xai`, `deepseek`, `alibaba-cloud`, `minimax`, `minimax-coding-plan`, `opencode-go`, and `typesafe`. `claude` is an alias for `anthropic`, `gemini` is an alias for `google`, `openai-api` is an alias for `openai`, `chatgpt` is an alias for `openai-chatgpt`, `copilot` is an alias for `github-copilot`, `grok` is an alias for `xai`, and `dashscope` is an alias for `alibaba-cloud`.
+Built-in provider IDs are `anthropic`, `google`, `openai`, `openai-chatgpt`, `openrouter`, `github-copilot`, `xai`, `deepseek`, `alibaba-cloud`, `minimax`, `minimax-coding-plan`, `kimi-code-plan-global`, `kimi-code-plan-cn`, `opencode-go`, and `typesafe`. `claude` is an alias for `anthropic`, `gemini` is an alias for `google`, `openai-api` is an alias for `openai`, `chatgpt` is an alias for `openai-chatgpt`, `copilot` is an alias for `github-copilot`, `grok` is an alias for `xai`, `dashscope` is an alias for `alibaba-cloud`, `kimi` is an alias for `kimi-code-plan-global`, and `kimi-cn` is an alias for `kimi-code-plan-cn`.
 
 The only built-in UI ID is `tui`. Plugins may register more providers, aliases, and UIs.
 
@@ -69,6 +69,23 @@ Alibaba Cloud Model Studio API keys are region-specific. Set `baseUrl` to the Op
 Use `minimax` for standard minimax.io API billing and `minimax-coding-plan` for a minimax.io Coding Plan. Both providers use the official Anthropic-compatible endpoint at `https://api.minimax.io/anthropic/v1` and have separate connection profiles. Run `xal connect minimax` or `xal connect minimax-coding-plan`, then paste the matching API key. Connection stores the key without making a billable model request.
 
 The bundled catalog includes MiniMax M3 and the M2 family, including the high-speed M2.5 and M2.7 variants. M3 supports image input and exposes a thinking on/off control. Its Anthropic-compatible interface defaults thinking off, so Xal explicitly requests adaptive thinking unless `none` is selected. M2 models reason natively without an effort dial and use MiniMax's recommended sampling values.
+
+## Kimi For Coding
+
+The `kimi` plugin registers both Kimi For Coding services with separate connection profiles:
+
+| Provider ID             | Name                       | Alias     | Endpoint                         |
+| ----------------------- | -------------------------- | --------- | -------------------------------- |
+| `kimi-code-plan-global` | Kimi For Coding (kimi.ai)  | `kimi`    | `https://api.kimi.ai/coding/v1`  |
+| `kimi-code-plan-cn`     | Kimi For Coding (kimi.com) | `kimi-cn` | `https://api.kimi.com/coding/v1` |
+
+Run `xal connect kimi` for kimi.ai or `xal connect kimi-cn` for kimi.com, then enter the API key from the matching Kimi Coding subscription. Both services also appear in `/connect`. Xal validates the key against that service's `/models` endpoint before storing it, without making a billable model request. These connections do not use Moonshot's pay-as-you-go platform API.
+
+Both providers discover account-visible models from `/models`, using reported context windows and image capabilities when present and bundled metadata for known models. A failed refresh reports a warning and falls back to the bundled catalog: `kimi-for-coding`, `kimi-for-coding-highspeed`, `k3`, `k3-256k`, `k3.1-pro`, and `k3.1-pro-highspeed`. The default is `kimi-for-coding`.
+
+Requests use OpenAI-compatible Chat Completions with streaming, tool calls, image input, reasoning replay, and prompt caching. `/thinking` offers `none`, `low`, `high`, and `max` for `kimi-for-coding` and K3; K3.1 Pro models always think and offer only `low`, `high`, and `max`. The coding high-speed model reasons without an effort dial. Xal does not send sampling overrides.
+
+`pluginConfig.kimi.clientName` is a non-empty string used in both services' request user agent. It defaults to the package application name. Kimi currently has no other configuration options.
 
 ## GitHub Copilot
 
