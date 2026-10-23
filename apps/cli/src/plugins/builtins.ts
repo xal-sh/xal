@@ -9,6 +9,7 @@ import deepseek from "./deepseek/plugin"
 import google from "./google/plugin"
 import files from "./files/plugin"
 import githubCopilot from "./github-copilot/plugin"
+import kimi from "./kimi/plugin"
 import memory from "./memory/plugin"
 import minimax from "./minimax/plugin"
 import openai from "./openai/plugin"
@@ -42,6 +43,7 @@ export const builtinPlugins: Plugin[] = [
   deepseek,
   alibabaCloud,
   minimax,
+  kimi,
   githubCopilot,
   openai,
   openrouter,
