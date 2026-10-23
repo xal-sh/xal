@@ -34,7 +34,7 @@ function context(permissionRules: PermissionRules[], prompts: PromptSection[]): 
   }
 }
 
-test("keeps MCP calls allowed and server instructions out of the ambient prompt", async () => {
+test("does not implicitly whitelist MCP calls or include server instructions in the ambient prompt", async () => {
   const permissionRules: PermissionRules[] = []
   const prompts: PromptSection[] = []
   const ctx = context(permissionRules, prompts)
@@ -42,7 +42,7 @@ test("keeps MCP calls allowed and server instructions out of the ambient prompt"
   try {
     plugin.register(ctx)
 
-    expect(permissionRules).toEqual([{ allow: ["mcp__*", "mcp_read_resource", "mcp_get_prompt"] }])
+    expect(permissionRules).toEqual([])
     expect(prompts).toHaveLength(1)
     expect(
       prompts[0]?.text({

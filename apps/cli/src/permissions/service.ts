@@ -28,6 +28,8 @@ export async function evaluatePolicy(request: PermissionRequest): Promise<Policy
   if (mode.readOnly && !request.readOnly) return "deny"
 
   const registered = evaluateRegistered(request)
+  if (registered === "deny") return "deny"
+  if (request.outsideWorkspace) return underMode(matchRules(request, false) ?? "ask", mode)
   if (registered) return underMode(registered, mode)
 
   const matched = matchRules(request)

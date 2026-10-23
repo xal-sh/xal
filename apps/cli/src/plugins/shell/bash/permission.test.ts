@@ -14,10 +14,12 @@ describe("bash permission suggestion", () => {
   test("keeps single-command suggestions", () => {
     expect(bashTool.permission?.({ command: "pnpm test" }, { cwd: "/workspace" })).toEqual({
       subject: "pnpm test",
+      outsideWorkspace: true,
       suggestion: "bash(pnpm test*)",
     })
     expect(bashTool.permission?.({ command: "git status" }, { cwd: "/workspace" })).toEqual({
       subject: "git status",
+      outsideWorkspace: true,
       suggestion: "bash(git status*)",
     })
   })
@@ -25,14 +27,17 @@ describe("bash permission suggestion", () => {
   test("suggests a reusable prefix for compound commands", () => {
     expect(bashTool.permission?.({ command: "pnpm test && pnpm lint" }, { cwd: "/workspace" })).toEqual({
       subject: "pnpm test && pnpm lint",
+      outsideWorkspace: true,
       suggestion: "bash(pnpm test*)",
     })
     expect(bashTool.permission?.({ command: "git status && git diff" }, { cwd: "/workspace" })).toEqual({
       subject: "git status && git diff",
+      outsideWorkspace: true,
       suggestion: "bash(git status*)",
     })
     expect(bashTool.permission?.({ command: "npm run build && npm test" }, { cwd: "/workspace" })).toEqual({
       subject: "npm run build && npm test",
+      outsideWorkspace: true,
       suggestion: "bash(npm run build*)",
     })
   })
@@ -40,11 +45,12 @@ describe("bash permission suggestion", () => {
   test("keeps the exact command as suggestion for single words", () => {
     expect(bashTool.permission?.({ command: "ls" }, { cwd: "/workspace" })).toEqual({
       subject: "ls",
+      outsideWorkspace: true,
       suggestion: "bash(ls)",
     })
   })
 
-  test("drops the suggestion when the prefix is not safely reusable", () => {
+  test("suggests the full command when the prefix is not safely reusable", () => {
     for (const command of [
       "echo $(date) && echo done",
       "{ echo grouped; } && echo done",
@@ -53,19 +59,23 @@ describe("bash permission suggestion", () => {
     ]) {
       expect(bashTool.permission?.({ command }, { cwd: "/workspace" })).toEqual({
         subject: command,
+        suggestion: `bash(${command})`,
+        outsideWorkspace: true,
       })
     }
   })
 
-  test("drops the suggestion for single-segment environment-assignment commands", () => {
+  test("suggests the full command for single-segment environment-assignment commands", () => {
     for (const command of ["FOO=1 pnpm test", "FOO+=1 pnpm test"]) {
       expect(bashTool.permission?.({ command }, { cwd: "/workspace" })).toEqual({
         subject: command,
+        suggestion: `bash(${command})`,
+        outsideWorkspace: true,
       })
     }
   })
 
-  test("drops the suggestion for shell control forms", () => {
+  test("suggests the full command for shell control forms", () => {
     for (const command of [
       "if true; then rm -rf /; fi",
       "while true; do echo hi; done",
@@ -73,6 +83,8 @@ describe("bash permission suggestion", () => {
     ]) {
       expect(bashTool.permission?.({ command }, { cwd: "/workspace" })).toEqual({
         subject: command,
+        suggestion: `bash(${command})`,
+        outsideWorkspace: true,
       })
     }
   })
@@ -103,6 +115,7 @@ describe("bash compound permission policy", () => {
         title: command,
         args: { command },
         subject: command,
+        outsideWorkspace: true,
         readOnly: false,
         sandboxed: false,
         mode: "normal",
@@ -111,7 +124,7 @@ describe("bash compound permission policy", () => {
       if (suggestion) {
         await rememberRule(sessionKey, process.cwd(), suggestion, "session")
         expect(await evaluatePolicy(request(compound))).toBe("allow")
-        expect(await evaluatePolicy(request("pnpm lint"))).toBe("allow")
+        expect(await evaluatePolicy(request("pnpm lint"))).toBe("ask")
         expect(await evaluatePolicy(request("pnpm test -- --grep unit"))).toBe("allow")
       }
     } finally {

@@ -22,6 +22,10 @@ The referenced directory must contain a `plugin.ts` whose default export has a `
 
 Plugin registration is transactional. If importing, validating, or registering a plugin fails, Xal records a plugin registration failure and keeps none of that plugin's contributions.
 
+## Tool permission boundaries
+
+A tool's `permission(args, ctx)` returns a rule `subject`, optional `subjectAliases` checked by ask and deny rules, an optional whitelist `suggestion`, and an optional `outsideWorkspace` flag. Set `outsideWorkspace: true` when the operation reaches outside `ctx.cwd` or cannot guarantee workspace-only filesystem access. In normal and plan modes this requires approval unless the user explicitly whitelisted the operation; plugin default allow rules cannot bypass it. Plan-mode write restrictions and deny rules still apply. Path-based tools can use the shared `permissions/path` helper to resolve symlinks and construct this metadata. Tool implementations must use the same path interpretation as their permission check. In-process plugins remain trusted code, not sandboxed extensions.
+
 ## Model-facing context
 
 Xal's built-in system prompt carries two things: session state, and behavioral policy. Session state is identity, current environment, permission mode, and stateful workflows the user explicitly entered, such as plan mode. Behavioral policy is how the agent is expected to work, covering execution, code changes, verification, and the shape of its replies; the change sections are withheld in read-only modes, where they do not apply.

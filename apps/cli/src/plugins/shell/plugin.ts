@@ -1,7 +1,6 @@
 import type { Plugin, PluginContext } from "../types"
 import { bashTool, commandOf as bashCommandOf } from "./bash/tool"
 import { commandPolicy, commandRiskRules } from "./policy"
-import { sandboxRequested } from "./sandbox"
 import { disposeShellSession, shellPrompt } from "./shell"
 import { compactCommandTitle } from "./title"
 
@@ -23,7 +22,7 @@ export function registerBash(ctx: ShellRegistrationContext): void {
   ctx.registerPermissionRules({ ask: commandRiskRules(bashTool.name) })
   ctx.registerPolicyRule({
     evaluate(request) {
-      if (request.tool !== bashTool.name || sandboxRequested(request.args)) return undefined
+      if (request.tool !== bashTool.name) return undefined
       const command = bashCommandOf(request.args)
       return command ? commandPolicy(request, command) : undefined
     },

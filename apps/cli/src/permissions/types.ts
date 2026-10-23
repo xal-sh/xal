@@ -11,8 +11,10 @@ export interface PermissionRequest {
   title: string
   args: Record<string, unknown>
   subject: string | undefined
+  subjectAliases?: string[]
   readOnly: boolean
   sandboxed: boolean
+  outsideWorkspace?: boolean
   mode: PermissionMode
   inheritedDenyMode?: PermissionMode
 }

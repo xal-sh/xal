@@ -4,7 +4,7 @@ import { displayPath, resolveFilePath } from "../../lib/path"
 import { nativeWriteFile } from "../../native"
 import { knownFileState, recordFileState } from "../../tools/file-state"
 import type { Tool } from "../../tools/types"
-import { pathPermission } from "./permission"
+import { pathPermission } from "../../permissions/path"
 
 export const writeTool: Tool = {
   name: "write",
@@ -36,7 +36,7 @@ export const writeTool: Tool = {
     return path ? { type: "paths", paths: [resolveFilePath(path, ctx.cwd)] } : { type: "none" }
   },
   permission(args, ctx) {
-    return pathPermission("write", args, ctx.cwd)
+    return pathPermission("write", asString(args.file_path) ?? "", ctx.cwd)
   },
   async execute(args, ctx) {
     const path = asString(args.file_path)
