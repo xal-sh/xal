@@ -291,7 +291,11 @@ function configuredModel(
   const contextWindow = model.contextWindows?.includes(configuredContextWindow ?? 0)
     ? configuredContextWindow
     : fallbackContextWindow
-  const autoCompactTokenLimit = settings().compactionLimits[provider.id]?.[model.id] ?? model.autoCompactTokenLimit
+  const compactionLimits = settings().compactionLimits[provider.id]
+  const autoCompactTokenLimit =
+    compactionLimits?.[model.id] ??
+    model.aliases?.map((alias) => compactionLimits?.[alias.id]).find((limit) => limit !== undefined) ??
+    model.autoCompactTokenLimit
   if (contextWindow === model.contextWindow && autoCompactTokenLimit === model.autoCompactTokenLimit) return model
   return { ...model, contextWindow, autoCompactTokenLimit }
 }

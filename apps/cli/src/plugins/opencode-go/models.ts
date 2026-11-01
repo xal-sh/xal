@@ -24,8 +24,7 @@ const BUNDLED_IDS = [
   "qwen3.7-plus",
   "qwen3.6-plus",
   "deepseek-v4-pro",
-  "deepseek-v4-flash",
-  "deepseek-v4-flash-vision-exp",
+  "deepseek-v4.1-flash",
   "hy3",
   "ox-alpha-free",
 ]

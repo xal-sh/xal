@@ -99,7 +99,10 @@ test("applies configured compaction limits after canonical alias resolution", as
 
   try {
     expect((await modelCatalog(provider, "profile-configured")).models[0]?.autoCompactTokenLimit).toBe(75_000)
-    settings().compactionLimits[provider.id] = { "model-a": 60_000 }
+    settings().compactionLimits[provider.id] = { "model-a-alias": 50_000 }
+    expect((await findModel(provider, "profile-configured", "model-a"))?.autoCompactTokenLimit).toBe(50_000)
+    expect((await findModel(provider, "profile-configured", "model-a-alias"))?.autoCompactTokenLimit).toBe(50_000)
+    settings().compactionLimits[provider.id] = { "model-a": 60_000, "model-a-alias": 50_000 }
     expect((await findModel(provider, "profile-configured", "model-a"))?.autoCompactTokenLimit).toBe(60_000)
     expect((await findModel(provider, "profile-configured", "model-a-alias"))?.autoCompactTokenLimit).toBe(60_000)
   } finally {

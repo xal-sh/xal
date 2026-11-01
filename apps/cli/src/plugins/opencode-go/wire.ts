@@ -109,6 +109,13 @@ const METADATA: Record<string, ModelMetadata> = {
     endpoint: "/chat/completions",
     maxTokens: 131_072,
   },
+  "deepseek-v4.1-flash": {
+    name: "DeepSeek V4.1 Flash",
+    contextWindow: 1_000_000,
+    inputModalities: ["text", "image"],
+    endpoint: "/chat/completions",
+    maxTokens: 384_000,
+  },
   "deepseek-v4-flash": {
     name: "DeepSeek V4 Flash",
     contextWindow: 1_000_000,

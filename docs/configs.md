@@ -91,7 +91,7 @@ Thinking preferences use this shape:
       "gpt-5.6-terra": "high"
     },
     "deepseek": {
-      "deepseek-v4-flash": "max"
+      "deepseek-flash": "max"
     }
   }
 }
