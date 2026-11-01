@@ -327,7 +327,7 @@ test("saves model preferences without copying project overrides into user settin
 
     await saveContextWindow(provider, "model-a", 400_000)
     await saveCompactionLimit(provider, "model-a", 200_000)
-    await saveThinking(provider, "model-a", "medium")
+    await saveThinking(provider, "profile-a", "model-a", "medium")
     expect(settings().thinking).toEqual({ "provider-a": { "project-model": "high", "model-a": "medium" } })
 
     expect(settings().contextWindows).toEqual({

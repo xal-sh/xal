@@ -4,6 +4,7 @@ import type { UserInput } from "../providers/types"
 export interface SelectOption<T> {
   label: string
   detail: string
+  searchKey?: string
   note?: string
   active?: boolean
   value: T

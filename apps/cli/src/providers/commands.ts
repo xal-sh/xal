@@ -139,8 +139,17 @@ const modelCommand: Command = {
           const summary = modelSummary(choice.model)
           const source = choice.source === "runtime" ? "" : ` · ${choice.source}`
           return {
-            label: choice.model.id,
-            detail: `${choice.provider.name} · ${choice.profile.name}${summary ? ` · ${summary}` : ""}${source}`,
+            label: choice.model.name,
+            searchKey: choice.model.id,
+            detail:
+              [
+                choice.model.name === choice.model.id ? undefined : choice.model.id,
+                choice.provider.name,
+                choice.profile.name,
+                summary,
+              ]
+                .filter(Boolean)
+                .join(" · ") + source,
             note: current ? "current" : undefined,
             active: current,
             value: choice,
@@ -391,7 +400,7 @@ const thinkingCommand: Command = {
       ctx.print("cannot change thinking while a turn is running")
       return
     }
-    await saveThinking(provider, model, selected)
+    await saveThinking(provider, profileId, model, selected)
   },
 }
 

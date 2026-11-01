@@ -91,13 +91,13 @@ Thinking preferences use this shape:
       "gpt-5.6-terra": "high"
     },
     "deepseek": {
-      "deepseek-v4-flash": "max"
+      "deepseek-flash": "max"
     }
   }
 }
 ```
 
-Supported effort values are `none`, `low`, `medium`, `high`, `xhigh`, and `max`. Each provider and model may support only a subset. An unavailable saved effort is ignored in favor of that model's default.
+Supported effort values are `none`, `low`, `medium`, `high`, `xhigh`, and `max`. Each provider and model may support only a subset. An unavailable saved effort is ignored in favor of that model's default. Saved preferences are resolved by canonical model ID first, then the requested alias, then other aliases in catalog order. `/thinking` and the thinking shortcuts save under the canonical ID; existing alias settings are not rewritten.
 
 ## Context windows
 
@@ -137,7 +137,7 @@ Automatic-compaction preferences use fixed token counts for each provider and ca
 
 Use `/compaction-limit` to choose a context-relative limit for the active model. The command offers fixed token values at 50%, 60%, 70%, and 80% of the active context window and saves the selected absolute value under the canonical model ID. It is available only when the model has a known context window.
 
-Provider entries must be objects, and each model value must be a positive integer. A saved value takes precedence over a provider-advertised limit, but every effective limit is capped at 80% of the active context window. This cap also keeps a stale value safe when `/context-window` changes the model's active window.
+Provider entries must be objects, and each model value must be a positive integer. Limits are resolved by canonical model ID first, then the requested alias, then other aliases in catalog order. A saved value takes precedence over a provider-advertised limit, but every effective limit is capped at 80% of the active context window. This cap also keeps a stale value safe when `/context-window` changes the model's active window.
 
 ## TypeSafe AI
 

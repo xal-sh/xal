@@ -24,7 +24,10 @@ function chatProvider(profileId: string, sessionId: string): ChatCompletionProvi
         signal,
       })
     },
-    requestOptions: () => ({}),
+    requestOptions(request): JsonObject {
+      if (!request.thinking || !resolveModel(request.model).thinking?.options.includes(request.thinking)) return {}
+      return { reasoning_effort: request.thinking }
+    },
   }
 }
 

@@ -109,6 +109,10 @@ A standard `Tool` with `orchestrates: true` receives `ctx.callTool(name, args, s
 
 Child calls run the same lifecycle hooks as ordinary calls, but `afterTool` output is routed to the program instead of directly to model history. Hook implementations should not assume every invocation corresponds to its own model-facing tool result. The parent trace location is appended after its `afterTool` hooks, independently of the logical output used for repeat-loop detection. Child traces retain the effective arguments before permission approval and execution, including on cancellation, while the parent remains the only conversation-level call/result pair. Do not invoke another plugin's tool implementation directly to bypass this dispatcher.
 
+## Text model catalogs
+
+A text provider's `ModelCatalog.models` contains the models offered in the picker and model listings. Optional `lookupModels` preserve metadata for retired IDs used by saved selections without advertising them as choices. Both lists use the same `TextModelInfo` validation, and all model IDs and aliases must be unique across them. Lookup-only entries retain their own context windows, input modalities, thinking options, and configured compaction limits; they do not rewrite the selected API ID or guarantee continued upstream availability.
+
 ## Decision models
 
 Providers and models have explicit kinds. `Provider` and `TextModelInfo` have `kind: "text"`; `DecisionProvider` and `DecisionModelInfo` have `kind: "decision"`. `AnyProvider` and `ModelInfo` are their respective unions. Existing text-provider plugins must add `kind: "text"` to their provider and model metadata. `ModelCatalog` defaults to text models; decision providers return `ModelCatalog<DecisionModelInfo>`.

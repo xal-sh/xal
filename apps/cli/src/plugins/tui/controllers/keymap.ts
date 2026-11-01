@@ -36,7 +36,7 @@ async function stepThinking(session: AgentSession, direction: -1 | 1): Promise<s
     return `Thinking is already at the ${bound} level (${current === "none" ? "off" : current})`
   }
   if (!session.setThinking(next)) return "Cannot change thinking while a turn is running"
-  await saveThinking(provider, model, next)
+  await saveThinking(provider, profileId, model, next)
 }
 
 export function bindKeys(renderer: CliRenderer, deps: KeymapDeps): void {

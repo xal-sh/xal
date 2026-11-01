@@ -88,7 +88,7 @@ test("applies configured compaction limits after canonical alias resolution", as
         kind: "text",
         id: "model-a",
         name: "model-a",
-        aliases: [{ id: "model-a-alias" }],
+        aliases: [{ id: "model-a-alias" }, { id: "model-a-other-alias" }],
         contextWindow: 100_000,
         autoCompactTokenLimit: 75_000,
         inputModalities: ["text"],
@@ -99,12 +99,39 @@ test("applies configured compaction limits after canonical alias resolution", as
 
   try {
     expect((await modelCatalog(provider, "profile-configured")).models[0]?.autoCompactTokenLimit).toBe(75_000)
-    settings().compactionLimits[provider.id] = { "model-a": 60_000 }
+    settings().compactionLimits[provider.id] = { "model-a-alias": 50_000 }
+    expect((await findModel(provider, "profile-configured", "model-a"))?.autoCompactTokenLimit).toBe(50_000)
+    expect((await findModel(provider, "profile-configured", "model-a-alias"))?.autoCompactTokenLimit).toBe(50_000)
+    settings().compactionLimits[provider.id] = { "model-a-alias": 50_000, "model-a-other-alias": 40_000 }
+    expect((await findModel(provider, "profile-configured", "model-a-other-alias"))?.autoCompactTokenLimit).toBe(40_000)
+    settings().compactionLimits[provider.id] = {
+      "model-a": 60_000,
+      "model-a-alias": 50_000,
+      "model-a-other-alias": 40_000,
+    }
     expect((await findModel(provider, "profile-configured", "model-a"))?.autoCompactTokenLimit).toBe(60_000)
     expect((await findModel(provider, "profile-configured", "model-a-alias"))?.autoCompactTokenLimit).toBe(60_000)
+    expect((await findModel(provider, "profile-configured", "model-a-other-alias"))?.autoCompactTokenLimit).toBe(60_000)
   } finally {
     delete settings().compactionLimits[provider.id]
     clearModelCatalog("profile-configured")
+  }
+})
+
+test.each([
+  { id: "legacy", contextWindow: -1, error: "invalid context window" },
+  { id: "model-a", contextWindow: 100_000, error: "duplicate model or alias" },
+])("rejects lookup metadata with $error", async ({ id, contextWindow, error }) => {
+  const provider = fakeProvider("invalid-lookup", async () => ({
+    ...catalog("model-a", "bundled"),
+    lookupModels: [{ kind: "text", id, name: id, contextWindow, inputModalities: ["text"] }],
+  }))
+  try {
+    const result = await modelCatalog(provider, "profile-invalid-lookup")
+    expect(result.models).toEqual([])
+    expect(result.warning).toContain(error)
+  } finally {
+    clearModelCatalog("profile-invalid-lookup")
   }
 })
 
