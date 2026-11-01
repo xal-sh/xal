@@ -30,6 +30,7 @@ const BUNDLED_IDS = [
 ]
 
 const BUNDLED_MODELS: TextModelInfo[] = BUNDLED_IDS.map((id) => modelInfo(id))
+const LEGACY_MODELS: TextModelInfo[] = ["deepseek-v4-flash", "deepseek-v4-flash-vision-exp"].map(modelInfo)
 
 async function discoverModels(profileId: string): Promise<TextModelInfo[]> {
   const response = await goFetch("/models", await apiKey(profileId), { signal: AbortSignal.timeout(20_000) })
@@ -37,12 +38,18 @@ async function discoverModels(profileId: string): Promise<TextModelInfo[]> {
 }
 
 export async function listModels(profileId: string, refresh: boolean): Promise<ModelCatalog> {
-  if (!refresh) return { models: BUNDLED_MODELS, source: "bundled" }
+  if (!refresh) return { models: BUNDLED_MODELS, lookupModels: LEGACY_MODELS, source: "bundled" }
   try {
-    return { models: await discoverModels(profileId), source: "runtime" }
+    const models = await discoverModels(profileId)
+    return {
+      models,
+      lookupModels: LEGACY_MODELS.filter((legacy) => !models.some((model) => model.id === legacy.id)),
+      source: "runtime",
+    }
   } catch (error) {
     return {
       models: BUNDLED_MODELS,
+      lookupModels: LEGACY_MODELS,
       source: "bundled",
       warning: `live discovery failed: ${describeError(error)} — using bundled models`,
     }

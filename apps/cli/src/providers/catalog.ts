@@ -1,4 +1,5 @@
 import { listProfiles, type ProviderProfile } from "../config/credentials"
+import { modelSetting } from "../config/model-setting"
 import { settings } from "../config/settings"
 import { describeError } from "../lib/error"
 import { asNumber, asString, isRecord } from "../lib/json"
@@ -217,16 +218,23 @@ function validateCatalog(provider: Provider, raw: unknown): ModelCatalog {
   }
   const warning = raw.warning === undefined ? undefined : asString(raw.warning)?.trim()
   if (raw.warning !== undefined && !warning) throw new Error(`${provider.name} returned an invalid catalog warning`)
+  if (raw.lookupModels !== undefined && !Array.isArray(raw.lookupModels)) {
+    throw new Error(`${provider.name} returned invalid lookup models`)
+  }
   const models = raw.models.map((model) => validateModel(provider, model))
+  const lookupModels = Array.isArray(raw.lookupModels)
+    ? raw.lookupModels.map((model) => validateModel(provider, model))
+    : undefined
   const ids = new Set<string>()
-  for (const model of models) {
+  for (const model of [...models, ...(lookupModels ?? [])]) {
     for (const id of [model.id, ...(model.aliases?.map((alias) => alias.id) ?? [])]) {
       if (ids.has(id)) throw new Error(`${provider.name} returned duplicate model or alias ${id}`)
       ids.add(id)
     }
   }
-  if (models.length === 0 && !warning) return { models, source, warning: `${provider.name} returned no models` }
-  return { models, source, ...(warning ? { warning } : {}) }
+  const catalog: ModelCatalog = { models, source, ...(lookupModels === undefined ? {} : { lookupModels }) }
+  if (models.length === 0 && !warning) return { ...catalog, warning: `${provider.name} returned no models` }
+  return { ...catalog, ...(warning ? { warning } : {}) }
 }
 
 export function clearModelCatalog(profileId: string): void {
@@ -285,17 +293,15 @@ export async function refreshModelCatalogs(): Promise<void> {
 function configuredModel(
   provider: Provider,
   model: TextModelInfo,
+  requested = model.id,
   fallbackContextWindow = model.contextWindow,
 ): TextModelInfo {
   const configuredContextWindow = settings().contextWindows[provider.id]?.[model.id]
   const contextWindow = model.contextWindows?.includes(configuredContextWindow ?? 0)
     ? configuredContextWindow
     : fallbackContextWindow
-  const compactionLimits = settings().compactionLimits[provider.id]
   const autoCompactTokenLimit =
-    compactionLimits?.[model.id] ??
-    model.aliases?.map((alias) => compactionLimits?.[alias.id]).find((limit) => limit !== undefined) ??
-    model.autoCompactTokenLimit
+    modelSetting(settings().compactionLimits[provider.id], model, requested) ?? model.autoCompactTokenLimit
   if (contextWindow === model.contextWindow && autoCompactTokenLimit === model.autoCompactTokenLimit) return model
   return { ...model, contextWindow, autoCompactTokenLimit }
 }
@@ -311,11 +317,12 @@ export async function findModel(
   refresh = false,
 ): Promise<TextModelInfo | undefined> {
   const catalog = await modelCatalog(provider, profileId, refresh)
-  const found = catalog.models.find((info) => info.id === model)
+  const models = [...catalog.models, ...(catalog.lookupModels ?? [])]
+  const found = models.find((info) => info.id === model)
   if (found) return configuredModel(provider, found)
-  for (const candidate of catalog.models) {
+  for (const candidate of models) {
     const alias = candidate.aliases?.find((entry) => entry.id === model)
-    if (alias) return configuredModel(provider, candidate, alias.contextWindow)
+    if (alias) return configuredModel(provider, candidate, model, alias.contextWindow)
   }
   return undefined
 }

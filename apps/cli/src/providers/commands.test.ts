@@ -1,4 +1,8 @@
 import { expect, test } from "bun:test"
+import { createTestRenderer } from "@opentui/core/testing"
+import { deepSeekProvider } from "../plugins/deepseek/provider"
+import { openCodeGoProvider } from "../plugins/opencode-go/provider"
+import { Picker } from "../plugins/tui/components/picker"
 import { getCommand } from "../commands/registry"
 import type { CommandContext, SelectRequest } from "../commands/types"
 import { createProfile } from "../config/credentials"
@@ -76,6 +80,7 @@ test("shows friendly model names with searchable IDs and selects the API ID", as
         expect(request.options).toHaveLength(1)
         expect(request.options[0]).toMatchObject({
           label: "Test model",
+          searchKey: "canonical-model",
           detail: "canonical-model · Provider command · personal · 260k · bundled",
         })
         return request.options[0]?.value
@@ -98,6 +103,55 @@ test("shows friendly model names with searchable IDs and selects the API ID", as
     expect(session.currentProfileId).toBe(profile.id)
     expect(settings().model).toBe("canonical-model")
   } finally {
+    await harness.cleanup()
+  }
+})
+
+test("prioritizes an exact API ID over a shared model name across profiles", async () => {
+  const harness = await setupAgentSessionTests("model-search-command-")
+  const setup = await createTestRenderer({ width: 120, height: 24 })
+  const picker = new Picker(setup.renderer, () => {})
+  setup.renderer.root.add(picker.view)
+  try {
+    await loadSettings()
+    registerProvider(deepSeekProvider)
+    registerProvider(openCodeGoProvider)
+    await createProfile(deepSeekProvider.id, "first", { type: "api_key", key: "test-token" })
+    const profile = await createProfile(openCodeGoProvider.id, "second", { type: "api_key", key: "test-token" })
+    const session = harness.createSession(deepSeekProvider)
+    const context = {
+      session,
+      print() {},
+      busy() {},
+      async select<T>(request: SelectRequest<T>): Promise<T | undefined> {
+        expect(request.options.filter((option) => option.label === "DeepSeek V4.1 Flash")).toHaveLength(2)
+        expect(request.options[0]?.detail).toContain("deepseek-flash")
+        const selected = picker.show(request.options)
+        picker.focus()
+        await setup.mockInput.typeText("deepseek-v4.1-flash")
+        picker.handleKey("enter")
+        const index = await selected
+        return index === undefined ? undefined : request.options[index]?.value
+      },
+      restore() {},
+      async ask(): Promise<string | undefined> {
+        return undefined
+      },
+      async askSecret(): Promise<string | undefined> {
+        return undefined
+      },
+    } satisfies CommandContext
+    const command = getCommand("model")
+    if (!command) throw new Error("model command was not registered")
+
+    await command.run([], context)
+
+    expect(session.currentModel).toBe("deepseek-v4.1-flash")
+    expect(session.currentProfileId).toBe(profile.id)
+    expect(settings().provider).toBe("opencode-go")
+  } finally {
+    picker.hide()
+    setup.renderer.destroy()
     await harness.cleanup()
   }
 })

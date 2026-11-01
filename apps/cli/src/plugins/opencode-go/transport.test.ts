@@ -82,6 +82,20 @@ describe("endpoint routing", () => {
 })
 
 describe("request options", () => {
+  test.each(["low", "high", "max"] as const)("forwards Flash reasoning effort %s", async (thinking) => {
+    await routeFor({ model: "deepseek-v4.1-flash", thinking, tools: [tool] })
+    expect(body()).toMatchObject({ model: "deepseek-v4.1-flash", reasoning_effort: thinking, tool_choice: "auto" })
+  })
+
+  test("omits chat reasoning effort when absent or unsupported by the model", async () => {
+    await routeFor({ model: "deepseek-v4.1-flash" })
+    expect(body().reasoning_effort).toBeUndefined()
+    for (const model of ["kimi-k3", "deepseek-v4-flash", "brand-new-model"]) {
+      await routeFor({ model, thinking: "high" })
+      expect(body().reasoning_effort).toBeUndefined()
+    }
+  })
+
   test.each(["kimi-k3", "grok-4.5", "qwen3.7-max", "brand-new-model"])(
     "sends a stable conversation header for %s",
     async (model) => {

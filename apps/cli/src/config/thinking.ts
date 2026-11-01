@@ -1,5 +1,6 @@
 import { findModel } from "../providers/catalog"
 import type { Provider, ThinkingEffort, ThinkingOptions } from "../providers/types"
+import { modelSetting } from "./model-setting"
 import { saveSettings, settings } from "./settings"
 
 export async function thinkingOptions(
@@ -16,12 +17,18 @@ export async function resolveThinking(
   model: string,
   preferred?: ThinkingEffort,
 ): Promise<ThinkingEffort | undefined> {
-  const available = await thinkingOptions(provider, profileId, model)
-  if (!available) return undefined
-  const saved = preferred ?? settings().thinking[provider.id]?.[model]
-  return saved && available.options.includes(saved) ? saved : available.default
+  const info = await findModel(provider, profileId, model)
+  if (!info?.thinking) return undefined
+  const saved = preferred ?? modelSetting(settings().thinking[provider.id], info, model)
+  return saved && info.thinking.options.includes(saved) ? saved : info.thinking.default
 }
 
-export async function saveThinking(provider: Provider, model: string, effort: ThinkingEffort): Promise<void> {
-  await saveSettings({ thinking: { [provider.id]: { [model]: effort } } })
+export async function saveThinking(
+  provider: Provider,
+  profileId: string,
+  model: string,
+  effort: ThinkingEffort,
+): Promise<void> {
+  const canonical = (await findModel(provider, profileId, model))?.id ?? model
+  await saveSettings({ thinking: { [provider.id]: { [canonical]: effort } } })
 }

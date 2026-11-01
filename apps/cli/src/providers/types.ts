@@ -79,6 +79,7 @@ export type ModelInfo = TextModelInfo | DecisionModelInfo
 
 export interface ModelCatalog<M extends ModelInfo = TextModelInfo> {
   models: M[]
+  lookupModels?: M[]
   source: ModelCatalogSource
   warning?: string
 }

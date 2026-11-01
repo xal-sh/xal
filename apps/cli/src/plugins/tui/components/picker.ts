@@ -25,15 +25,19 @@ function rank(options: SelectOption<unknown>[], query: string): number[] {
     query,
     options.map((option) => [
       { text: option.label, weight: 1 },
+      { text: option.searchKey ?? "", weight: 1 },
       { text: `${option.detail} ${option.note ?? ""}`, weight: DETAIL_WEIGHT },
     ]),
   )
   return options
-    .flatMap((_, index) => {
+    .flatMap((option, index) => {
       const value = scores[index]
-      return value === undefined ? [] : [{ index, value }]
+      const exact = option.searchKey?.toLowerCase() === query.trim().toLowerCase()
+      return value === undefined ? [] : [{ index, value, exact }]
     })
-    .sort((left, right) => right.value - left.value || left.index - right.index)
+    .sort(
+      (left, right) => Number(right.exact) - Number(left.exact) || right.value - left.value || left.index - right.index,
+    )
     .map((match) => match.index)
 }
 

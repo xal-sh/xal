@@ -140,6 +140,7 @@ const modelCommand: Command = {
           const source = choice.source === "runtime" ? "" : ` · ${choice.source}`
           return {
             label: choice.model.name,
+            searchKey: choice.model.id,
             detail:
               [
                 choice.model.name === choice.model.id ? undefined : choice.model.id,
@@ -399,7 +400,7 @@ const thinkingCommand: Command = {
       ctx.print("cannot change thinking while a turn is running")
       return
     }
-    await saveThinking(provider, model, selected)
+    await saveThinking(provider, profileId, model, selected)
   },
 }
 
