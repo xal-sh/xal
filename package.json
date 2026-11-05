@@ -34,6 +34,9 @@
   "devDependencies": {
     "prettier": "^3.9.6",
     "turbo": "^2.10.12",
-    "wrangler": "^4.124.0"
+    "wrangler": "^4.158.0"
+  },
+  "overrides": {
+    "minimatch": "11.0.1"
   }
 }
