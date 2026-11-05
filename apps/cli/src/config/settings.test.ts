@@ -112,6 +112,7 @@ test("trusted project settings override user settings with recursive object merg
       },
       modes: {},
       goal: { evaluatorModels: {} },
+      verification: { checks: {} },
       typesafeAI: { enabled: false },
       agents: { maxConcurrent: 4, timeoutMinutes: 0, maxTurns: 24 },
       redaction: {
@@ -155,6 +156,7 @@ test("does not read malformed project settings until the project is trusted", as
       permissions: { allow: [], ask: [], deny: [] },
       modes: {},
       goal: { evaluatorModels: {} },
+      verification: { checks: {} },
       typesafeAI: { enabled: false },
       agents: { maxConcurrent: 4, timeoutMinutes: 0, maxTurns: 24 },
       redaction: { values: [], environment: [] },
@@ -167,6 +169,24 @@ test("does not read malformed project settings until the project is trusted", as
     await writeJson(join(home, "trust.json"), [project])
 
     await expect(loadSettings()).rejects.toThrow(`${projectConfig} is malformed — fix or delete it`)
+  })
+})
+
+test("merges verification checks only from trusted projects and rejects malformed commands", async () => {
+  await withSettingsEnvironment(async ({ home, project }) => {
+    await writeJson(join(home, "config.json"), { verification: { checks: { test: "bun test", lint: "bun run lint" } } })
+    await writeJson(projectConfigPath(project), {
+      verification: { checks: { test: "bun test src", types: "bun run typecheck" } },
+    })
+    expect((await loadSettings()).verification.checks).toEqual({ test: "bun test", lint: "bun run lint" })
+    await writeJson(join(home, "trust.json"), [project])
+    expect((await loadSettings()).verification.checks).toEqual({
+      test: "bun test src",
+      lint: "bun run lint",
+      types: "bun run typecheck",
+    })
+    await writeJson(projectConfigPath(project), { verification: { checks: { test: "" } } })
+    await expect(loadSettings()).rejects.toThrow("verification.checks.test must be a non-empty command")
   })
 })
 
@@ -218,6 +238,7 @@ test("saves only user settings securely while retaining project overrides in mem
       permissions: { allow: [], ask: [], deny: [] },
       modes: {},
       goal: { evaluatorModels: {} },
+      verification: { checks: {} },
       typesafeAI: { enabled: false },
       agents: { maxConcurrent: 4, timeoutMinutes: 0, maxTurns: 24 },
       redaction: { values: [], environment: [] },

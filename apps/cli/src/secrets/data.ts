@@ -215,6 +215,25 @@ export function redactSessionStartedEvent(event: SessionStartedEvent): SessionSt
 
 export function redactAgentEvent(event: AgentEvent): AgentEvent {
   switch (event.type) {
+    case "verification_recorded": {
+      const record = event.record
+      return {
+        type: "verification_recorded",
+        record: {
+          ...record,
+          id: redactText(record.id),
+          name: redactText(record.name),
+          command: redactText(record.command),
+          cwd: redactPath(record.cwd),
+          ...(record.status === "finished" && record.execution.status === "signaled" && record.execution.signal
+            ? { execution: { ...record.execution, signal: redactText(record.execution.signal) } }
+            : {}),
+          ...(record.status === "finished" && record.evidence.status === "unavailable"
+            ? { evidence: { status: "unavailable", reason: redactText(record.evidence.reason) } }
+            : {}),
+        },
+      }
+    }
     case "plan_updated":
       return { type: "plan_updated", plan: redactPlan(event.plan) }
     case "goal_updated":
@@ -304,7 +323,20 @@ export function redactAgentEvent(event: AgentEvent): AgentEvent {
     case "context_updated":
       return event
     case "turn_ended":
-      return { ...event, ...(event.output === undefined ? {} : { output: redactJsonObject(event.output) }) }
+      return {
+        ...event,
+        ...(event.output === undefined ? {} : { output: redactJsonObject(event.output) }),
+        ...(event.verification === undefined
+          ? {}
+          : {
+              verification: event.verification.map((check) => ({
+                ...check,
+                name: redactText(check.name),
+                command: redactText(check.command),
+                detail: redactText(check.detail),
+              })),
+            }),
+      }
     case "turn_failed":
     case "error":
       return { ...event, message: redactText(event.message) }

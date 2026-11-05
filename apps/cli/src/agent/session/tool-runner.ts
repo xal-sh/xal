@@ -37,6 +37,7 @@ import type {
   UndoAction,
 } from "../../tools/types"
 import type { WorkspaceUndo } from "../../tools/undo"
+import type { VerificationRecord } from "../../verification/types"
 import type { AgentEvent, AgentState, DenialCause } from "../events"
 import { ToolLoopDetector, type ToolLoopAction } from "./loop-detection"
 import { ToolCallScope } from "./tool-scope"
@@ -120,6 +121,7 @@ export interface ToolRunnerHost {
   addToolOutput(call: ToolCallItem, output: string): void
   updateToolCall(call: ToolCallItem): void
   publishToolEvent(event: ToolEvent): void
+  recordVerification(record: VerificationRecord): Promise<void>
   requestInput(callId: string, request: ElicitationRequest, signal: AbortSignal): Promise<ElicitationResult>
   requestApproval(resolve: (result: ApprovalResult) => void, signal: AbortSignal): void
   changeWorkspace(cwd: string): void
@@ -602,6 +604,7 @@ export class ToolCallRunner {
       sessionKind: this.host.kind,
       directory: this.host.outputDirectory(),
       speculative,
+      recordVerification: (record) => this.host.recordVerification(record),
       signal,
       update,
     }

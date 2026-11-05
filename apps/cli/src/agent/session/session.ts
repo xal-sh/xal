@@ -49,6 +49,8 @@ import { toolOutputDirectory } from "../../tools/output"
 import { isInteractiveTool } from "../../tools/types"
 import { disposeToolSession } from "../../tools/session"
 import { WorkspaceUndo } from "../../tools/undo"
+import { verificationSummary } from "../../verification/service"
+import type { VerificationCheckStatus, VerificationRecord } from "../../verification/types"
 import type { ElicitationAnswer, RegisteredTool, ToolEvent } from "../../tools/types"
 import type { AgentEvent, AgentState, DenialCause, SessionStartedEvent } from "../events"
 import { activeHistory, type ConversationCheckpoint, type HistoryItem } from "../history"
@@ -116,6 +118,7 @@ export class AgentSession {
   private providerRequests = 0
   private providerRoundActive = false
   private tasks: TrackedTask[] = []
+  private readonly verificationRecords = new Map<string, VerificationRecord>()
   private readonly listeners = new Set<(event: AgentEvent) => void>()
   private readonly recorder: SessionRecorder | undefined
   private readonly interactive: boolean
@@ -246,6 +249,7 @@ export class AgentSession {
       addToolOutput: (call, output) => this.addToolOutput(call, output),
       updateToolCall: (call) => this.updateToolCall(call),
       publishToolEvent: (event) => this.publishToolEvent(event),
+      recordVerification: (record) => this.recordVerification(record),
       requestInput: (callId, request, signal) => this.interactions.requestInput(callId, request, signal),
       requestApproval: (resolve, signal) => this.interactions.awaitApproval(resolve, signal),
       changeWorkspace: (cwd) => this.changeWorkspace(cwd),
@@ -280,6 +284,7 @@ export class AgentSession {
       toolRunner: this.toolRunner,
       hookReporter: this.hookReporter,
       outputContract: () => this.outputContract,
+      verificationStatus: (signal) => this.verificationStatus(signal),
       queuedPromptNext: () => this.queue.promptFirst,
       asyncResultsQueued: () => this.asyncState.hasQueued(),
       paused: () => this.paused,
@@ -434,6 +439,10 @@ export class AgentSession {
     return this.asyncState.hasPendingAsyncWork()
   }
 
+  verificationStatus(signal?: AbortSignal): Promise<VerificationCheckStatus[] | undefined> {
+    return verificationSummary(this.cwd, this.verificationRecords, this.asyncState.hasPendingAsyncWork(), signal)
+  }
+
   async flushPersistence(): Promise<void> {
     await this.recorder?.flush()
   }
@@ -516,6 +525,7 @@ export class AgentSession {
     this.redoStack.reset()
     this.workspaceUndo = new WorkspaceUndo(this.cwd)
     this.contextBudget.reset()
+    this.verificationRecords.clear()
     this.tasks = []
     this.plan = undefined
     this.planHandoffActive = false
@@ -609,6 +619,7 @@ export class AgentSession {
       this.checkpoints.map((checkpoint) => ({ messageId: checkpoint.messageId, prompt: checkpoint.input.text })),
     )
     this.contextBudget.restoreDisplayed(recordedContext(target.session.events))
+    this.verificationRecords.clear()
     this.tasks = []
     this.modeBeforePlan = meta.mode === "plan" ? meta.modeBeforePlan : undefined
     this.plan = undefined
@@ -622,6 +633,7 @@ export class AgentSession {
     for (const event of target.session.events) {
       if (event.type === "goal_updated") this.goals.restore(event.goal)
       if (event.type === "task_list_updated") this.tasks = event.tasks
+      if (event.type === "verification_recorded") this.verificationRecords.set(event.record.name, event.record)
       if (event.type === "plan_updated") {
         this.plan = event.plan
         this.planHandoffActive = event.plan.status === "approved"
@@ -1612,6 +1624,13 @@ export class AgentSession {
       return
     }
     throw new Error(`cannot update missing tool call: ${call.callId}`)
+  }
+
+  private async recordVerification(record: VerificationRecord): Promise<void> {
+    if (record.status === "started") this.verificationRecords.set(record.name, record)
+    const event = await this.recordEvent({ type: "verification_recorded", record })
+    this.verificationRecords.set(record.name, record)
+    this.notifyRedacted(event)
   }
 
   private publishToolEvent(event: ToolEvent): void {

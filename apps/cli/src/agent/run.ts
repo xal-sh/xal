@@ -1,15 +1,22 @@
 import type { JsonObject } from "../lib/json"
+import type { VerificationCheckStatus } from "../verification/types"
 import type { UserInput, Usage } from "../providers/types"
 import type { AgentEvent } from "./events"
 import type { AgentSession } from "./session/session"
 
 export type AgentRunOutcome =
-  | { status: "completed"; response: string | JsonObject; usage?: Usage; context?: Usage }
+  | {
+      status: "completed"
+      response: string | JsonObject
+      usage?: Usage
+      context?: Usage
+      verification?: VerificationCheckStatus[]
+    }
   | { status: "failed"; response: string | JsonObject; error: string; usage?: Usage; context?: Usage }
   | { status: "interrupted"; response: string | JsonObject }
 
 type AgentRunTerminal =
-  | { status: "completed"; usage?: Usage; context?: Usage }
+  | { status: "completed"; usage?: Usage; context?: Usage; verification?: VerificationCheckStatus[] }
   | { status: "failed"; error: string; usage?: Usage; context?: Usage }
   | { status: "interrupted" }
 
@@ -41,7 +48,12 @@ export function runAgentTurn(
           break
         case "turn_ended":
           if (event.output !== undefined) response = event.output
-          finish({ status: "completed", usage: event.usage, context: event.context })
+          finish({
+            status: "completed",
+            usage: event.usage,
+            context: event.context,
+            ...(event.verification ? { verification: event.verification } : {}),
+          })
           break
         case "turn_failed":
           finish({ status: "failed", error: event.message, usage: event.usage, context: event.context })
@@ -51,6 +63,7 @@ export function runAgentTurn(
           break
         case "goal_updated":
         case "plan_updated":
+        case "verification_recorded":
         case "task_list_updated":
         case "session_started":
         case "session_replay_finished":
@@ -100,6 +113,7 @@ export function runAgentGoal(
 ): Promise<AgentRunOutcome> {
   let response: string | JsonObject = ""
   let context: Usage | undefined
+  let verification: VerificationCheckStatus[] | undefined
   let settled = false
   let unsubscribe = (): void => {}
 
@@ -120,6 +134,7 @@ export function runAgentGoal(
         case "turn_ended":
           if (event.output !== undefined) response = event.output
           context = event.context
+          verification = event.verification
           break
         case "turn_failed":
           finish({ status: "failed", error: event.message, usage: event.usage, context: event.context })
@@ -132,7 +147,12 @@ export function runAgentGoal(
             case "active":
               break
             case "achieved":
-              finish({ status: "completed", usage: event.goal.usage, context })
+              finish({
+                status: "completed",
+                usage: event.goal.usage,
+                context,
+                ...(verification ? { verification } : {}),
+              })
               break
             case "impossible":
               finish({ status: "failed", error: event.goal.lastReason, usage: event.goal.usage, context })
@@ -155,6 +175,7 @@ export function runAgentGoal(
           break
         case "shell_finished":
         case "plan_updated":
+        case "verification_recorded":
         case "task_list_updated":
         case "session_started":
         case "session_replay_finished":

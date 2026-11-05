@@ -4,6 +4,7 @@ import type { PermissionMode } from "../permissions/types"
 import type { PlanUpdatedEvent } from "../plans/types"
 import type { ContextUsage, ModelInputModality, Provider, ThinkingEffort, ToolDefinition } from "../providers/types"
 import type { TaskListUpdatedEvent } from "../tasks/types"
+import type { VerificationRecord } from "../verification/types"
 import type { WorkspaceUndo } from "./undo"
 import type { ToolInvoker } from "./programmatic"
 
@@ -86,6 +87,7 @@ export interface ToolExecutionContext extends ToolCallContext {
   directory: string
   speculative?: boolean
   callTool?: ToolInvoker
+  recordVerification?(record: VerificationRecord): Promise<void>
   signal: AbortSignal
   update(text: string): void
 }

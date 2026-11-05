@@ -6,6 +6,7 @@ import { findProjectRoot } from "../project/root"
 import { isTrusted } from "../project/trust"
 import { isThinkingEffort, type ThinkingEffort } from "../providers/types"
 import { projectConfigPath, userConfigPath } from "./paths"
+import { parseVerificationSettings, type VerificationSettings } from "../verification/settings"
 
 export interface PermissionSettings {
   allow: string[]
@@ -46,6 +47,7 @@ export interface Settings {
   permissions: PermissionSettings
   modes: Record<string, ModeSettings>
   goal: GoalSettings
+  verification: VerificationSettings
   redaction: RedactionSettings
   agents: AgentSettings
   pluginConfig: Record<string, Record<string, unknown>>
@@ -63,6 +65,7 @@ let current: Settings = {
   permissions: { allow: [], ask: [], deny: [] },
   modes: {},
   goal: { evaluatorModels: {} },
+  verification: { checks: {} },
   redaction: { values: [], environment: [] },
   agents: { ...AGENT_DEFAULTS },
   pluginConfig: {},
@@ -268,6 +271,7 @@ function parseSettings(raw: Record<string, unknown>): Settings {
     },
     modes,
     goal: parseGoalSettings(raw.goal),
+    verification: parseVerificationSettings(raw.verification),
     redaction: {
       values: strictStringArray(redaction.values, "redaction.values"),
       environment: strictStringArray(redaction.environment, "redaction.environment"),

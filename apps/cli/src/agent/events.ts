@@ -1,4 +1,5 @@
 import type { JsonObject } from "../lib/json"
+import type { VerificationCheckStatus, VerificationRecordedEvent } from "../verification/types"
 import type { GoalSnapshot } from "../goals/types"
 import type { HookAction, HookEvent } from "../hooks/types"
 import type { PermissionMode } from "../permissions/types"
@@ -75,6 +76,7 @@ export interface DirectShellResult {
 
 export type AgentEvent =
   | ToolEvent
+  | VerificationRecordedEvent
   | SessionStartedEvent
   | { type: "session_replay_finished" }
   | { type: "goal_updated"; goal: GoalSnapshot }
@@ -131,7 +133,13 @@ export type AgentEvent =
     }
   | { type: "compacted"; summary: string; replaced: number; tokensBefore?: number }
   | { type: "context_updated"; context: Usage }
-  | { type: "turn_ended"; usage?: Usage; context?: Usage; output?: JsonObject }
+  | {
+      type: "turn_ended"
+      usage?: Usage
+      context?: Usage
+      output?: JsonObject
+      verification?: VerificationCheckStatus[]
+    }
   | { type: "turn_failed"; message: string; usage?: Usage; context?: Usage }
   | { type: "turn_interrupted" }
   | { type: "error"; message: string }

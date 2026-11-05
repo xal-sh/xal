@@ -5,6 +5,7 @@ import type { GoalSnapshot, GoalSuspensionCause } from "../../../goals/types"
 import { describeError } from "../../../lib/error"
 import { compactPath } from "../../../lib/path"
 import { contextWindow } from "../../../providers/catalog"
+import { verificationDetails, verificationHeadline } from "../../../verification/service"
 import type { Screen } from "../screen"
 import type { NoticeBlock } from "../scrollback/blocks"
 
@@ -97,6 +98,8 @@ export class AgentEventController {
     const { scrollback, live, statusBar } = this.screen
 
     switch (event.type) {
+      case "verification_recorded":
+        break
       case "task_list_updated":
         this.screen.taskList.set(event.tasks)
         if (event.explanation?.trim()) scrollback.append({ kind: "info", text: event.explanation })
@@ -320,6 +323,16 @@ export class AgentEventController {
       case "turn_ended":
         statusBar.setTurnOutcome("completed")
         statusBar.setUsage(event.context)
+        if (event.verification) {
+          scrollback.append({
+            kind: "notice",
+            summary: `${this.replaying ? "Historical " : ""}${verificationHeadline(event.verification)}`,
+            details: [
+              ...verificationDetails(event.verification),
+              "Evidence at turn completion; use /checks to refresh.",
+            ],
+          })
+        }
         break
       case "turn_failed":
         statusBar.setTurnOutcome("failed")

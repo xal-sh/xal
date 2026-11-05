@@ -4,6 +4,7 @@ import type { JsonObject } from "../../lib/json"
 import type { Provider, StreamRequest, ThinkingEffort, ToolCallItem, UserInput } from "../../providers/types"
 import { TOOL_FAILED_PREFIX } from "../../tools/output"
 import type { ToolEvent } from "../../tools/types"
+import type { VerificationCheckStatus } from "../../verification/types"
 import type { AgentEvent, AgentState } from "../events"
 import type { HistoryItem } from "../history"
 import { ToolLoopDetector } from "./loop-detection"
@@ -17,6 +18,7 @@ export interface TurnHost {
   readonly toolRunner: ToolCallRunner
   readonly hookReporter: HookReporter
   outputContract(): OutputContract | undefined
+  verificationStatus(signal: AbortSignal): Promise<VerificationCheckStatus[] | undefined>
   queuedPromptNext(): boolean
   asyncResultsQueued(): boolean
   paused(): boolean
@@ -255,10 +257,13 @@ async function endTurn(
     host.hookContext(signal),
     host.hookReporter,
   )
+  const verification = await host.verificationStatus(signal)
+  signal.throwIfAborted()
   host.emit({
     type: "turn_ended",
     usage: usage.turn,
     context: usage.context,
     ...(typeof output === "string" || output === undefined ? {} : { output }),
+    ...(verification ? { verification } : {}),
   })
 }

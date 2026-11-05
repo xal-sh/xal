@@ -38,6 +38,7 @@ import { registerScheduler } from "./scheduler/register"
 import { discoverSkills, registerSkills } from "./skills/register"
 import { registerTasks } from "./tasks/register"
 import { getUi } from "./ui/registry"
+import { registerVerification } from "./verification/commands"
 
 let initializationBarrier: Promise<void> | undefined
 
@@ -66,6 +67,7 @@ export function registerCore(settings: Settings): void {
   registerGoals()
   registerPlans()
   registerTasks()
+  registerVerification()
   registerScheduler()
   registerSkills()
   registerBootstrapStep("skills", discoverSkills)

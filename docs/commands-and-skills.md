@@ -44,6 +44,10 @@ Additional context: $ARGUMENTS
 
 After startup, type `/` in the TUI to see discovered commands in the command palette. Selecting one submits the expanded prompt through the same session path as a typed message.
 
+## Verification checks
+
+`/checks` refreshes the status of configured checks without running them. `/checks <name>` runs one named check through the regular direct-shell permission and hook flow. Both commands require an idle session. Receipts distinguish current passes and failures from missing or stale evidence; they do not gate completion. See [Verification checks](/docs/configs#verification-checks) for configuration, persistence, and freshness limits.
+
 ## Context compaction
 
 The behavior below describes the default summary strategy. Connected TypeSafe users can opt into [Jev pruning through `/config`](/docs/configs#jev-compaction) for both `/compact` and automatic compaction, with visible fallback to the default strategy when necessary.
