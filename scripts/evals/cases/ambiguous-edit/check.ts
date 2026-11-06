@@ -9,7 +9,8 @@ function calls(run: (send: (name: string) => never) => unknown): number {
       count += 1
       throw new Error("offline")
     })
-  } catch {
+  } catch (error) {
+    if (!(error instanceof Error) || error.message !== "offline") throw error
     return count
   }
   return count

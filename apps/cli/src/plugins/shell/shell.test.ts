@@ -57,19 +57,22 @@ test("keeps persistent shell state inside its owning session", async () => {
   }
 })
 
-test.skipIf(process.platform === "win32")("runs commands with bash semantics when bash is installed", async () => {
-  const workspace = await mkdtemp(join(tmpdir(), `${appInfo.name}-shell-bash-test-`))
-  const sessionId = crypto.randomUUID()
+test.skipIf(process.platform === "win32" || !Bun.which("bash"))(
+  "runs commands with bash semantics when bash is installed",
+  async () => {
+    const workspace = await mkdtemp(join(tmpdir(), `${appInfo.name}-shell-bash-test-`))
+    const sessionId = crypto.randomUUID()
 
-  try {
-    expect(
-      await run(sessionId, 'words="a b"; for word in $words; do echo "$word"; done; echo *.missing', workspace),
-    ).toBe("a\nb\n*.missing")
-  } finally {
-    disposeShellSession(sessionId)
-    await rm(workspace, { recursive: true, force: true })
-  }
-})
+    try {
+      expect(
+        await run(sessionId, 'words="a b"; for word in $words; do echo "$word"; done; echo *.missing', workspace),
+      ).toBe("a\nb\n*.missing")
+    } finally {
+      disposeShellSession(sessionId)
+      await rm(workspace, { recursive: true, force: true })
+    }
+  },
+)
 
 test("shares only read-sandboxed foreground commands", () => {
   const ctx = { cwd: "/workspace" }

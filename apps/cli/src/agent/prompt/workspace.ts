@@ -16,14 +16,14 @@ function localDate(date: Date): string {
   return `${date.getFullYear()}-${month}-${day}`
 }
 
-function changeOf(entry: string): string | undefined {
+function changeOf(entry: string, original: string | undefined): string | undefined {
   const fields = entry.split(" ")
   const status = fields[1]?.replaceAll(".", " ")
   switch (fields[0]) {
     case "1":
       return `${status} ${fields.slice(8).join(" ")}`
     case "2":
-      return `${status} ${fields.slice(9).join(" ")}`
+      return `${status} ${original} -> ${fields.slice(9).join(" ")}`
     case "u":
       return `${status} ${fields.slice(10).join(" ")}`
     case "?":
@@ -36,7 +36,7 @@ function changeOf(entry: string): string | undefined {
 async function gitSummary(cwd: string, signal: AbortSignal): Promise<string | undefined> {
   const root = await findProjectRoot(cwd)
   if (!(await pathExists(join(root, ".git")))) return undefined
-  const status = await runGit(root, ["status", "--porcelain=v2", "--branch", "-z", "--untracked-files=all"], signal)
+  const status = await runGit(root, ["status", "--porcelain=v2", "--branch", "-z"], signal)
   let branch = "detached HEAD"
   let initial = false
   const changes: string[] = []
@@ -45,11 +45,13 @@ async function gitSummary(cwd: string, signal: AbortSignal): Promise<string | un
     const entry = entries[index]!
     if (entry === "# branch.oid (initial)") initial = true
     if (entry.startsWith("# branch.head ") && entry !== "# branch.head (detached)") branch = entry.slice(14)
-    const change = changeOf(entry)
+    const renamed = entry.startsWith("2 ")
+    const change = changeOf(entry, renamed ? entries[index + 1] : undefined)
     if (change) changes.push(change)
-    if (entry.startsWith("2 ")) index++
+    if (renamed) index++
   }
-  const state = changes.length === 0 ? "clean working tree" : `${changes.length} changed files`
+  const state =
+    changes.length === 0 ? "clean working tree" : `${changes.length} changed ${changes.length === 1 ? "path" : "paths"}`
   const lines = [`Git at session start: branch ${branch}, ${state}.`, ...changes.slice(0, MAX_CHANGED_FILES)]
   if (changes.length > MAX_CHANGED_FILES) lines.push(`... ${changes.length - MAX_CHANGED_FILES} more`)
   if (initial) return lines.join("\n")
@@ -72,7 +74,7 @@ export async function captureWorkspaceContext(sessionId: string, cwd: string, si
 
 export function registerWorkspacePrompt(): void {
   registerPrompt({
-    id: "environment",
+    id: "workspace",
     text: (prompt) => {
       const snapshot = snapshots.get(prompt.sessionId)
       return snapshot?.cwd === prompt.cwd ? snapshot.text : ""

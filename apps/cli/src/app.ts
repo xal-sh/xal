@@ -62,7 +62,6 @@ const ctx: CliContext = {
 
 export function registerCore(settings: Settings): void {
   registerBasePrompt()
-  registerWorkspacePrompt()
   registerBehaviorPrompt()
   registerPermissions(settings)
   registerRedaction(settings)
@@ -104,6 +103,7 @@ async function initializeApp(args: string[], profile: boolean) {
   await loadCredentialSecrets()
   registerCore(settings)
   const plugins = await registerPlugins(settings)
+  registerWorkspacePrompt()
   return { settings, plugins }
 }
 
