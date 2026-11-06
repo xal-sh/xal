@@ -269,8 +269,8 @@ impl Task for EditTask {
     type JsValue = NativeFileToolOutput;
 
     fn compute(&mut self) -> napi::Result<Self::Output> {
-        let metadata = fs::metadata(&self.path)
-            .map_err(|_| failed(format!("File not found: {}", self.display_path)))?;
+        let metadata =
+            fs::metadata(&self.path).map_err(|_| missing_file(&self.path, &self.display_path))?;
         if metadata.is_dir() {
             return Err(failed(format!(
                 "Path is a directory, not a file: {}",

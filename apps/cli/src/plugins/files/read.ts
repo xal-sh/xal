@@ -10,7 +10,7 @@ const MAX_LINE_CHARS = 2000
 
 export const readTool: Tool = {
   name: "read",
-  description: `Read a text file and return its content with each line prefixed by its line number. Returns up to ${DEFAULT_LIMIT} lines starting at offset and truncates lines longer than ${MAX_LINE_CHARS} characters; the footer states which offset continues the file when more remains. Fails on missing paths, directories, and binary files. Paths are absolute or relative to the working directory.`,
+  description: `Read a text file and return its content with each line prefixed by its line number. Returns up to ${DEFAULT_LIMIT} lines starting at offset and truncates lines longer than ${MAX_LINE_CHARS} characters; the footer states which offset continues the file when more remains. Given a directory, lists its entries instead. Fails on binary files and missing paths, naming similarly named files in the same directory. Paths are absolute or relative to the working directory.`,
   parameters: {
     type: "object",
     properties: {
@@ -53,7 +53,7 @@ export const readTool: Tool = {
       ...(offset === undefined ? {} : { offset }),
       ...(limit === undefined ? {} : { limit }),
     })
-    if (resolved && !ctx.speculative) recordFileState(ctx.sessionId, resolved, result.contentHash)
+    if (resolved && result.contentHash && !ctx.speculative) recordFileState(ctx.sessionId, resolved, result.contentHash)
     return { output: result.output }
   },
 }

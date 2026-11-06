@@ -74,6 +74,10 @@ export interface NativeFileToolOutput extends NativeToolOutput {
   contentHash: string
 }
 
+export interface NativeReadOutput extends NativeToolOutput {
+  contentHash?: string
+}
+
 export interface NativeWebFetchRequest {
   url?: string
   userAgent: string
@@ -347,6 +351,16 @@ export function parseFileToolOutput(value: unknown, message: string): NativeFile
   const contentHash = asString(value.contentHash)
   if (output === undefined || contentHash === undefined) throw new Error(message)
   return { output, contentHash }
+}
+
+export function parseReadOutput(value: unknown): NativeReadOutput {
+  if (!isRecord(value)) throw new Error("native read returned an invalid value")
+  const output = asString(value.output)
+  const contentHash = asString(value.contentHash)
+  if (output === undefined || (value.contentHash !== undefined && contentHash === undefined)) {
+    throw new Error("native read returned an invalid value")
+  }
+  return contentHash === undefined ? { output } : { output, contentHash }
 }
 
 export function parseGitCommandOutput(value: unknown): NativeGitCommandOutput {

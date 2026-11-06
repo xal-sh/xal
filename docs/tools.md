@@ -2,15 +2,23 @@
 
 Xal registers its built-in tools at startup, but the model is only offered the ones that apply to the current session. Availability is evaluated on every provider request from the session kind, whether the session is interactive, and the active permission mode. A tool that is registered but unavailable is not silently unknown: if the model calls one anyway, the call fails with a message naming the session state rather than reporting an unknown tool.
 
+Every call is checked against the tool's declared parameters before permission rules, approvals, or execution. A wrong type, a missing required argument, an unknown argument where the schema forbids extras, or a value outside an `enum` fails the call with a message naming each problem, so the model can correct it instead of having the argument silently ignored. A `null` value for an optional argument counts as omitted. Schema constructs Xal does not check, such as `$ref`, `allOf`, `not`, and conditionals, are left to the tool itself, and `anyOf` or `oneOf` pass when any branch matches. This applies to MCP tools as well, using the input schema their server declares. Structured output's `submit_output` is the exception: it keeps its own schema check, which counts rejected attempts.
+
 ## Files
 
 | Tool    | Purpose                                                                  | Availability        |
 | ------- | ------------------------------------------------------------------------ | ------------------- |
-| `read`  | Read a text file with line numbers, paginated by an output byte budget.  | Always              |
+| `read`  | Read a text file with line numbers, or list a directory's entries.       | Always              |
 | `write` | Replace a file entirely, or create it along with missing parent folders. | Writable modes only |
 | `edit`  | Replace an exact string in an existing file.                             | Writable modes only |
 
 `write` and `edit` are withheld in read-only modes such as `plan`, because every call would be refused before it ran. `bash` stays available there, since whether a command mutates anything depends on its arguments.
+
+### Reading files and directories
+
+Given a directory, `read` lists its entries sorted by name, marking subdirectories with a trailing `/`, and pages them with the same `offset` and `limit` as file lines. Listing a directory does not count as reading any file in it.
+
+When `read` or `edit` is given a path that does not exist, the failure names up to 5 files in the same directory whose names share the requested stem ignoring case, such as `config.ts` and `Config.test.tsx` for a missing `config.js`, or says that the directory is missing too.
 
 ### Reading before writing
 
@@ -81,7 +89,7 @@ Programs run in a fresh QuickJS WebAssembly context with no host filesystem, net
 
 `Promise.all` queues excess calls behind the concurrency limit. Await every child call; unfinished calls are cancelled when the program exits. Programs cannot suppress tool failures, denials, or host call/output/CPU limit errors with `try/catch`: the outer call still fails and does not return partial emitted output. QuickJS allocation errors follow ordinary JavaScript exception semantics and can be caught; the heap ceiling remains enforced. Unresolved promises without pending tools fail instead of waiting forever. Known-secret redaction is a safeguard, not a guarantee that arbitrary sensitive data is detected.
 
-Each child call goes through the existing before-tool hooks, permission rules and approvals, execution, and after-tool hooks. Approval requests are serialized. Cancellation propagates to pending approvals and active tools. The program stops waiting even when a trusted hook or underlying read does not honor cancellation; late results cannot re-enter its disposed JavaScript context. Repeat-loop detection is shared with ordinary calls in the turn, including denied child calls and stopping the turn after a repeated-loop warning. Parent programs are compared using their logical results, without the per-run trace location. Allowing `code_mode` does not authorize its child calls. For example, `permissions.deny: ["webfetch(*)"]` still blocks a program from fetching URLs.
+Each child call goes through the existing before-tool hooks, argument validation, permission rules and approvals, execution, and after-tool hooks. Approval requests are serialized. Cancellation propagates to pending approvals and active tools. The program stops waiting even when a trusted hook or underlying read does not honor cancellation; late results cannot re-enter its disposed JavaScript context. Repeat-loop detection is shared with ordinary calls in the turn, including denied child calls and stopping the turn after a repeated-loop warning. Parent programs are compared using their logical results, without the per-run trace location. Allowing `code_mode` does not authorize its child calls. For example, `permissions.deny: ["webfetch(*)"]` still blocks a program from fetching URLs.
 
 ### Traces
 
