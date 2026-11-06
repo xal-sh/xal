@@ -116,11 +116,12 @@ fn missing_file(path: &Path, display_path: &str) -> Error {
         }
         Err(_) => return failed(message),
     };
-    let stem = name_stem(&name.to_string_lossy());
+    let name = name.to_string_lossy();
+    let stem = name_stem(&name);
     let mut similar = entries
         .filter_map(|entry| entry.ok())
         .map(|entry| entry.file_name().to_string_lossy().into_owned())
-        .filter(|candidate| name_stem(candidate) == stem)
+        .filter(|candidate| *candidate != name && name_stem(candidate) == stem)
         .collect::<Vec<_>>();
     if similar.is_empty() {
         return failed(message);

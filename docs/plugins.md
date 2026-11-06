@@ -49,7 +49,7 @@ Plugins register trusted lifecycle hooks with `ctx.registerHook`. Hooks run in b
 | `afterTool`  | Tool details and its model-facing output    | Replace the output                                          |
 | `turnEnd`    | Final output and token usage when available | No result; use it for lifecycle automation or observability |
 
-Every handler also receives a context containing an abort signal and the session ID, kind, working directory, provider, model, and permission mode. Prompt changes affect what the model sees while the TUI keeps the user's original text. Tool argument changes happen before scheduling and permission evaluation, so Xal authorizes and records the effective action. Post-tool hooks also run for failed or interrupted executions, but not for calls blocked before execution.
+Every handler also receives a context containing an abort signal and the session ID, kind, working directory, provider, model, and permission mode. Prompt changes affect what the model sees while the TUI keeps the user's original text. Tool argument changes happen before scheduling, argument validation, and permission evaluation, so Xal validates, authorizes, and records the effective action. A hook that adds an argument the tool does not declare makes the call fail validation. Post-tool hooks also run for failed or interrupted executions, but not for calls blocked before execution.
 
 Hook failures stop prompt, pre-tool, and turn-completion processing. A post-tool failure becomes a failed tool result that warns the model the tool may already have changed state. Hook inputs and code run inside Xal's process, so only load hooks you trust. Returned text and arguments pass through secret redaction before they reach the model, session storage, or TUI.
 

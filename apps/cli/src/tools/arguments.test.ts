@@ -55,5 +55,9 @@ describe("argumentErrors", () => {
     expect(argumentErrors({ anyOf: [{ type: "string" }, { type: "number" }] }, true)).toEqual([
       "arguments does not match any of its allowed forms",
     ])
+    expect(argumentErrors({ oneOf: [{ type: "number" }, { type: "integer" }] }, 1)).toEqual([])
+    expect(argumentErrors({ oneOf: [{ type: "string" }, { type: "integer" }] }, true)).toEqual([
+      "arguments does not match any of its allowed forms",
+    ])
   })
 })

@@ -20,7 +20,12 @@ impl ReadTask {
         for entry in fs::read_dir(&self.path).map_err(io_error)? {
             let entry = entry.map_err(io_error)?;
             let name = entry.file_name().to_string_lossy().into_owned();
-            let directory = fs::metadata(entry.path()).is_ok_and(|metadata| metadata.is_dir());
+            let file_type = entry.file_type().map_err(io_error)?;
+            let directory = if file_type.is_symlink() {
+                fs::metadata(entry.path()).is_ok_and(|metadata| metadata.is_dir())
+            } else {
+                file_type.is_dir()
+            };
             entries.push(if directory { format!("{name}/") } else { name });
         }
         let total = entries.len();
@@ -37,23 +42,30 @@ impl ReadTask {
             )));
         }
         entries.sort();
-        let end = total.min(self.offset - 1 + self.limit);
-        let footer = if end >= total {
-            format!("(End of directory - {total} entries)")
+        let mut output = format!("{} is a directory. Its entries:\n", self.display_path);
+        let mut units = output.encode_utf16().count();
+        let mut end = self.offset - 1;
+        for entry in entries.iter().skip(end).take(self.limit) {
+            let width = entry.encode_utf16().count() + 1;
+            if units + width > MAX_OUTPUT_UNITS && end >= self.offset {
+                break;
+            }
+            output.push_str(entry);
+            output.push('\n');
+            units += width;
+            end += 1;
+        }
+        if end >= total {
+            output.push_str(&format!("(End of directory - {total} entries)"));
         } else {
-            format!(
+            output.push_str(&format!(
                 "(Showing entries {}-{end} of {total}. Use offset={} to continue.)",
                 self.offset,
                 end + 1
-            )
-        };
+            ));
+        }
         Ok(NativeReadOutput {
-            output: format!(
-                "{} is a directory. Its entries:\n{}\n{footer}",
-                self.display_path,
-                entries[self.offset - 1..end].join("\n")
-            )
-            .into(),
+            output: output.into(),
             content_hash: None,
         })
     }
@@ -203,6 +215,7 @@ mod tests {
     #[test]
     fn lists_a_directory_and_suggests_similar_names_for_a_missing_file() {
         let root = std::env::temp_dir().join(format!("xal-native-read-dir-{}", std::process::id()));
+        fs::remove_dir_all(&root).ok();
         fs::create_dir_all(root.join("sub")).expect("fixture should create");
         for name in ["foo.ts", "Foo.test.tsx", "bar.ts"] {
             fs::write(root.join(name), "x").expect("fixture should write");
@@ -224,6 +237,9 @@ mod tests {
             String::from_utf16_lossy(&page.output),
             "dir/ is a directory. Its entries:\nbar.ts\nfoo.ts\n(Showing entries 2-3 of 4. Use offset=4 to continue.)"
         );
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(root.join("gone"), root.join("foo.js"))
+            .expect("fixture should link");
         let missing = task("foo.js", 1, 2000)
             .compute()
             .err()
