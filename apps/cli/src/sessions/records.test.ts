@@ -6,7 +6,7 @@ function itemRecord(item: unknown): string {
   return JSON.stringify({ type: "item", item })
 }
 
-test("parses legacy and user-only compaction records without changing their shape", () => {
+test("parses legacy, user-only, and pruned compaction records without changing their shape", () => {
   const legacy: CompactionItem = {
     type: "compaction",
     summary: "Legacy state",
@@ -31,8 +31,21 @@ test("parses legacy and user-only compaction records without changing their shap
     ],
   }
 
+  const pruned: CompactionItem = {
+    type: "compaction",
+    strategy: "stale_reads_v1",
+    summary: "Removed 1 superseded file reads; retained conversation is otherwise unchanged.",
+    replaced: 1,
+    tokensBefore: 3600,
+    retained: [
+      { type: "tool_call", callId: "read", name: "read", args: { file_path: "a.ts" } },
+      { type: "tool_result", callId: "read", output: "[Removed during compaction]" },
+    ],
+  }
+
   expect(parseRecord(itemRecord(legacy))).toEqual({ type: "item", item: legacy })
   expect(parseRecord(itemRecord(current))).toEqual({ type: "item", item: current })
+  expect(parseRecord(itemRecord(pruned))).toEqual({ type: "item", item: pruned })
 })
 
 test("rejects unknown strategies and invalid user-only retained items", () => {

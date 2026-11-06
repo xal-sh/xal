@@ -21,6 +21,8 @@ export interface NativeGrepOptions {
   pattern?: string
   outputMode?: string
   caseInsensitive?: boolean
+  context?: number
+  offset?: number
   aborted?: boolean
 }
 
@@ -28,6 +30,7 @@ export interface NativeGlobOptions {
   cwd: string
   target?: string
   pattern?: string
+  offset?: number
   aborted?: boolean
 }
 
@@ -78,6 +81,7 @@ export interface NativeWebFetchRequest {
 
 export interface NativeLspManager {
   hasAvailableServer(cwd: string): boolean
+  servesFile(filePath: string, cwd: string): boolean
   statusLines(cwd: string): string[]
   query(request: string, cwd: string, signal?: AbortSignal): Promise<string>
   restart(server?: string): Promise<void>
@@ -690,12 +694,14 @@ function parseMemorySnapshot(value: unknown): NativeMemorySnapshot {
 export function parseNativeLspManager(value: unknown): NativeLspManager {
   if (!isRecord(value)) throw new Error("native LSP manager is invalid")
   const hasAvailableServer = value.hasAvailableServer
+  const servesFile = value.servesFile
   const statusLines = value.statusLines
   const query = value.query
   const restart = value.restart
   const close = value.close
   if (
     typeof hasAvailableServer !== "function" ||
+    typeof servesFile !== "function" ||
     typeof statusLines !== "function" ||
     typeof query !== "function" ||
     typeof restart !== "function" ||
@@ -708,6 +714,11 @@ export function parseNativeLspManager(value: unknown): NativeLspManager {
       const available: unknown = Reflect.apply(hasAvailableServer, value, [cwd])
       if (typeof available !== "boolean") throw new Error("native LSP manager returned an invalid value")
       return available
+    },
+    servesFile(filePath, cwd) {
+      const serves: unknown = Reflect.apply(servesFile, value, [filePath, cwd])
+      if (typeof serves !== "boolean") throw new Error("native LSP manager returned an invalid value")
+      return serves
     },
     statusLines(cwd) {
       const lines: unknown = Reflect.apply(statusLines, value, [cwd])

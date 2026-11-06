@@ -24,6 +24,7 @@ function context(): PluginContext {
     registerTool() {},
     unregisterTool() {},
     registerToolSessionDisposer() {},
+    registerToolContextDisposer() {},
     registerProvider() {},
     registerCli() {},
     registerCommand() {},

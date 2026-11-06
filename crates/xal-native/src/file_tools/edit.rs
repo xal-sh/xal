@@ -2,6 +2,8 @@ use super::*;
 
 const CR: u16 = b'\r' as u16;
 const LF: u16 = b'\n' as u16;
+const MAX_HINT_LINES: usize = 30;
+const MAX_HINT_LINE_CHARS: usize = 300;
 
 #[napi(object)]
 pub struct NativeEditRequest {
@@ -167,6 +169,63 @@ fn resolve_match(previous: &[u16], old: &[u16], new: &[u16]) -> (Vec<u16>, Vec<u
     (aligned_stripped_old, stripped_new, positions)
 }
 
+fn normalized_line(line: &str) -> String {
+    line.chars()
+        .filter(|value| !value.is_whitespace())
+        .collect()
+}
+
+fn closest_match(text: &str, old: &str) -> Option<String> {
+    let wanted = old.lines().map(normalized_line).collect::<Vec<_>>();
+    let meaningful = wanted.iter().filter(|line| !line.is_empty()).count();
+    let lines = text.lines().collect::<Vec<_>>();
+    if meaningful == 0 || lines.is_empty() {
+        return None;
+    }
+    let normalized = lines
+        .iter()
+        .map(|line| normalized_line(line))
+        .collect::<Vec<_>>();
+    let width = wanted.len().min(lines.len());
+    let mut best = (0, 0);
+    for start in 0..=lines.len() - width {
+        let matched = wanted
+            .iter()
+            .take(width)
+            .zip(&normalized[start..start + width])
+            .filter(|(wanted, actual)| !wanted.is_empty() && wanted == actual)
+            .count();
+        if matched > best.1 {
+            best = (start, matched);
+        }
+    }
+    let (start, matched) = best;
+    if matched * 2 < meaningful {
+        return None;
+    }
+    let shown = width.min(MAX_HINT_LINES);
+    let mut hint = format!(
+        "The closest text is lines {}-{}, where {matched} of {meaningful} non-blank lines match ignoring whitespace:",
+        start + 1,
+        start + width
+    );
+    for (offset, line) in lines[start..start + shown].iter().enumerate() {
+        let line = if line.chars().count() > MAX_HINT_LINE_CHARS {
+            format!(
+                "{}... [line truncated]",
+                line.chars().take(MAX_HINT_LINE_CHARS).collect::<String>()
+            )
+        } else {
+            (*line).to_owned()
+        };
+        hint.push_str(&format!("\n{:>6}: {line}", start + offset + 1));
+    }
+    if shown < width {
+        hint.push_str(&format!("\n... {} more lines", width - shown));
+    }
+    Some(hint)
+}
+
 pub struct EditTask {
     path: PathBuf,
     display_path: String,
@@ -214,10 +273,16 @@ impl Task for EditTask {
         let (old, new, positions) = resolve_match(&previous, &self.old, &self.new);
         let matches = checked_count(positions.len(), "edit match")?;
         if positions.is_empty() {
-            return Err(failed(format!(
+            let message = format!(
                 "old_string not found in {}. It must match the file text exactly, including whitespace and indentation.",
                 self.display_path
-            )));
+            );
+            return Err(failed(
+                match closest_match(&previous_text, &utf16_lossy(&old)) {
+                    Some(hint) => format!("{message} {hint}"),
+                    None => message,
+                },
+            ));
         }
         if positions.len() > 1 && !self.replace_all {
             return Err(failed(format!(
@@ -276,9 +341,30 @@ pub fn native_edit_file(request: NativeEditRequest) -> napi::Result<AsyncTask<Ed
 #[cfg(test)]
 mod tests {
     use super::{
-        align_newlines, match_positions, read_line_prefix_len, replace_matches, resolve_match,
-        strip_read_prefixes, units,
+        align_newlines, closest_match, match_positions, read_line_prefix_len, replace_matches,
+        resolve_match, strip_read_prefixes, units,
     };
+
+    #[test]
+    fn points_at_the_closest_text_when_old_string_is_missing() {
+        let text = "fn main() {\n    let total = 1;\n    println!(\"{total}\");\n}\n";
+        assert_eq!(
+            closest_match(
+                text,
+                "    let total=1;\n    println!(\"{total}\");\n    done();"
+            )
+            .as_deref(),
+            Some(
+                "The closest text is lines 2-4, where 2 of 3 non-blank lines match ignoring whitespace:\n     2:     let total = 1;\n     3:     println!(\"{total}\");\n     4: }"
+            )
+        );
+        assert_eq!(closest_match(text, "unrelated\nlines\n"), None);
+        let long = format!("needle\n{}\n", "x".repeat(1_000));
+        let hint = closest_match(&long, "needle\nmissing").unwrap_or_default();
+        assert!(hint.ends_with("... [line truncated]"));
+        assert!(hint.len() < 500);
+        assert_eq!(closest_match(text, "\n\n"), None);
+    }
 
     #[test]
     fn counts_non_overlapping_utf16_matches() {

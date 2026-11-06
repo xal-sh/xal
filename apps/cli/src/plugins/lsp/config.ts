@@ -207,8 +207,12 @@ function parseServer(
 export function parseLspConfig(value: Record<string, unknown>): {
   servers: LspServerDefinition[]
   secrets: string[]
+  editDiagnostics: boolean
 } {
-  exactKeys(value, "pluginConfig.lsp", ["servers"])
+  exactKeys(value, "pluginConfig.lsp", ["servers", "editDiagnostics"])
+  if (value.editDiagnostics !== undefined && typeof value.editDiagnostics !== "boolean") {
+    invalid("pluginConfig.lsp.editDiagnostics", "a boolean")
+  }
   if (value.servers !== undefined && !isRecord(value.servers)) {
     invalid("pluginConfig.lsp.servers", "an object")
   }
@@ -239,5 +243,5 @@ export function parseLspConfig(value: Record<string, unknown>): {
     }
   }
 
-  return { servers: definitions, secrets: [...secrets] }
+  return { servers: definitions, secrets: [...secrets], editDiagnostics: value.editDiagnostics === true }
 }

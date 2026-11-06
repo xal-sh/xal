@@ -107,6 +107,31 @@ export async function verificationSummary(
   })
 }
 
+export async function verificationBaseline(cwd: string, signal?: AbortSignal): Promise<string | undefined> {
+  const verification = settings().verification
+  if (!verification.gate || Object.keys(verification.checks).length === 0) return undefined
+  const evidence = await workspaceEvidence(cwd, signal)
+  return evidence.status === "captured" ? evidence.fingerprint : undefined
+}
+
+export async function verificationCorrection(
+  cwd: string,
+  baseline: string,
+  records: ReadonlyMap<string, VerificationRecord>,
+  unsettled: boolean,
+  signal?: AbortSignal,
+): Promise<string | undefined> {
+  const evidence = await workspaceEvidence(cwd, signal)
+  if (evidence.status === "captured" && evidence.fingerprint === baseline) return undefined
+  const checks = await verificationSummary(cwd, records, unsettled, signal)
+  if (!checks || checks.every((check) => check.status === "passed")) return undefined
+  return [
+    "You changed the workspace during this turn, but not every configured check has passed against the current workspace:",
+    ...verificationDetails(checks),
+    "Run the checks that cover your change and fix failures it caused before finishing, or say which check cannot pass and why.",
+  ].join("\n")
+}
+
 export function verificationHeadline(checks: VerificationCheckStatus[]): string {
   return `Checks: ${checks.map((check) => `${check.name} ${check.status.replace("_", " ")}`).join(" · ")}`
 }

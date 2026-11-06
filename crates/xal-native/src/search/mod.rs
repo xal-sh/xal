@@ -12,7 +12,9 @@ use std::time::{Duration, Instant, SystemTime};
 
 use globset::{Glob, GlobMatcher};
 use grep_regex::RegexMatcherBuilder;
-use grep_searcher::{BinaryDetection, SearcherBuilder, sinks};
+use grep_searcher::{
+    BinaryDetection, Searcher, SearcherBuilder, Sink, SinkContext, SinkContextKind, SinkMatch,
+};
 use ignore::WalkBuilder;
 use napi::bindgen_prelude::{AbortSignal, AsyncTask};
 use napi::{Env, Error, Status, Task};
@@ -26,6 +28,7 @@ const SEARCH_TIMEOUT: Duration = Duration::from_secs(30);
 const GREP_LIMIT: usize = 250;
 const GLOB_LIMIT: usize = 100;
 const MAX_COLUMNS: usize = 500;
+const MAX_CONTEXT: usize = 10;
 const MAX_OUTPUT_CHARS: usize = 30_000;
 
 mod glob;
@@ -86,6 +89,7 @@ fn format_results(
     header: &str,
     lines: &[String],
     total: u32,
+    offset: u32,
     footer: impl FnOnce(usize) -> String,
 ) -> String {
     let mut shown = lines.to_vec();
@@ -101,13 +105,30 @@ fn format_results(
     let mut output = Vec::with_capacity(shown.len() + 2);
     output.push(header.to_owned());
     output.extend(shown.iter().cloned());
-    if usize::try_from(total).is_ok_and(|total| total > shown.len()) {
+    let offset = usize::try_from(offset).unwrap_or(usize::MAX);
+    if usize::try_from(total)
+        .is_ok_and(|total| total > offset.saturating_add(shown.len()) || offset > 0)
+    {
         output.push(footer(shown.len()));
     }
     output.join("\n")
 }
 
-fn complete_grep(mut result: NativeSearchResult, content: bool) -> NativeSearchResult {
+fn page_footer(offset: u32, shown: usize, total: u32, advice: &str) -> String {
+    let end = u64::from(offset) + shown as u64;
+    if shown == 0 {
+        return format!("(No results at offset {offset}; there are {total} in total.)");
+    }
+    if end >= u64::from(total) {
+        return format!("(Showing {}-{end} of {total}.)", u64::from(offset) + 1);
+    }
+    format!(
+        "(Showing {}-{end} of {total}. {advice}, or pass offset {end} for more.)",
+        u64::from(offset) + 1
+    )
+}
+
+fn complete_grep(mut result: NativeSearchResult, content: bool, offset: u32) -> NativeSearchResult {
     result.output = Some(if result.total == 0 {
         "No matches found".to_owned()
     } else {
@@ -116,26 +137,20 @@ fn complete_grep(mut result: NativeSearchResult, content: bool) -> NativeSearchR
         } else {
             format!("Found {} files", result.total)
         };
-        format_results(&header, &result.lines, result.total, |shown| {
-            format!(
-                "(Showing first {shown} of {}. Narrow your pattern or path.)",
-                result.total
-            )
+        format_results(&header, &result.lines, result.total, offset, |shown| {
+            page_footer(offset, shown, result.total, "Narrow your pattern or path")
         })
     });
     result
 }
 
-fn complete_glob(mut result: NativeSearchResult) -> NativeSearchResult {
+fn complete_glob(mut result: NativeSearchResult, offset: u32) -> NativeSearchResult {
     result.output = Some(if result.total == 0 {
         "No files found".to_owned()
     } else {
         let header = format!("Found {} files", result.total);
-        format_results(&header, &result.lines, result.total, |shown| {
-            format!(
-                "(Showing first {shown} of {}. Narrow the pattern to see the rest.)",
-                result.total
-            )
+        format_results(&header, &result.lines, result.total, offset, |shown| {
+            page_footer(offset, shown, result.total, "Narrow the pattern")
         })
     });
     result

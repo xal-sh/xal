@@ -23,6 +23,7 @@ function register(config: Record<string, unknown>): RegisteredTool[] {
     },
     unregisterTool() {},
     registerToolSessionDisposer() {},
+    registerToolContextDisposer() {},
     registerProvider() {},
     registerCli() {},
     registerCommand() {},

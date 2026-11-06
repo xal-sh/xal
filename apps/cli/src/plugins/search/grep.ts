@@ -2,11 +2,12 @@ import { asBoolean, asString } from "../../lib/json"
 import { displayPath } from "../../lib/path"
 import { nativeGrep } from "../../native"
 import type { Tool } from "../../tools/types"
+import { countArgument } from "./arguments"
 const LIMIT = 250
 
 export const grepTool: Tool = {
   name: "grep",
-  description: `Search file contents with a regular expression. Respects .gitignore. Returns matching file paths, or matching lines with file and line numbers in content mode. Shows at most ${LIMIT} results; the footer says how many were left out.`,
+  description: `Search file contents with a regular expression. Respects .gitignore. Returns matching file paths, or matching lines with file and line numbers in content mode. Shows at most ${LIMIT} results starting at offset; the footer says how many were left out and which offset continues.`,
   parameters: {
     type: "object",
     properties: {
@@ -32,6 +33,15 @@ export const grepTool: Tool = {
         type: "boolean",
         description: "True matches case-insensitively; false or omitted matches exactly",
       },
+      context: {
+        type: "number",
+        description:
+          "Lines of context to show before and after each match in content mode, at most 10. Context lines use path-line-text instead of path:line:text, and -- separates non-adjacent groups",
+      },
+      offset: {
+        type: "number",
+        description: "Number of leading results to skip, to continue past a truncated search. Defaults to 0",
+      },
     },
     required: ["pattern"],
     additionalProperties: false,
@@ -54,6 +64,8 @@ export const grepTool: Tool = {
     const glob = asString(args.glob)
     const outputMode = asString(args.output_mode)
     const caseInsensitive = asBoolean(args.case_insensitive)
+    const context = countArgument(args.context, "context")
+    const offset = countArgument(args.offset, "offset")
     return nativeGrep(
       {
         cwd: ctx.cwd,
@@ -63,6 +75,8 @@ export const grepTool: Tool = {
         ...(pattern === undefined ? {} : { pattern }),
         ...(outputMode === undefined ? {} : { outputMode }),
         ...(caseInsensitive === undefined ? {} : { caseInsensitive }),
+        ...(context === undefined ? {} : { context }),
+        ...(offset === undefined ? {} : { offset }),
       },
       ctx.signal,
     )

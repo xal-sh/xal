@@ -65,7 +65,7 @@ let current: Settings = {
   permissions: { allow: [], ask: [], deny: [] },
   modes: {},
   goal: { evaluatorModels: {} },
-  verification: { checks: {} },
+  verification: { checks: {}, gate: false },
   redaction: { values: [], environment: [] },
   agents: { ...AGENT_DEFAULTS },
   pluginConfig: {},

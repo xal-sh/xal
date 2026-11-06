@@ -39,6 +39,7 @@ export interface PluginContext {
   registerTool(tool: RegisteredTool): void
   unregisterTool(tool: RegisteredTool): void
   registerToolSessionDisposer(disposer: ToolSessionDisposer): void
+  registerToolContextDisposer(disposer: ToolSessionDisposer): void
   registerProvider(provider: AnyProvider): void
   registerCli(cli: Cli, parent?: string): void
   registerCommand(command: Command): void

@@ -17,6 +17,12 @@ export class ProviderError extends Error {
   }
 }
 
+export class OutputLimitError extends ProviderError {
+  constructor(message: string) {
+    super(message, { retryable: false })
+  }
+}
+
 export function isProviderError(error: unknown): error is ProviderError {
   if (error instanceof ProviderError) return true
   if (!(error instanceof Error) || error.name !== "ProviderError" || !isRecord(error)) return false

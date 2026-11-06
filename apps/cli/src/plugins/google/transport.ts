@@ -1,5 +1,5 @@
 import { asString, isJsonObject, type JsonObject } from "../../lib/json"
-import { ProviderError } from "../../providers/errors"
+import { OutputLimitError, ProviderError } from "../../providers/errors"
 import { sseEvents, streamError } from "../../providers/transport"
 import type { ProviderOutputItem, StreamEvent, StreamRequest, Usage } from "../../providers/types"
 import { googleFetch, PROVIDER_ID, PROVIDER_NAME } from "./api"
@@ -30,9 +30,7 @@ function finishError(finishReason: string | undefined): ProviderError | undefine
   }
   if (finishReason === "STOP") return undefined
   if (finishReason === "MAX_TOKENS") {
-    return new ProviderError(`${PROVIDER_NAME} stopped at the model output limit before finishing`, {
-      retryable: false,
-    })
+    return new OutputLimitError(`${PROVIDER_NAME} stopped at the model output limit before finishing`)
   }
   return new ProviderError(`${PROVIDER_NAME} stopped the response (${finishReason})`, { retryable: false })
 }

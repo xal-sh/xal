@@ -8,6 +8,7 @@ struct Query {
     line: Option<u32>,
     column: Option<u32>,
     query: Option<String>,
+    errors_only: Option<bool>,
 }
 fn parse_query(request: &str) -> napi::Result<Query> {
     let query: Query = serde_json::from_str(request)
@@ -61,7 +62,7 @@ fn parse_query(request: &str) -> napi::Result<Query> {
     Ok(query)
 }
 
-fn absolute_path(file_path: &str, cwd: &str) -> PathBuf {
+pub(super) fn absolute_path(file_path: &str, cwd: &str) -> PathBuf {
     let path = Path::new(file_path);
     if path.is_absolute() {
         path.to_path_buf()
@@ -269,7 +270,7 @@ fn query_client(
                     .get("items")
                     .and_then(Value::as_array)
                     .ok_or_else(|| failed("language server returned malformed pull diagnostics"))?;
-                return format_diagnostics(items, &uri, cwd);
+                return format_diagnostics(items, &uri, cwd, query.errors_only.unwrap_or(false));
             }
             let published = client.drain_until(
                 Instant::now() + Duration::from_millis(1500),
@@ -287,7 +288,7 @@ fn query_client(
                 .get(path)
                 .map(|(_, items)| items.as_slice())
                 .unwrap_or_default();
-            format_diagnostics(items, &uri, cwd)
+            format_diagnostics(items, &uri, cwd, query.errors_only.unwrap_or(false))
         }
         _ => Err(invalid("invalid LSP operation")),
     }

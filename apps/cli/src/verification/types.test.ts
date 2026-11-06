@@ -7,8 +7,15 @@ import { parseVerificationSettings } from "./settings"
 import type { VerificationRecord } from "./types"
 
 test("validates opt-in check configuration without silently dropping commands", () => {
-  expect(parseVerificationSettings(undefined)).toEqual({ checks: {} })
-  expect(parseVerificationSettings({ checks: { test: " bun test " } })).toEqual({ checks: { test: "bun test" } })
+  expect(parseVerificationSettings(undefined)).toEqual({ checks: {}, gate: false })
+  expect(parseVerificationSettings({ checks: { test: " bun test " } })).toEqual({
+    checks: { test: "bun test" },
+    gate: false,
+  })
+  expect(parseVerificationSettings({ checks: { test: "bun test" }, gate: true })).toEqual({
+    checks: { test: "bun test" },
+    gate: true,
+  })
   for (const value of [
     null,
     [],
@@ -19,6 +26,7 @@ test("validates opt-in check configuration without silently dropping commands", 
     { checks: { test: " " } },
     { checks: { test: 1 } },
     { checks: { test: "true", duplicate: " true " } },
+    { gate: "yes" },
   ]) {
     expect(() => parseVerificationSettings(value)).toThrow()
   }

@@ -5,6 +5,7 @@ pub struct NativeGlobOptions {
     pub cwd: String,
     pub target: Option<String>,
     pub pattern: Option<String>,
+    pub offset: Option<u32>,
     pub aborted: Option<bool>,
 }
 struct GlobMatch {
@@ -43,6 +44,10 @@ impl Task for GlobTask {
         else {
             return Ok(request_error("pattern is required"));
         };
+        let offset = self.options.offset.unwrap_or(0);
+        let keep = usize::try_from(offset)
+            .unwrap_or(usize::MAX)
+            .saturating_add(GLOB_LIMIT);
         let matcher = match compile_glob(pattern) {
             Ok(matcher) => matcher,
             Err(error) => return Ok(error),
@@ -90,7 +95,7 @@ impl Task for GlobTask {
                 modified,
                 path: display_path(&path, &cwd),
             };
-            if retained.len() < GLOB_LIMIT {
+            if retained.len() < keep {
                 retained.push(entry);
                 continue;
             }
@@ -105,13 +110,20 @@ impl Task for GlobTask {
             }
         }
         retained.sort_by(compare_glob);
-        Ok(complete_glob(NativeSearchResult {
-            kind: NativeToolOutcomeKind::Completed,
-            total,
-            lines: retained.into_iter().map(|entry| entry.path).collect(),
-            output: None,
-            error: None,
-        }))
+        Ok(complete_glob(
+            NativeSearchResult {
+                kind: NativeToolOutcomeKind::Completed,
+                total,
+                lines: retained
+                    .into_iter()
+                    .skip(usize::try_from(offset).unwrap_or(usize::MAX))
+                    .map(|entry| entry.path)
+                    .collect(),
+                output: None,
+                error: None,
+            },
+            offset,
+        ))
     }
 
     fn resolve(&mut self, _env: Env, output: Self::Output) -> napi::Result<Self::JsValue> {

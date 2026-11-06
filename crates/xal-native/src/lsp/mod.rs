@@ -60,7 +60,7 @@ use format::{
     first_item, format_calls, format_diagnostics, format_hover, format_locations, format_symbols,
 };
 use manager::ManagerState;
-use query::manager_query;
+use query::{absolute_path, manager_query};
 use transport::{
     file_uri, json_id, read_messages, read_stderr, terminate_process_tree, uri_path, write_message,
 };

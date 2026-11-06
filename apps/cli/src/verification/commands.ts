@@ -36,11 +36,15 @@ export function registerVerification(): void {
   registerPrompt({
     id: "verification",
     text() {
-      const checks = Object.entries(settings().verification.checks)
+      const verification = settings().verification
+      const checks = Object.entries(verification.checks)
       if (checks.length === 0) return ""
+      const completion = verification.gate
+        ? "A turn that changes the workspace is returned to you once if any check has not passed against the final workspace."
+        : "Run checks when appropriate; they are not automatic completion gates."
       return [
         "# Verification",
-        "Configured checks produce execution receipts only when their exact command is run with bash in the foreground. They run in a fresh shell at the session workspace, not the persistent shell. Receipts describe observed execution, not proof of correctness; later workspace changes make them stale. Run checks when appropriate; they are not automatic completion gates.",
+        `Configured checks produce execution receipts only when their exact command is run with bash in the foreground. They run in a fresh shell at the session workspace, not the persistent shell. Receipts describe observed execution, not proof of correctness; later workspace changes make them stale. ${completion}`,
         ...checks.map(([name, command]) => `${name}: ${JSON.stringify(command)}`),
       ].join("\n")
     },

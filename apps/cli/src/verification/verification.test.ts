@@ -53,7 +53,7 @@ beforeEach(async () => {
   await writeFile(join(cwd, "source.txt"), "ok")
   await writeFile(join(cwd, ".gitignore"), "ignored.txt\n")
   await runGit(cwd, ["add", "source.txt", ".gitignore"])
-  settings().verification = { checks: { test: 'test "$(cat source.txt)" = ok' } }
+  settings().verification = { checks: { test: 'test "$(cat source.txt)" = ok' }, gate: false }
 })
 
 afterEach(async () => {
@@ -411,4 +411,56 @@ test("the checks command inspects evidence and runs the configured command", asy
   } finally {
     unsubscribe()
   }
+})
+
+test("gates once when a turn changes the workspace without passing checks", async () => {
+  settings().verification.gate = true
+  const unchanged = new ScriptedProvider([completedRound("Nothing to change.")])
+  await runSettledTurn(session(unchanged), { text: "Explain the code", images: [] })
+  expect(unchanged.requests).toHaveLength(1)
+
+  const provider = new ScriptedProvider([
+    toolRound("change", "bash", { command: "printf changed > source.txt" }),
+    completedRound("Done."),
+    completedRound("The test check cannot pass until source.txt is restored."),
+  ])
+  const outcome = await runSettledTurn(session(provider), { text: "Change the source", images: [] })
+
+  expect(outcome.response).toBe("The test check cannot pass until source.txt is restored.")
+  const correction = provider.requests[2]?.input.at(-1)
+  if (!correction || correction.type !== "user_message") throw new Error("missing verification correction")
+  expect(correction.text).toContain("You changed the workspace during this turn")
+  expect(correction.text).toContain("test: not run")
+})
+
+test("gates structured output before accepting it", async () => {
+  settings().verification.gate = true
+  const provider = new ScriptedProvider([
+    toolRound("change", "bash", { command: "printf changed > source.txt" }),
+    toolRound("first", "submit_output", { done: true }),
+    toolRound("second", "submit_output", { done: false }),
+  ])
+  const target = new AgentSession({
+    provider,
+    profileId: "test-profile",
+    model: "test-model",
+    cwd,
+    persist: false,
+    trackUndoPrompts: false,
+    outputSchema: {
+      type: "object",
+      properties: { done: { type: "boolean" } },
+      required: ["done"],
+      additionalProperties: false,
+    },
+  })
+  target.setMode("yolo")
+  sessions.push(target)
+
+  const outcome = await runSettledTurn(target, { text: "Change the source", images: [] })
+
+  expect(outcome).toMatchObject({ status: "completed", response: { done: false } })
+  const correction = provider.requests[2]?.input.at(-1)
+  if (!correction || correction.type !== "user_message") throw new Error("missing verification correction")
+  expect(correction.text).toContain("You changed the workspace during this turn")
 })

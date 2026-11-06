@@ -18,7 +18,9 @@ Xal registers its built-in tools at startup, but the model is only offered the o
 
 `edit` has no such requirement, because `old_string` must already match the file exactly, which proves the replaced span is unchanged. The exception is `replace_all`, which rewrites occurrences the model may never have seen, so it requires the same read-and-unchanged check as `write`.
 
-The check compares a hash of the file contents, so reformatting that leaves the bytes identical is not treated as a change, and two edits within the same millisecond cannot be confused. The file state is scoped to a session and is cleared when the session resets or changes workspace. Note that reading any part of a file satisfies the requirement, including a one-line read.
+The check compares a hash of the file contents, so reformatting that leaves the bytes identical is not treated as a change, and two edits within the same millisecond cannot be confused. The file state is scoped to a session and is cleared when the session resets or changes workspace, and whenever the conversation context is replaced by compaction, rewind, or redo, since earlier reads may no longer be in the model's context. Stale-read pruning is the exception: it only removes reads that a later read or write supersedes, so the latest result for every file stays in context. Note that reading any part of a file satisfies the requirement, including a one-line read.
+
+When `old_string` does not occur in the file, the failure points at the closest text instead of leaving the model to guess. Xal compares the lines of `old_string` with every same-sized window of the file, ignoring whitespace. If at least half of the non-blank lines match, the error names that line range and prints up to 30 of its lines in `read` format, so the model can copy the exact text. The closest text is only a hint and is never applied.
 
 ## Search and inspection
 
@@ -31,6 +33,8 @@ The check compares a hash of the file contents, so reformatting that leaves the 
 | `lsp`      | Query a language server for diagnostics and symbols. | When a server is configured |
 | `skill`    | Load the full instructions for a catalogued skill.   | Always                      |
 | `memory`   | Read or replace user-global memory.                  | Primary sessions            |
+
+`grep` returns at most 250 results and `glob` at most 100. Both accept `offset` to skip leading results, and the footer of a truncated result names the offset that continues it. In content mode, `grep` also accepts `context` to show up to 10 lines before and after each match. Context lines are written `path-line-text` instead of `path:line:text`, `--` separates groups that are not adjacent, and only matches count toward the limit and the offset.
 
 Exact foreground `bash` commands matching [configured verification checks](/docs/configs#verification-checks) record execution receipts. These commands use a fresh shell at the session workspace rather than inherited shell state, run exclusively, and cannot be launched or promoted into the background. Other shell behavior is unchanged.
 

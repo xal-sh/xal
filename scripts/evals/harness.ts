@@ -2,6 +2,7 @@ import { cp, mkdtemp, readFile, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { asBoolean, asNumber, asString, isRecord } from "../../apps/cli/src/lib/json"
+import { toolFailed } from "../../apps/cli/src/tools/output"
 import type { CaseCheck, CaseVerdict, RunObservation } from "./types"
 
 const ENTRY = resolve(import.meta.dir, "../../apps/cli/src/index.ts")
@@ -76,6 +77,8 @@ async function drive(workspace: string, prompt: string, options: RunOptions): Pr
   const observation: RunObservation = {
     rounds: 0,
     toolCalls: 0,
+    toolFailures: 0,
+    editFailures: 0,
     uncachedInputTokens: 0,
     outputTokens: 0,
     durationMs: 0,
@@ -109,6 +112,11 @@ async function drive(workspace: string, prompt: string, options: RunOptions): Pr
           throw new Error(`xal run --format jsonl wrote a line that is not an event: ${line.slice(0, 200)}`)
         }
         if (event.type === "tool_started") observation.toolCalls += 1
+        const output = event.type === "tool_finished" ? asString(event.output) : undefined
+        if (output !== undefined && toolFailed(output)) {
+          observation.toolFailures += 1
+          if (event.tool === "edit" || event.tool === "write") observation.editFailures += 1
+        }
         const message = event.type === "error" ? asString(event.message) : undefined
         if (message !== undefined) observation.error ??= message
         if (event.type === "turn_failed") turnFailure ??= asString(event.message)

@@ -136,10 +136,19 @@ describe("chat completions wire conversion", () => {
     )
   })
 
-  test("rejects responses truncated by the output limit", async () => {
-    const response = new Response(
-      `data: ${JSON.stringify({ choices: [{ delta: { content: "partial" }, finish_reason: "length" }] })}\n\ndata: [DONE]\n\n`,
-    )
+  test("keeps partial text but rejects tool calls truncated by the output limit", async () => {
+    const chunk = {
+      choices: [
+        {
+          delta: {
+            content: "partial",
+            tool_calls: [{ index: 0, id: "call", function: { name: "write", arguments: '{"file_path":' } }],
+          },
+          finish_reason: "length",
+        },
+      ],
+    }
+    const response = new Response(`data: ${JSON.stringify(chunk)}\n\ndata: [DONE]\n\n`)
     const request: StreamRequest = {
       model: "model",
       instructions: "",
@@ -168,6 +177,9 @@ describe("chat completions wire conversion", () => {
         }
       })(),
     ).rejects.toMatchObject({ message: "Provider response exceeded its output limit", retryable: false })
-    expect(events).toEqual([{ type: "text_delta", text: "partial" }])
+    expect(events).toEqual([
+      { type: "text_delta", text: "partial" },
+      { type: "item_done", item: chatAssistantItem("provider", "model", "partial") },
+    ])
   })
 })

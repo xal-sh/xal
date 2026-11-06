@@ -8,6 +8,8 @@ export type CaseCheck = (repo: string) => Promise<CaseVerdict> | CaseVerdict
 export interface RunObservation {
   rounds: number
   toolCalls: number
+  toolFailures?: number
+  editFailures?: number
   uncachedInputTokens: number
   outputTokens: number
   durationMs: number

@@ -21,6 +21,7 @@ const plugin: Plugin = {
     ctx.registerTool(writeTool)
     ctx.registerTool(editTool)
     ctx.registerToolSessionDisposer(forgetFileStates)
+    ctx.registerToolContextDisposer(forgetFileStates)
     ctx.registerPermissionRules({
       ask: [
         "write(/*)",

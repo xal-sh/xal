@@ -44,7 +44,13 @@ describe("OpenAI Responses wire conversion", () => {
         type: "response.incomplete",
         response: { incomplete_details: { reason: "max_output_tokens" } },
       }),
-    ).toEqual({ type: "failure", message: "response incomplete: max_output_tokens", retryable: false })
+    ).toEqual({ type: "output_limit", message: "response incomplete: max_output_tokens" })
+    expect(
+      parseSseEvent({
+        type: "response.incomplete",
+        response: { incomplete_details: { reason: "content_filter" } },
+      }),
+    ).toEqual({ type: "failure", message: "response incomplete: content_filter", retryable: false })
     expect(
       parseSseEvent({
         type: "response.failed",

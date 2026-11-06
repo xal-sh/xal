@@ -292,9 +292,17 @@ pub(super) fn format_calls(value: &Value, cwd: &str, direction: &str) -> napi::R
     ))
 }
 
-pub(super) fn format_diagnostics(items: &[Value], uri: &str, cwd: &str) -> napi::Result<String> {
+pub(super) fn format_diagnostics(
+    items: &[Value],
+    uri: &str,
+    cwd: &str,
+    errors_only: bool,
+) -> napi::Result<String> {
     let mut lines = Vec::new();
     for value in items {
+        if errors_only && value.get("severity").and_then(Value::as_u64) != Some(1) {
+            continue;
+        }
         let message = value
             .get("message")
             .and_then(Value::as_str)
@@ -348,12 +356,18 @@ pub(super) fn format_diagnostics(items: &[Value], uri: &str, cwd: &str) -> napi:
         ));
     }
     if lines.is_empty() {
-        return Ok("No diagnostics found".to_owned());
+        return Ok(if errors_only {
+            "No errors found"
+        } else {
+            "No diagnostics found"
+        }
+        .to_owned());
     }
-    let label = if lines.len() == 1 {
-        "diagnostic"
-    } else {
-        "diagnostics"
+    let label = match (errors_only, lines.len() == 1) {
+        (true, true) => "error",
+        (true, false) => "errors",
+        (false, true) => "diagnostic",
+        (false, false) => "diagnostics",
     };
     Ok(bounded(format!("Found {} {label}", lines.len()), lines))
 }
@@ -393,8 +407,36 @@ mod tests {
             "message": "bad"
         })];
         assert_eq!(
-            format_diagnostics(&items, "file:///tmp/a.ts", "/tmp").unwrap(),
+            format_diagnostics(&items, "file:///tmp/a.ts", "/tmp", false).unwrap(),
             "Found 1 diagnostic\na.ts:2:3-2:4: error: bad"
+        );
+        let warning = json!({
+            "range": {
+                "start": { "line": 0, "character": 0 },
+                "end": { "line": 0, "character": 1 }
+            },
+            "severity": 2,
+            "message": "unused"
+        });
+        assert_eq!(
+            format_diagnostics(
+                std::slice::from_ref(&warning),
+                "file:///tmp/a.ts",
+                "/tmp",
+                true
+            )
+            .unwrap(),
+            "No errors found"
+        );
+        assert_eq!(
+            format_diagnostics(
+                &[warning, items[0].clone()],
+                "file:///tmp/a.ts",
+                "/tmp",
+                true
+            )
+            .unwrap(),
+            "Found 1 error\na.ts:2:3-2:4: error: bad"
         );
     }
 }
