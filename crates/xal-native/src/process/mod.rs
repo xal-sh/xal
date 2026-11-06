@@ -143,7 +143,8 @@ impl NativeProcess {
 }
 impl Drop for NativeProcess {
     fn drop(&mut self) {
-        let running = process_termination(&self.state).is_none();
+        let running =
+            process_termination(&self.state).is_none() || !process_output_closed(&self.state);
         {
             let mut output = lock(&self.state.output);
             output.closed = true;
@@ -152,5 +153,39 @@ impl Drop for NativeProcess {
         if running {
             signal_process_tree(&self.state, true);
         }
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dropping_exited_process_kills_children_holding_output() {
+        let process = NativeProcess::spawn(NativeProcessRequest {
+            launch: vec!["/bin/sh".into(), "-c".into(), "sleep 5 & true".into()],
+            cwd: std::env::current_dir()
+                .unwrap()
+                .to_string_lossy()
+                .into_owned(),
+            environment: vec![],
+            stdin: false,
+        })
+        .unwrap();
+        let state = process.state.clone();
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while process_termination(&state).is_none() && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(10));
+        }
+        let exited = process_termination(&state).is_some();
+        drop(process);
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while !process_output_closed(&state) && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(10));
+        }
+        let closed = process_output_closed(&state);
+        signal_process_tree(&state, true);
+        assert!(exited);
+        assert!(closed);
     }
 }

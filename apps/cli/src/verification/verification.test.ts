@@ -360,14 +360,22 @@ test("persists the actual outcome even if post-execution undo capture fails", as
   }
 })
 
-test("records timed-out checks as unsuccessful", async () => {
-  settings().verification.checks.test = "sleep 10"
+test.each(["sleep 3", "sleep 3 & true"])("records timed-out checks as unsuccessful: %s", async (command) => {
+  settings().verification.checks.test = command
   const provider = new ScriptedProvider([
-    toolRound("timeout", "bash", { command: "sleep 10", timeout: 1 }),
+    toolRound("timeout", "bash", { command, timeout: 1 }),
     completedRound("Stopped"),
   ])
-  const result = await runSettledTurn(session(provider), { text: "Run the check", images: [] })
+  const events: AgentEvent[] = []
+  const started = performance.now()
+  const result = await runSettledTurn(session(provider), { text: "Run the check", images: [] }, (event) => {
+    events.push(event)
+  })
+  expect(performance.now() - started).toBeLessThan(2500)
   expect(result).toMatchObject({ verification: [{ status: "failed", detail: "timed out after 1s" }] })
+  expect(events.filter((event) => event.type === "verification_recorded").at(-1)).toMatchObject({
+    record: { status: "finished", execution: { status: "timed_out", timeoutSeconds: 1 } },
+  })
 })
 
 test("the checks command inspects evidence and runs the configured command", async () => {
