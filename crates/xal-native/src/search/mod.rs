@@ -153,13 +153,16 @@ fn complete_grep(
     result.output = Some(if result.total == 0 {
         "No matches found".to_owned()
     } else {
-        let header = if multiline && content {
-            format!("Found {} matches", result.total)
-        } else if content {
-            format!("Found {} matching lines", result.total)
-        } else {
-            format!("Found {} files", result.total)
+        let one = result.total == 1;
+        let label = match (content, multiline) {
+            (true, true) if one => "match",
+            (true, true) => "matches",
+            (true, false) if one => "matching line",
+            (true, false) => "matching lines",
+            (false, _) if one => "file",
+            (false, _) => "files",
         };
+        let header = format!("Found {} {label}", result.total);
         format_results(&header, &result.lines, result.total, offset, |shown| {
             page_footer(offset, shown, result.total, "Narrow your pattern or path")
         })
@@ -171,7 +174,8 @@ fn complete_glob(mut result: NativeSearchResult, offset: u32) -> NativeSearchRes
     result.output = Some(if result.total == 0 {
         "No files found".to_owned()
     } else {
-        let header = format!("Found {} files", result.total);
+        let label = if result.total == 1 { "file" } else { "files" };
+        let header = format!("Found {} {label}", result.total);
         format_results(&header, &result.lines, result.total, offset, |shown| {
             page_footer(offset, shown, result.total, "Narrow the pattern")
         })

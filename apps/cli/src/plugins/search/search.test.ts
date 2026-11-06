@@ -41,7 +41,7 @@ test("grep honors ignores, includes hidden files, and preserves content and file
       { pattern: "NEEDLE", case_insensitive: true, glob: "*.ts" },
       context(workspace),
     )
-    expect(content.output).toBe("Found 1 matching lines\nsrc/match.ts:2:needle visible")
+    expect(content.output).toBe("Found 1 matching line\nsrc/match.ts:2:needle visible")
 
     const files = await grepTool.execute({ pattern: "needle", output_mode: "files" }, context(workspace))
     expect(files.output).toBe("Found 3 files\n.hidden\nsrc/match.ts\nsrc/other.js")
@@ -57,11 +57,11 @@ test("grep handles explicit targets, invalid expressions, literal text, binary f
     await writeFile(join(workspace, "nested", "binary.txt"), "needle\u0000binary")
 
     const target = await grepTool.execute({ pattern: "needle", path: "nested" }, context(workspace))
-    expect(target.output).toBe("Found 1 matching lines\nnested/target.txt:1:[Omitted long matching line]")
+    expect(target.output).toBe("Found 1 matching line\nnested/target.txt:1:[Omitted long matching line]")
     await expect(grepTool.execute({ pattern: "[" }, context(workspace))).rejects.toThrow("ripgrep error:")
     await writeFile(join(workspace, "nested", "call.ts"), "run(a.b)\nrunaxb\n")
     const literal = await grepTool.execute({ pattern: "run(a.b)", literal: true, path: "nested" }, context(workspace))
-    expect(literal.output).toBe("Found 1 matching lines\nnested/call.ts:1:run(a.b)")
+    expect(literal.output).toBe("Found 1 matching line\nnested/call.ts:1:run(a.b)")
 
     const abort = new AbortController()
     abort.abort()
@@ -91,11 +91,11 @@ test("grep and glob match globs relative to the search path and say when a glob 
     await writeFile(join(workspace, "src", "main.ts"), "needle\n")
 
     const scoped = await globTool.execute({ pattern: "tools/*.ts", path: "src" }, context(workspace))
-    expect(scoped.output).toBe("Found 1 files\nsrc/tools/registry.ts")
+    expect(scoped.output).toBe("Found 1 file\nsrc/tools/registry.ts")
     const absolute = await globTool.execute({ pattern: join(workspace, "src", "*.ts") }, context(workspace))
     expect(absolute.output.split("\n")[0]).toBe("Found 2 files")
     const filtered = await grepTool.execute({ pattern: "needle", path: "src", glob: "tools/**" }, context(workspace))
-    expect(filtered.output).toBe("Found 1 matching lines\nsrc/tools/registry.ts:1:needle")
+    expect(filtered.output).toBe("Found 1 matching line\nsrc/tools/registry.ts:1:needle")
     const excluded = await grepTool.execute({ pattern: "needle", glob: "*.rs" }, context(workspace))
     expect(excluded.output).toBe(
       "No files match glob *.rs, so nothing was searched. Globs match paths relative to the search path or the working directory.",
@@ -111,7 +111,7 @@ test("grep fails on line breaks unless multiline is set, then shows every line o
       "Set multiline to true to match across lines",
     )
     const result = await grepTool.execute({ pattern: "call\\(\\n\\s*first", multiline: true }, context(workspace))
-    expect(result.output).toBe("Found 1 matches\ncode.ts:1:call(\ncode.ts:2:  first,")
+    expect(result.output).toBe("Found 1 match\ncode.ts:1:call(\ncode.ts:2:  first,")
   })
 })
 
