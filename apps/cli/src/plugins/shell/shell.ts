@@ -1,6 +1,6 @@
 import { statSync } from "node:fs"
 import { basename, isAbsolute } from "node:path"
-import { nativeShellManager, type NativeShellExecution } from "../../native"
+import { createNativeProcess, nativeShellManager, type NativeShellExecution } from "../../native"
 import { sandboxLaunch, sandboxProcessEnvironment, type SandboxAccess } from "./sandbox"
 
 const SUPPORTED_SHELLS = new Set(["sh", "bash", "dash", "ksh", "mksh", "zsh"])
@@ -133,6 +133,23 @@ function shellExecution(native: NativeShellExecution, onOutput: (text: string) =
     terminate: () => native.terminate(),
     kill: () => native.kill(),
   }
+}
+
+export function executeIsolatedShellCommand(
+  command: string,
+  cwd: string,
+  sandbox: SandboxAccess | undefined,
+  onOutput: (text: string) => void,
+): ShellExecution {
+  return shellExecution(
+    createNativeProcess({
+      launch: shellLaunch(["-c", command], cwd, sandbox),
+      cwd,
+      environment: shellProcessEnvironment(cwd, sandbox),
+      stdin: false,
+    }),
+    onOutput,
+  )
 }
 
 export function executeShellCommand(

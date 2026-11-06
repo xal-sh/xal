@@ -1,6 +1,7 @@
 import { appInfo } from "../app-info"
 import { registerCli } from "../cli/registry"
 import { settings } from "../config/settings"
+import { verificationHeadline } from "../verification/service"
 import type { Cli } from "../cli/types"
 import { parseGoalPrompt } from "../goals/invocation"
 import { describeError } from "../lib/error"
@@ -262,6 +263,7 @@ const runCli: Cli = {
 
     if (options.format === "text" && outcome.status === "completed") {
       ctx.print(typeof outcome.response === "string" ? outcome.response : JSON.stringify(outcome.response, null, 2))
+      if (outcome.verification) ctx.error(verificationHeadline(outcome.verification))
     }
     if (options.format === "text" && outcome.status === "failed") ctx.error(outcome.error ?? "turn failed")
     if (options.format === "json") printJson(ctx.print, result(outcome, session))

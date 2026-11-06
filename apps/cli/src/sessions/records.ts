@@ -22,7 +22,8 @@ import {
   type UserMessageItem,
 } from "../providers/types"
 import { parseTaskList } from "../tasks/types"
-import type { ProcessExecution, ProcessSandbox } from "../tools/types"
+import { parseProcessExecution } from "../tools/execution"
+import { parseVerificationRecord, parseVerificationSummary } from "../verification/types"
 import { normalizeSessionTitle } from "./title"
 import type { SessionMeta, SessionRecord } from "./types"
 
@@ -33,32 +34,6 @@ export function isPersistable(event: AgentEvent): boolean {
 function parseDenial(value: unknown): DenialCause | undefined {
   const denial = asString(value)
   if (denial === "user" || denial === "policy" || denial === "plan" || denial === "hook") return denial
-  return undefined
-}
-
-function parseProcessExecution(value: unknown): ProcessExecution | undefined {
-  if (!isRecord(value)) return undefined
-  const status = asString(value.status)
-  const sandbox = asString(value.sandbox)
-  if (value.sandbox !== undefined && sandbox !== "read" && sandbox !== "workspace") return undefined
-  const processSandbox: ProcessSandbox | undefined = sandbox === "read" || sandbox === "workspace" ? sandbox : undefined
-  const sandboxed = processSandbox ? { sandbox: processSandbox } : {}
-  if (status === "exited") {
-    const exitCode = asNumber(value.exitCode)
-    return exitCode !== undefined && Number.isSafeInteger(exitCode) ? { status, exitCode, ...sandboxed } : undefined
-  }
-  if (status === "signaled") {
-    const signal = asString(value.signal)
-    if (value.signal !== undefined && !signal) return undefined
-    return { status, ...(signal === undefined ? {} : { signal }), ...sandboxed }
-  }
-  if (status === "timed_out") {
-    const timeoutSeconds = asNumber(value.timeoutSeconds)
-    return timeoutSeconds !== undefined && Number.isSafeInteger(timeoutSeconds) && timeoutSeconds > 0
-      ? { status, timeoutSeconds, ...sandboxed }
-      : undefined
-  }
-  if (status === "interrupted") return { status, ...sandboxed }
   return undefined
 }
 
@@ -208,6 +183,10 @@ function parseEvent(raw: unknown): AgentEvent | undefined {
       if (!cwd || !previous) return undefined
       return { type: "workspace_changed", cwd, previous }
     }
+    case "verification_recorded": {
+      const record = parseVerificationRecord(raw.record)
+      return record ? { type: "verification_recorded", record } : undefined
+    }
     case "task_list_updated": {
       const tasks = parseTaskList(raw.tasks)
       const explanation = asString(raw.explanation)
@@ -335,11 +314,14 @@ function parseEvent(raw: unknown): AgentEvent | undefined {
     }
     case "turn_ended": {
       if (raw.output !== undefined && !isJsonObject(raw.output)) return undefined
+      const verification = raw.verification === undefined ? undefined : parseVerificationSummary(raw.verification)
+      if (raw.verification !== undefined && !verification) return undefined
       return {
         type: "turn_ended",
         usage: parseUsage(raw.usage),
         context: parseUsage(raw.context),
         output: raw.output,
+        ...(verification ? { verification } : {}),
       }
     }
     case "turn_failed": {

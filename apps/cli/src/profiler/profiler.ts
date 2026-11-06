@@ -43,6 +43,7 @@ type AnonymousAgentEvent =
       evaluatedTurns: number
       usage: Usage
     }
+  | { type: "verification_recorded"; status: "started" | "finished" }
   | { type: "task_list_updated"; pending: number; inProgress: number; completed: number }
   | {
       type: "session_started"
@@ -299,6 +300,8 @@ function anonymousAgentEvent(event: AgentEvent): AnonymousAgentEvent | undefined
         evaluatedTurns: event.goal.evaluatedTurns,
         usage: event.goal.usage,
       }
+    case "verification_recorded":
+      return { type: event.type, status: event.record.status }
     case "task_list_updated":
       return {
         type: event.type,

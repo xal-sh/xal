@@ -81,6 +81,7 @@ export class AttentionController {
         this.finish("Failed")
         return
       case "plan_updated":
+      case "verification_recorded":
       case "task_list_updated":
       case "session_title_changed":
       case "workspace_changed":

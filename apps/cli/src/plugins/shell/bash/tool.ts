@@ -7,7 +7,8 @@ import { adoptJob, startJob } from "./jobs"
 import { spawnCommand } from "../process"
 import { armPromotion } from "../../../background/promotion"
 import { sandboxAccessOf, sandboxAvailable, sandboxProcessEnvironment, sandboxRequested } from "../sandbox"
-import { executeShellCommand, shellLaunch } from "../shell"
+import { executeIsolatedShellCommand, executeShellCommand, shellLaunch } from "../shell"
+import { configuredCheck, finishVerification, startVerification } from "../../../verification/service"
 import { commandPrefix, isAssignmentPrefix, splitCommand } from "../split"
 
 const DEFAULT_TIMEOUT_S = 120
@@ -60,7 +61,7 @@ function parameters(): Record<string, unknown> {
 }
 
 function description(): string {
-  const base = `Execute a command with the user's shell in a persistent session: cd, exported variables, and aliases or functions defined by earlier commands stay in effect for later ones. Returns combined stdout and stderr followed by the exit code. Commands run without a TTY and are killed after ${DEFAULT_TIMEOUT_S} seconds unless timeout says otherwise. Managed background execution is selected with background:true; processes detached inside the shell are not tracked.`
+  const base = `Execute a command with the user's shell in a persistent session: cd, exported variables, and aliases or functions defined by earlier commands stay in effect for later ones. Returns combined stdout and stderr followed by the exit code. Commands run without a TTY and are killed after ${DEFAULT_TIMEOUT_S} seconds unless timeout says otherwise. Managed background execution is selected with background:true; processes detached inside the shell are not tracked. Exact configured verification commands run in a fresh foreground shell at the session workspace, without inherited shell state, and cannot be moved to the background.`
   if (!sandboxAvailable()) return `${base} Commands follow the current permission mode.`
   return `${base} Sandboxed commands use OS-enforced filesystem and network restrictions; other commands follow the current permission mode. Commands with sandbox "read" requested in the same response run concurrently and may not share shell state, so request independent inspections together and never make one depend on another.`
 }
@@ -80,7 +81,7 @@ export const bashTool: Tool = {
     return readOnlyCommand(args)
   },
   concurrency(args) {
-    return readOnlyCommand(args) ? "shared" : "exclusive"
+    return readOnlyCommand(args) && !configuredCheck(commandOf(args)) ? "shared" : "exclusive"
   },
   undo(args) {
     if (backgroundRequested(args)) return { type: "invalidate" }
@@ -109,8 +110,10 @@ export const bashTool: Tool = {
     if (!command) return { output: "(no command provided)" }
 
     const sandbox = sandboxAccessOf(args)
+    const check = configuredCheck(command)
 
     if (backgroundRequested(args)) {
+      if (check) throw new Error("configured verification checks must run in the foreground")
       const launch = shellLaunch(["-c", command], ctx.cwd, sandbox)
       const environment = { ...process.env, PWD: ctx.cwd }
       const proc = spawnCommand(launch, sandbox ? sandboxProcessEnvironment(environment) : environment, ctx.cwd)
@@ -120,6 +123,8 @@ export const bashTool: Tool = {
       }
     }
 
+    const verification = check ? await startVerification(check, ctx) : undefined
+    ctx.signal.throwIfAborted()
     const timeoutSeconds = timeoutSecondsOf(args)
     let output = ""
     let sink = (text: string): void => {
@@ -131,7 +136,9 @@ export const bashTool: Tool = {
       const redacted = redactor.write(text)
       if (redacted) sink(redacted)
     }
-    const execution = executeShellCommand(ctx.sessionId, command, ctx.cwd, sandbox, emit)
+    const execution = verification
+      ? executeIsolatedShellCommand(command, ctx.cwd, sandbox, emit)
+      : executeShellCommand(ctx.sessionId, command, ctx.cwd, sandbox, emit)
     const done = execution.done.then(
       (termination) => {
         const tail = redactor.end()
@@ -152,13 +159,15 @@ export const bashTool: Tool = {
     if (ctx.signal.aborted) onAbort()
 
     const promotion = Promise.withResolvers<BackgroundProcessJob>()
-    const disarm = armPromotion(ctx.sessionId, () => {
-      execution.clearTimeout()
-      ctx.signal.removeEventListener("abort", onAbort)
-      const adopted = adoptJob(command, redactedExecution, output, ctx.cwd, ctx.sessionId, ctx.directory)
-      sink = adopted.sink
-      promotion.resolve(adopted.job)
-    })
+    const disarm = verification
+      ? undefined
+      : armPromotion(ctx.sessionId, () => {
+          execution.clearTimeout()
+          ctx.signal.removeEventListener("abort", onAbort)
+          const adopted = adoptJob(command, redactedExecution, output, ctx.cwd, ctx.sessionId, ctx.directory)
+          sink = adopted.sink
+          promotion.resolve(adopted.job)
+        })
 
     try {
       const settled = await Promise.race([
@@ -188,13 +197,14 @@ export const bashTool: Tool = {
         processExecution = { ...termination, ...sandboxed }
         footer = `(exit code ${termination.exitCode}${sandbox ? ` · ${sandbox} sandbox` : ""})`
       }
+      if (verification) await finishVerification(verification, processExecution, ctx)
       return {
         output: trimmed ? `${trimmed}\n${footer}` : footer,
         execution: processExecution,
         maxOutputBytes: MAX_RESULT_BYTES,
       }
     } finally {
-      disarm()
+      disarm?.()
       execution.clearTimeout()
       ctx.signal.removeEventListener("abort", onAbort)
     }

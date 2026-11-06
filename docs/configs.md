@@ -36,6 +36,7 @@ Global memory is stored at `<app-home>/MEMORY.md`. On Unix, Xal creates it with 
 | `permissions`      | `object`   | `{}`                     | Global rules described in [Permissions and security](/docs/permissions).    |
 | `modes`            | `object`   | `{}`                     | [Custom permission modes](/docs/permissions#custom-modes) keyed by name.    |
 | `goal`             | `object`   | `{}`                     | Evaluator models described in [Goals](/docs/goals).                         |
+| `verification`     | `object`   | `{}`                     | Named [verification checks](#verification-checks) and workspace evidence.   |
 | `redaction`        | `object`   | `{}`                     | [Sensitive values](/docs/permissions#redaction) to redact.                  |
 | `agents`           | `object`   | `{}`                     | Limits described in [Background work](/docs/background-work#configuration). |
 | `pluginConfig`     | `object`   | `{}`                     | Configuration keyed by plugin name.                                         |
@@ -48,7 +49,7 @@ The `profile` value is managed by `/connect` and `/model`. Profile names remain 
 
 `mode` accepts `normal`, `plan`, `yolo`, or a name defined under `modes`. A command-line `--mode` overrides the configured default for that session.
 
-Malformed `mode`, `permissions`, `modes`, `goal`, `redaction`, `typesafeAI`, or `agents` configuration fails startup instead of silently running without those rules.
+Malformed `mode`, `permissions`, `modes`, `goal`, `verification`, `redaction`, `typesafeAI`, or `agents` configuration fails startup instead of silently running without those rules.
 
 Built-in configuration is documented with the feature that consumes it:
 
@@ -59,6 +60,29 @@ Built-in configuration is documented with the feature that consumes it:
 - [Plugins and hooks](/docs/plugins) covers custom plugin configuration.
 - [Commands and skills](/docs/commands-and-skills) covers project instruction limits.
 - [Scheduler](/docs/scheduler) covers delayed model continuation.
+
+## Verification checks
+
+Configure named shell commands to record which checks actually ran and whether their workspace evidence is still current:
+
+```json
+{
+  "verification": {
+    "checks": {
+      "test": "bun test",
+      "typecheck": "bun run typecheck"
+    }
+  }
+}
+```
+
+Checks are opt-in and never run automatically or gate completion. Names must start with a lower-case letter and contain only lower-case letters, digits, hyphens, or underscores. Commands must be non-empty strings and distinct after trimming surrounding whitespace. Only `checks` is supported under `verification`; invalid configuration fails startup. Standard recursive merging applies, so a project can override a command by name.
+
+In the TUI, `/checks` refreshes the evidence and `/checks <name>` runs one command through the normal direct-shell permissions and hooks. Model-issued `bash` calls and `!` commands also record a check when the effective foreground command exactly matches a configured command. Chained or modified commands do not match. Configured checks run in a fresh shell at the session workspace, without earlier `cd`, exports, aliases, or functions; they cannot use `background: true` or be promoted to background jobs. Normal shell timeouts still apply.
+
+Receipts persist in session history with the command, workspace, timestamps, actual process termination, and workspace fingerprint. Status is `passed` only for exit code zero with matching evidence, `failed` for an unsuccessful or unfinished run with current evidence, `not_run` when no matching receipt exists, and `stale` when evidence changed or is unavailable. A started rerun supersedes its previous receipt even if it never finishes. The start receipt is saved before launching the shell, and the finished receipt before post-command undo capture; receipt write failures stop the call rather than claiming a pass. Denied calls do not record execution. `/new` clears receipts; resumed and forked sessions retain receipts but recompute freshness when inspected. Turn completion includes a verification summary in the TUI and headless output; replayed summaries are historical, not a fresh check.
+
+Freshness compares SHA-256 fingerprints before and after execution and again when inspected. It covers tracked and non-ignored files across the Git workspace, including untracked additions, deletions, executable bits, and symlink destinations. It does not track ignored files, installed dependencies, environment variables, external services, Git metadata, or the contents behind symlinks. Non-Git directories, unsupported entries such as submodule directories or non-UTF-8 filenames and symlink destinations, and read failures produce unavailable evidence, never a pass. Unsettled managed background work also prevents a fresh status. Fingerprints are observations, not atomic filesystem snapshots or proof that a command tested the intended behavior; use foreground, non-watch commands and rerun after relevant external changes.
 
 ## Code Mode
 

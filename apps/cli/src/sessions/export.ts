@@ -3,6 +3,8 @@ import type { AgentEvent, BackgroundResult } from "../agent/events"
 import type { GoalSnapshot } from "../goals/types"
 import type { Usage } from "../providers/types"
 import type { SessionMeta } from "./types"
+import { processExecutionDetail } from "../tools/execution"
+import { verificationDetails } from "../verification/service"
 
 export interface SessionExport {
   meta: SessionMeta
@@ -113,6 +115,11 @@ function renderEvent(event: AgentEvent): string | undefined {
       return `## Plan: ${event.plan.status}\n\n${event.plan.markdown}`
     case "goal_updated":
       return renderGoal(event.goal)
+    case "verification_recorded": {
+      const record = event.record
+      const result = record.status === "started" ? "started" : processExecutionDetail(record.execution)
+      return `## Verification: ${record.name} (${result})\n\n${indented(record.command)}\n\nWorkspace: ${record.cwd}`
+    }
     case "task_list_updated": {
       const explanation = event.explanation ? `${event.explanation}\n\n` : ""
       return `## Updated Plan\n\n${explanation}${event.tasks.map((task) => `- [${task.status === "completed" ? "x" : " "}] ${task.step} (${task.status})`).join("\n")}`
@@ -125,8 +132,16 @@ function renderEvent(event: AgentEvent): string | undefined {
       return "## Turn interrupted"
     case "error":
       return `## Error\n\n${event.message}`
-    case "turn_ended":
-      return event.output ? `## Structured output\n\n${indented(JSON.stringify(event.output, null, 2))}` : undefined
+    case "turn_ended": {
+      const sections: string[] = []
+      if (event.output) sections.push(`## Structured output\n\n${indented(JSON.stringify(event.output, null, 2))}`)
+      if (event.verification) {
+        sections.push(
+          `## Verification at turn completion\n\n${verificationDetails(event.verification).map(indented).join("\n\n")}`,
+        )
+      }
+      return sections.length > 0 ? sections.join("\n\n") : undefined
+    }
     case "session_started":
     case "session_replay_finished":
     case "context_window_changed":

@@ -32,6 +32,8 @@ The check compares a hash of the file contents, so reformatting that leaves the 
 | `skill`    | Load the full instructions for a catalogued skill.   | Always                      |
 | `memory`   | Read or replace user-global memory.                  | Primary sessions            |
 
+Exact foreground `bash` commands matching [configured verification checks](/docs/configs#verification-checks) record execution receipts. These commands use a fresh shell at the session workspace rather than inherited shell state, run exclusively, and cannot be launched or promoted into the background. Other shell behavior is unchanged.
+
 ## Code Mode
 
 The experimental `code_mode` tool lets the model run a stateless JavaScript program that combines read-only tools and emits only selected results into context. It is disabled by default; enable it with [Code Mode configuration](/docs/configs#code-mode). Ordinary tools remain available, and a simple read or search does not need a program. Code Mode works across providers, including headless runs, task agents, and read-only permission modes.

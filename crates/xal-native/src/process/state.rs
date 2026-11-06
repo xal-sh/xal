@@ -108,16 +108,22 @@ fn signal_name(_status: &std::process::ExitStatus) -> Option<String> {
     None
 }
 
+fn expire_process(state: &ProcessState) {
+    let mut deadline = lock(&state.deadline);
+    if deadline.is_none_or(|deadline| Instant::now() < deadline) {
+        return;
+    }
+    *deadline = None;
+    drop(deadline);
+    state
+        .timed_out
+        .store(true, std::sync::atomic::Ordering::Relaxed);
+    signal_process_tree(state, true);
+}
+
 fn watch_process(state: Arc<ProcessState>) {
     let status = loop {
-        let timed_out = lock(&state.deadline).is_some_and(|deadline| Instant::now() >= deadline);
-        if timed_out {
-            *lock(&state.deadline) = None;
-            state
-                .timed_out
-                .store(true, std::sync::atomic::Ordering::Relaxed);
-            signal_process_tree(&state, true);
-        }
+        expire_process(&state);
         let result = {
             let mut child = lock(&state.child);
             let Some(child) = child.as_mut() else {
@@ -153,6 +159,10 @@ fn watch_process(state: Arc<ProcessState>) {
     *lock(&state.stdin) = None;
     *lock(&state.termination) = Some(termination);
     state.terminated.notify_all();
+    while !process_output_closed(&state) {
+        expire_process(&state);
+        thread::sleep(Duration::from_millis(10));
+    }
 }
 
 pub(super) fn signal_process_tree(state: &ProcessState, force: bool) {

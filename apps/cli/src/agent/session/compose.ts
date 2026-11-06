@@ -175,6 +175,7 @@ function lastState(loaded: LoadedSession): {
       case "tool_updated":
       case "shell_finished":
       case "tool_finished":
+      case "verification_recorded":
       case "task_list_updated":
       case "compacted":
       case "context_updated":

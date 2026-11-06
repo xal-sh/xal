@@ -187,6 +187,7 @@ export class ChildEventController {
       case "elicitation_requested":
       case "elicitation_resolved":
       case "goal_updated":
+      case "verification_recorded":
       case "task_list_updated":
         break
       default: {
