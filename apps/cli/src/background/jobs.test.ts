@@ -95,6 +95,27 @@ test("process completion wakes a waiting reader", async () => {
   expect(job.detail).toContain("exited with code 0")
 })
 
+test("a failed process collection cannot claim a complete saved log", async () => {
+  const job = processJob("test-process-collection-failure")
+  attachJobLog(job, {
+    path: "/test/partial.log",
+    append: () => {},
+    capped: () => false,
+    close: async () => {},
+  })
+  appendProcessOutput(job, "partial output")
+  await finishProcessJob(job, { status: "launch_failed", message: "reader failed" })
+
+  expect(job.record).toEqual({
+    status: "saved",
+    path: "/test/partial.log",
+    complete: false,
+    reason: "unavailable",
+    message: "process output collection did not complete",
+  })
+  expect(job.detail).toContain("output incomplete")
+})
+
 test("aborting a process wait removes and wakes its reader", async () => {
   const job = processJob("test-process-abort")
   const controller = new AbortController()

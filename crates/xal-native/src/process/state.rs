@@ -5,20 +5,26 @@ pub(super) struct OutputQueue {
     bytes: usize,
     pub(super) closed: bool,
     lossy: bool,
+    dropped: u64,
+}
+
+struct OwnedProcess {
+    child: Child,
+    kill_deadline: Option<Instant>,
 }
 
 pub(crate) struct ProcessState {
-    child: Mutex<Option<Child>>,
+    child: Mutex<Option<OwnedProcess>>,
     pub(super) stdin: Mutex<Option<ChildStdin>>,
     pub(super) output: Mutex<OutputQueue>,
     pub(super) output_changed: Condvar,
     readers: AtomicUsize,
-    reader_error: Mutex<Option<String>>,
+    error: Mutex<Option<String>>,
     termination: Mutex<Option<NativeProcessTermination>>,
     terminated: Condvar,
     deadline: Mutex<Option<Instant>>,
     timed_out: AtomicBool,
-    pid: u32,
+    finalized: AtomicBool,
 }
 
 pub(super) fn lock<'a, T>(mutex: &'a Mutex<T>) -> MutexGuard<'a, T> {
@@ -31,18 +37,22 @@ fn push_output(state: &ProcessState, bytes: Vec<u8>) {
     if bytes.is_empty() {
         return;
     }
+    let mut output = lock(&state.output);
     let bytes = if bytes.len() > OUTPUT_CAPACITY {
+        output.dropped = output
+            .dropped
+            .saturating_add((bytes.len() - OUTPUT_CAPACITY) as u64);
         bytes[bytes.len() - OUTPUT_CAPACITY..].to_vec()
     } else {
         bytes
     };
-    let mut output = lock(&state.output);
     while !output.closed && output.bytes + bytes.len() > OUTPUT_CAPACITY {
         if output.lossy {
             let Some(dropped) = output.chunks.pop_front() else {
                 break;
             };
             output.bytes -= dropped.len();
+            output.dropped = output.dropped.saturating_add(dropped.len() as u64);
             continue;
         }
         let (next, timeout) = state
@@ -67,10 +77,10 @@ fn read_stream(state: Arc<ProcessState>, mut stream: impl Read) {
             Ok(read) => push_output(&state, buffer[..read].to_vec()),
             Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
             Err(error) => {
-                let mut reader_error = lock(&state.reader_error);
-                if reader_error.is_none() {
-                    *reader_error = Some(error.to_string());
-                }
+                record_error(
+                    &state,
+                    format!("could not read native process output: {error}"),
+                );
                 break;
             }
         }
@@ -121,15 +131,176 @@ fn expire_process(state: &ProcessState) {
     signal_process_tree(state, true);
 }
 
+#[cfg(unix)]
+fn observe_exit(child: &mut Child) -> std::io::Result<Option<std::process::ExitStatus>> {
+    use std::os::unix::process::ExitStatusExt;
+    loop {
+        let mut info = std::mem::MaybeUninit::<libc::siginfo_t>::zeroed();
+        let result = unsafe {
+            libc::waitid(
+                libc::P_PID,
+                child.id(),
+                info.as_mut_ptr(),
+                libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
+            )
+        };
+        if result != 0 {
+            let error = std::io::Error::last_os_error();
+            if error.kind() == std::io::ErrorKind::Interrupted {
+                continue;
+            }
+            return Err(error);
+        }
+        let info = unsafe { info.assume_init() };
+        if unsafe { info.si_pid() } == 0 {
+            return Ok(None);
+        }
+        let status = unsafe { info.si_status() };
+        let raw = match info.si_code {
+            libc::CLD_EXITED => status << 8,
+            libc::CLD_KILLED => status,
+            libc::CLD_DUMPED => status | 0x80,
+            code => {
+                return Err(std::io::Error::other(format!(
+                    "unexpected child exit code: {code}"
+                )));
+            }
+        };
+        return Ok(Some(std::process::ExitStatus::from_raw(raw)));
+    }
+}
+
+#[cfg(not(unix))]
+fn observe_exit(child: &mut Child) -> std::io::Result<Option<std::process::ExitStatus>> {
+    child.try_wait()
+}
+
+#[cfg(target_os = "macos")]
+fn group_is_exited(pid: libc::pid_t) -> std::io::Result<bool> {
+    let count = unsafe { libc::proc_listpgrppids(pid, std::ptr::null_mut(), 0) };
+    if count <= 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    let mut pids = vec![0; usize::try_from(count).map_err(std::io::Error::other)? + 1];
+    let bytes =
+        i32::try_from(std::mem::size_of_val(pids.as_slice())).map_err(std::io::Error::other)?;
+    let found = unsafe { libc::proc_listpgrppids(pid, pids.as_mut_ptr().cast(), bytes) };
+    if found <= 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    let found = usize::try_from(found).map_err(std::io::Error::other)?;
+    if found >= pids.len() {
+        return Ok(false);
+    }
+    for member in &pids[..found] {
+        let mut info = std::mem::MaybeUninit::<libc::proc_bsdinfo>::zeroed();
+        let size = i32::try_from(std::mem::size_of_val(&info)).map_err(std::io::Error::other)?;
+        let read = unsafe {
+            libc::proc_pidinfo(
+                *member,
+                libc::PROC_PIDTBSDINFO,
+                0,
+                info.as_mut_ptr().cast(),
+                size,
+            )
+        };
+        if read == 0 {
+            let error = std::io::Error::last_os_error();
+            if error.raw_os_error() == Some(libc::ESRCH) {
+                continue;
+            }
+            return Err(error);
+        }
+        if read != size {
+            return Err(std::io::Error::other(
+                "incomplete process group member information",
+            ));
+        }
+        let info = unsafe { info.assume_init() };
+        if info.pbi_pgid == u32::try_from(pid).map_err(std::io::Error::other)?
+            && info.pbi_status != libc::SZOMB
+        {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+fn record_error(state: &ProcessState, message: String) {
+    lock(&state.error).get_or_insert(message);
+}
+
+fn signal_owned(process: &mut OwnedProcess, force: bool) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        let pid = libc::pid_t::try_from(process.child.id()).map_err(std::io::Error::other)?;
+        let signal = if force { libc::SIGKILL } else { libc::SIGTERM };
+        if unsafe { libc::kill(-pid, signal) } != 0 {
+            let error = std::io::Error::last_os_error();
+            let absent = error.raw_os_error() == Some(libc::ESRCH);
+            #[cfg(target_os = "macos")]
+            let absent =
+                absent || (error.raw_os_error() == Some(libc::EPERM) && group_is_exited(pid)?);
+            if !absent {
+                return Err(error);
+            }
+        }
+    }
+    #[cfg(windows)]
+    {
+        let mut command = Command::new("taskkill");
+        command.args(["/PID", &process.child.id().to_string(), "/T"]);
+        if force {
+            command.arg("/F");
+        }
+        let status = command
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()?;
+        if !status.success() {
+            if !force {
+                return Err(std::io::Error::other(format!("taskkill failed: {status}")));
+            }
+            process.child.kill()?;
+        }
+    }
+    if force {
+        process.kill_deadline = None;
+    }
+    Ok(())
+}
+
+fn escalate_process(state: &ProcessState) {
+    let mut owned = lock(&state.child);
+    let Some(process) = owned.as_mut() else {
+        return;
+    };
+    if process
+        .kill_deadline
+        .is_some_and(|deadline| Instant::now() >= deadline)
+        && let Err(error) = signal_owned(process, true)
+    {
+        record_error(
+            state,
+            format!("could not kill native process group: {error}"),
+        );
+    }
+}
+
 fn watch_process(state: Arc<ProcessState>) {
     let status = loop {
         expire_process(&state);
+        escalate_process(&state);
         let result = {
-            let mut child = lock(&state.child);
-            let Some(child) = child.as_mut() else {
+            let mut owned = lock(&state.child);
+            let Some(process) = owned.as_mut() else {
                 return;
             };
-            child.try_wait()
+            let result = observe_exit(&mut process.child);
+            if result.is_err() {
+                *owned = None;
+            }
+            result
         };
         match result {
             Ok(Some(status)) => break Ok(status),
@@ -137,6 +308,7 @@ fn watch_process(state: Arc<ProcessState>) {
             Err(error) => break Err(error),
         }
     };
+    let observed = status.is_ok();
     let termination = match status {
         Ok(status) => match status.code() {
             Some(exit_code) => NativeProcessTermination {
@@ -150,42 +322,70 @@ fn watch_process(state: Arc<ProcessState>) {
                 signal: signal_name(&status),
             },
         },
-        Err(error) => NativeProcessTermination {
-            status: "launchFailed".to_owned(),
-            exit_code: None,
-            signal: Some(error.to_string()),
-        },
+        Err(error) => {
+            record_error(
+                &state,
+                format!("could not observe native process exit: {error}"),
+            );
+            NativeProcessTermination {
+                status: "launchFailed".to_owned(),
+                exit_code: None,
+                signal: Some(error.to_string()),
+            }
+        }
     };
     *lock(&state.stdin) = None;
     *lock(&state.termination) = Some(termination);
-    state.terminated.notify_all();
-    while !process_output_closed(&state) {
-        expire_process(&state);
-        thread::sleep(Duration::from_millis(10));
+    if observed {
+        while !process_output_closed(&state) {
+            expire_process(&state);
+            escalate_process(&state);
+            thread::sleep(Duration::from_millis(10));
+        }
+        let mut owned = lock(&state.child);
+        if let Some(process) = owned.as_mut() {
+            if let Err(error) = signal_owned(process, true) {
+                record_error(
+                    &state,
+                    format!("could not clean up native process group: {error}"),
+                );
+            }
+            if let Err(error) = process.child.wait() {
+                record_error(&state, format!("could not reap native process: {error}"));
+            }
+        }
+        *owned = None;
     }
+    let _termination = lock(&state.termination);
+    state
+        .finalized
+        .store(true, std::sync::atomic::Ordering::Release);
+    state.terminated.notify_all();
 }
 
 pub(super) fn signal_process_tree(state: &ProcessState, force: bool) {
-    #[cfg(unix)]
+    let mut owned = lock(&state.child);
+    if let Some(process) = owned.as_mut()
+        && let Err(error) = signal_owned(process, force)
     {
-        let signal = if force { "-KILL" } else { "-TERM" };
-        let _ = Command::new("kill")
-            .args([signal, "--", &format!("-{}", state.pid)])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
+        record_error(
+            state,
+            format!("could not signal native process group: {error}"),
+        );
     }
-    #[cfg(windows)]
-    {
-        let mut command = Command::new("taskkill");
-        command.args(["/PID", &state.pid.to_string(), "/T"]);
-        if force {
-            command.arg("/F");
-        }
-        let _ = command.stdout(Stdio::null()).stderr(Stdio::null()).status();
-    }
-    if force && let Some(child) = lock(&state.child).as_mut() {
-        let _ = child.kill();
+}
+
+pub(crate) fn process_terminate_after(state: &ProcessState, grace: Duration) {
+    let mut owned = lock(&state.child);
+    let Some(process) = owned.as_mut() else {
+        return;
+    };
+    process.kill_deadline = Some(Instant::now() + grace);
+    if let Err(error) = signal_owned(process, false) {
+        record_error(
+            state,
+            format!("could not terminate native process group: {error}"),
+        );
     }
 }
 
@@ -241,22 +441,26 @@ pub(crate) fn spawn_process(request: NativeProcessRequest) -> napi::Result<Arc<P
         )
     })?;
     let state = Arc::new(ProcessState {
-        pid: child.id(),
-        child: Mutex::new(Some(child)),
+        child: Mutex::new(Some(OwnedProcess {
+            child,
+            kill_deadline: None,
+        })),
         stdin: Mutex::new(stdin),
         output: Mutex::new(OutputQueue {
             chunks: VecDeque::new(),
             bytes: 0,
             closed: false,
             lossy: false,
+            dropped: 0,
         }),
         output_changed: Condvar::new(),
         readers: AtomicUsize::new(2),
-        reader_error: Mutex::new(None),
+        error: Mutex::new(None),
         termination: Mutex::new(None),
         terminated: Condvar::new(),
         deadline: Mutex::new(None),
         timed_out: AtomicBool::new(false),
+        finalized: AtomicBool::new(false),
     });
     let stdout_state = state.clone();
     thread::spawn(move || read_stream(stdout_state, stdout));
@@ -279,6 +483,10 @@ pub(crate) fn process_drain(state: &ProcessState) -> Vec<u8> {
     bytes
 }
 
+pub(crate) fn process_dropped_bytes(state: &ProcessState) -> u64 {
+    lock(&state.output).dropped
+}
+
 pub(crate) fn process_output_closed(state: &ProcessState) -> bool {
     state.readers.load(std::sync::atomic::Ordering::Acquire) == 0
 }
@@ -287,8 +495,12 @@ pub(crate) fn process_termination(state: &ProcessState) -> Option<NativeProcessT
     lock(&state.termination).clone()
 }
 
-pub(crate) fn process_reader_error(state: &ProcessState) -> Option<String> {
-    lock(&state.reader_error).clone()
+pub(crate) fn process_error(state: &ProcessState) -> Option<String> {
+    lock(&state.error).clone()
+}
+
+pub(crate) fn process_finalized(state: &ProcessState) -> bool {
+    state.finalized.load(std::sync::atomic::Ordering::Acquire)
 }
 
 pub(crate) fn process_write(state: &ProcessState, bytes: &[u8]) -> napi::Result<()> {
@@ -323,26 +535,9 @@ pub(crate) fn process_signal(state: &ProcessState, force: bool) {
     signal_process_tree(state, force);
 }
 
-pub(crate) fn process_interrupt(state: &ProcessState) -> bool {
-    #[cfg(unix)]
-    {
-        Command::new("kill")
-            .args(["-INT", "--", &format!("-{}", state.pid)])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .is_ok_and(|status| status.success())
-    }
-    #[cfg(windows)]
-    {
-        signal_process_tree(state, false);
-        true
-    }
-}
-
 pub(super) fn wait_process(state: &ProcessState) -> napi::Result<NativeProcessTermination> {
     let mut termination = lock(&state.termination);
-    while termination.is_none() {
+    while !process_finalized(state) {
         termination = state
             .terminated
             .wait(termination)
@@ -354,19 +549,94 @@ pub(super) fn wait_process(state: &ProcessState) -> napi::Result<NativeProcessTe
             "native process termination was unavailable".to_owned(),
         )
     })?;
-    let mut output = lock(&state.output);
-    while !process_output_closed(state) {
-        output = state
-            .output_changed
-            .wait(output)
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-    }
-    drop(output);
-    if let Some(error) = process_reader_error(state) {
-        return Err(Error::new(
-            Status::GenericFailure,
-            format!("could not read native process output: {error}"),
-        ));
+    if let Some(error) = process_error(state) {
+        return Err(Error::new(Status::GenericFailure, error));
     }
     Ok(termination)
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    fn wait_until(mut ready: impl FnMut() -> bool) {
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while !ready() {
+            assert!(
+                Instant::now() < deadline,
+                "process lifecycle did not settle"
+            );
+            thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    #[test]
+    fn retains_exited_leader_until_descendant_cleanup_then_retires_identity() {
+        for redirected in [false, true] {
+            let redirect = if redirected {
+                "exec >/dev/null 2>&1;"
+            } else {
+                ""
+            };
+            let process = NativeProcess::spawn(NativeProcessRequest {
+                launch: vec![
+                    "/bin/sh".into(),
+                    "-c".into(),
+                    format!(
+                        "trap 'exit 0' TERM; /bin/sh -c 'trap \"\" TERM; printf \"%s ready\\n\" \"$$\"; {redirect} while :; do sleep 1; done' & while :; do sleep 1; done"
+                    ),
+                ],
+                cwd: std::env::current_dir().unwrap().to_string_lossy().into_owned(),
+                environment: vec![NativeEnvironmentVariable {
+                    name: "PATH".into(),
+                    value: "/usr/bin:/bin".into(),
+                }],
+                stdin: false,
+            })
+            .unwrap();
+            let state = &process.state;
+            let mut output = String::new();
+            wait_until(|| {
+                output.push_str(&String::from_utf8(process_drain(state)).unwrap());
+                output.contains("ready\n")
+            });
+            let descendant = output.split_whitespace().next().unwrap().to_owned();
+            process_terminate_after(state, Duration::from_secs(60));
+            wait_until(|| process_termination(state).is_some());
+            if !redirected {
+                let mut owned = lock(&state.child);
+                let child = owned
+                    .as_mut()
+                    .expect("leader must remain owned during grace");
+                assert!(observe_exit(&mut child.child).unwrap().is_some());
+                assert!(!process_finalized(state));
+                child.kill_deadline = Some(Instant::now());
+            }
+            wait_until(|| process_finalized(state));
+            assert_eq!(wait_process(state).unwrap().status, "exited");
+            assert!(lock(&state.child).is_none());
+            assert!(process_output_closed(state));
+            wait_until(|| {
+                let status = Command::new("/bin/ps")
+                    .args(["-p", &descendant, "-o", "stat="])
+                    .output()
+                    .unwrap();
+                !status.status.success()
+                    || String::from_utf8(status.stdout)
+                        .unwrap()
+                        .trim_start()
+                        .starts_with('Z')
+            });
+            thread::scope(|scope| {
+                for _ in 0..4 {
+                    scope.spawn(|| {
+                        process_terminate_after(state, Duration::ZERO);
+                        process_signal(state, true);
+                    });
+                }
+            });
+            assert!(lock(&state.child).is_none());
+            assert!(process_error(state).is_none());
+        }
+    }
 }

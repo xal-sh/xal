@@ -1,11 +1,14 @@
 import { mkdir, writeFile } from "node:fs/promises"
 import { join, resolve } from "node:path"
+import { describeError } from "../lib/error"
 import { takeUtf8Prefix, takeUtf8Suffix } from "../lib/text"
 
 const MAX_OUTPUT_LINES = 2_000
 const MAX_OUTPUT_BYTES = 50 * 1024
 const TRUNCATION_NOTICE = /(?:^|\n)\.\.\. output truncated \((\d+) lines, \d+ bytes\) \.\.\.(?:\n|$)/
 const RECOVERY_PATH = /(?:^|\n)Full output saved to: (.+)$/
+const RECOVERY_NOTICE =
+  /(?:^|\n)((?:\[Output incomplete: [^\n]+\]\n)?(?:Full|Partial) output saved to: [^\n]+(?:\n\((?:exit code |timed out after |interrupted by user|terminated by signal)[^\n]*\))?)$/
 
 export const TOOL_FAILED_PREFIX = "Tool failed: "
 export const TOOL_OUTPUT_UNSAVED_PREFIX = "Tool completed, but its output could not be saved: "
@@ -63,24 +66,40 @@ function preview(text: string, maximumLines: number, maximumBytes: number): { he
   }
 }
 
+export async function saveToolOutput(directory: string, output: string): Promise<string> {
+  const path = join(directory, `tool-${crypto.randomUUID()}.txt`)
+  await mkdir(directory, { recursive: true, mode: 0o700 })
+  await writeFile(path, output, { encoding: "utf8", flag: "wx", mode: 0o600 })
+  return path
+}
+
 export async function boundToolOutput(
   directory: string,
   output: string,
   maximumBytes = MAX_OUTPUT_BYTES,
+  outputSaved = false,
 ): Promise<string> {
   const lines = lineCount(output)
   const bytes = Buffer.byteLength(output)
   if (lines <= MAX_OUTPUT_LINES && bytes <= maximumBytes) return output
 
-  const path = join(directory, `tool-${crypto.randomUUID()}.txt`)
-  await mkdir(directory, { recursive: true, mode: 0o700 })
-  await writeFile(path, output, { encoding: "utf8", flag: "wx", mode: 0o600 })
-
-  const notice = `... output truncated (${lines} lines, ${bytes} bytes) ...`
-  const recovery = `Full output saved to: ${path}`
+  const saved = outputSaved ? RECOVERY_NOTICE.exec(output) : undefined
+  const notice = saved
+    ? (TRUNCATION_NOTICE.exec(output)?.[0].trim() ?? "... output preview truncated ...")
+    : `... output truncated (${lines} lines, ${bytes} bytes) ...`
+  const recovery = saved?.[1] ?? `Full output saved to: ${await saveToolOutput(directory, output)}`
   const availableBytes = maximumBytes - Buffer.byteLength(notice) - Buffer.byteLength(recovery) - 6
   if (availableBytes <= 0) return takeUtf8Prefix(`${notice}\n${recovery}`, maximumBytes)
 
-  const bounded = preview(output, MAX_OUTPUT_LINES - 6, availableBytes)
+  const content = saved ? output.slice(0, saved.index).replace(TRUNCATION_NOTICE, "\n") : output
+  const bounded = preview(content, MAX_OUTPUT_LINES - 6, availableBytes)
   return `${bounded.head}\n\n${notice}\n\n${bounded.tail}\n\n${recovery}`
+}
+
+export function unsavedToolOutput(output: string, error: unknown, maximumBytes = MAX_OUTPUT_BYTES): string {
+  const notice = `${TOOL_OUTPUT_UNSAVED_PREFIX}${takeUtf8Prefix(describeError(error), Math.floor(maximumBytes / 4))}\nOnly the in-memory preview is available. The operation may have changed state; inspect it before retrying.\n`
+  const separator = "\n... output omitted ...\n"
+  const room = Math.max(0, maximumBytes - Buffer.byteLength(notice) - Buffer.byteLength(separator))
+  const bounded = preview(output, MAX_OUTPUT_LINES - 6, room)
+  return takeUtf8Prefix(`${notice}${bounded.head}${separator}${bounded.tail}`, maximumBytes)
 }

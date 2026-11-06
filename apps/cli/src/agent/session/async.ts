@@ -78,11 +78,11 @@ function formatProcessResult(job: BackgroundProcessJob): ProcessBackgroundResult
     id: job.id,
     command: job.command,
     status,
-    output: `${bounded || "(no unread output)"}\n(${job.detail})`,
+    output: `${bounded || "(no unread output)"}\n(${job.detail})${job.record?.status === "saved" && !job.record.complete && job.record.reason === "unavailable" ? `\nPartial log: ${job.record.path} (${job.record.message})` : ""}`,
     ...(termination.status === "exited" ? { exitCode: termination.exitCode } : {}),
     ...(termination.status === "signaled" ? { signal: termination.signal } : {}),
-    ...(job.record?.status === "saved"
-      ? { record: job.record.path, recordCapped: !job.record.complete && job.record.reason === "capped" }
+    ...(job.record?.status === "saved" && (job.record.complete || job.record.reason === "capped")
+      ? { record: job.record.path, recordCapped: !job.record.complete }
       : {}),
   }
 }

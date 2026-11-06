@@ -1,6 +1,7 @@
 import type { DecisionModelInfo, DecisionProvider } from "./decision-types"
 import type { Credential } from "../config/credentials"
 import type { JsonObject } from "../lib/json"
+import type { ReadCoverage } from "../tools/read-coverage"
 
 export interface ProviderReplay {
   provider: string
@@ -48,6 +49,7 @@ export interface ToolResultItem {
   type: "tool_result"
   callId: string
   output: string
+  read?: ReadCoverage
 }
 
 export type ProviderOutputItem = AssistantMessageItem | ReasoningItem | ToolCallItem
@@ -140,6 +142,7 @@ export interface ProviderPrompt {
 export interface StreamRequest extends ProviderPrompt {
   model: string
   conversationModel?: string
+  maxOutputTokens?: number
   thinking?: ThinkingEffort
   input: ConversationItem[]
   toolChoice: "auto" | "none"

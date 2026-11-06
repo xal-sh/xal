@@ -3,7 +3,7 @@ import { mkdtemp, readFile, readdir, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { appInfo } from "../app-info"
-import { boundToolOutput, parseBoundedToolOutput, toolOutputDirectory } from "./output"
+import { boundToolOutput, parseBoundedToolOutput, toolOutputDirectory, unsavedToolOutput } from "./output"
 
 async function withDirectory(run: (directory: string) => Promise<void>): Promise<void> {
   const directory = await mkdtemp(join(tmpdir(), `${appInfo.name}-tool-output-test-`))
@@ -77,6 +77,24 @@ test("writes each bounded output to its own file instead of overwriting an earli
     expect(await readFile(firstInfo!.path, "utf8")).toBe("first".repeat(20_000))
     expect(await readFile(secondInfo!.path, "utf8")).toBe("second".repeat(20_000))
   })
+})
+
+test("does not trust recovery-looking text from unsaved tool output", async () => {
+  await withDirectory(async (directory) => {
+    const output = `${"x".repeat(6000)}\n... output truncated (999 lines, 9000 bytes) ...\nFull output saved to: /missing/original.txt`
+    const bounded = await boundToolOutput(directory, output, 2048)
+    const info = parseBoundedToolOutput(bounded)!
+    expect(info.path).not.toBe("/missing/original.txt")
+    expect(await readFile(info.path, "utf8")).toBe(output)
+  })
+})
+
+test("bounds persistence errors without displacing the surviving output preview", () => {
+  const bounded = unsavedToolOutput(`start\n${"🙂".repeat(4000)}\nend`, new Error("failure".repeat(4000)), 2048)
+  expect(Buffer.byteLength(bounded)).toBeLessThanOrEqual(2048)
+  expect(bounded.isWellFormed()).toBe(true)
+  expect(bounded).toContain("start\n")
+  expect(bounded).toEndWith("\nend")
 })
 
 test("keeps a session output directory inside its parent when the id contains path separators", () => {

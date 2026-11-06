@@ -40,10 +40,26 @@ function disabled(family: Family): JsonObject {
   return { thinkingBudget: 0 }
 }
 
-export function thinkingConfig(modelId: string, effort: ThinkingEffort | undefined): JsonObject {
+export function thinkingConfig(
+  modelId: string,
+  effort: ThinkingEffort | undefined,
+  maximumTokens?: number,
+): JsonObject {
   const family = familyOf(modelId)
-  if (effort === "none") return disabled(family)
-  const resolved = effort ?? "high"
-  if (family === "legacy") return { thinkingBudget: BUDGET_TOKENS[resolved], includeThoughts: true }
-  return { thinkingLevel: level(family, resolved), includeThoughts: true }
+  if (family !== "legacy") {
+    return effort === "none"
+      ? disabled(family)
+      : { thinkingLevel: level(family, effort ?? "high"), includeThoughts: true }
+  }
+  const mandatory = /gemini-2\.5-pro/i.test(modelId)
+  if (effort === "none" && !mandatory) return disabled(family)
+  if (mandatory && maximumTokens !== undefined && maximumTokens <= 128) {
+    throw new Error(`${modelId} needs more than 128 output tokens for mandatory thinking and an answer`)
+  }
+  const budget =
+    effort === "none"
+      ? 128
+      : Math.max(mandatory ? 128 : 0, Math.min(BUDGET_TOKENS[effort ?? "high"], (maximumTokens ?? Infinity) - 1024))
+  if (!mandatory && budget < (/gemini-2\.5-flash-lite/i.test(modelId) ? 512 : 1)) return disabled(family)
+  return { thinkingBudget: budget, includeThoughts: effort !== "none" }
 }

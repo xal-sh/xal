@@ -82,6 +82,13 @@ describe("endpoint routing", () => {
 })
 
 describe("request options", () => {
+  test("forwards auxiliary output limits through all protocols", async () => {
+    for (const model of ["kimi-k3", "grok-4.5", "qwen3.7-max"]) {
+      const route = await routeFor({ model, maxOutputTokens: 2000 })
+      expect(body()[route === "/responses" ? "max_output_tokens" : "max_tokens"]).toBe(2000)
+    }
+  })
+
   test.each(["low", "high", "max"] as const)("forwards Flash reasoning effort %s", async (thinking) => {
     await routeFor({ model: "deepseek-v4.1-flash", thinking, tools: [tool] })
     expect(body()).toMatchObject({ model: "deepseek-v4.1-flash", reasoning_effort: thinking, tool_choice: "auto" })

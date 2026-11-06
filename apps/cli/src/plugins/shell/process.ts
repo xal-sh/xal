@@ -12,6 +12,7 @@ export interface CommandProcess {
   setTimeout(milliseconds: number): void
   clearTimeout(): void
   timedOut(): boolean
+  outputDropped(): boolean
   terminate(): void
   kill(): void
 }
@@ -36,6 +37,7 @@ function nativeCommand(launch: string[], environment: NodeJS.ProcessEnv, cwd: st
   const listeners = new Set<(chunk: Buffer) => void>()
   const nativeDone = native.wait()
   let pending = Buffer.alloc(0)
+  let dropped = false
   let settled = false
   void nativeDone.then(
     () => {
@@ -49,6 +51,7 @@ function nativeCommand(launch: string[], environment: NodeJS.ProcessEnv, cwd: st
     const chunk = Buffer.from(native.drain())
     if (chunk.length === 0) return false
     if (listeners.size === 0) {
+      if (pending.length + chunk.length > 256 * 1024) dropped = true
       pending = Buffer.concat([pending, chunk]).subarray(-256 * 1024)
       return true
     }
@@ -62,7 +65,10 @@ function nativeCommand(launch: string[], environment: NodeJS.ProcessEnv, cwd: st
     }
     drain()
   }
-  const pumped = pump()
+  const pumped = pump().catch((error: unknown) => {
+    native.kill()
+    throw error
+  })
   return {
     done: Promise.all([nativeDone, pumped]).then(([termination]) => terminationOf(termination)),
     onOutput(listener) {
@@ -83,6 +89,9 @@ function nativeCommand(launch: string[], environment: NodeJS.ProcessEnv, cwd: st
     },
     timedOut() {
       return native.timedOut()
+    },
+    outputDropped() {
+      return dropped || native.outputDropped()
     },
     terminate() {
       native.terminate()

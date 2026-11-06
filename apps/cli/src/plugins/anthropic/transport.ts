@@ -22,11 +22,12 @@ const BUDGET_TOKENS: Record<Exclude<ThinkingEffort, "none">, number> = {
   max: 32_768,
 }
 
-function requestThinking(model: AnthropicModel, effort: ThinkingEffort | undefined): JsonObject {
+function requestThinking(model: AnthropicModel, effort: ThinkingEffort | undefined, maximumTokens: number): JsonObject {
   if (effort === "none") return { thinking: { type: "disabled" } }
   const resolved = effort ?? "high"
   if (model.thinkingMode === "budget") {
-    const budget = Math.min(BUDGET_TOKENS[resolved], model.maxOutputTokens - 1_024)
+    const budget = Math.min(BUDGET_TOKENS[resolved], maximumTokens - 1_024)
+    if (budget < 1_024) return { thinking: { type: "disabled" } }
     return { thinking: { type: "enabled", budget_tokens: budget } }
   }
   return {
@@ -37,9 +38,10 @@ function requestThinking(model: AnthropicModel, effort: ThinkingEffort | undefin
 
 function buildBody(request: StreamRequest): string {
   const model = resolveModel(request.model)
+  const maximumTokens = Math.min(request.maxOutputTokens ?? model.maxOutputTokens, model.maxOutputTokens)
   return JSON.stringify({
     model: request.model,
-    max_tokens: model.maxOutputTokens,
+    max_tokens: maximumTokens,
     stream: true,
     system: buildSystem(request.instructions),
     messages: cacheBreakpoint(
@@ -48,7 +50,7 @@ function buildBody(request: StreamRequest): string {
         model: request.conversationModel ?? request.model,
       }),
     ),
-    ...requestThinking(model, request.thinking),
+    ...requestThinking(model, request.thinking, maximumTokens),
     ...(request.tools.length === 0
       ? {}
       : { tools: buildTools(request.tools), tool_choice: { type: request.toolChoice } }),

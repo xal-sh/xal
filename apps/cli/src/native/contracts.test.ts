@@ -93,6 +93,7 @@ describe("native contract parsing", () => {
       closeStdin() {},
       drain: () => new Uint8Array(),
       outputClosed: () => true,
+      outputDropped: () => false,
       wait: async () => ({ status: "signaled", exitCode: 0 }),
       setTimeout() {},
       clearTimeout() {},

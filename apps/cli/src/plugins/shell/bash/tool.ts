@@ -10,6 +10,7 @@ import { sandboxAccessOf, sandboxAvailable, sandboxProcessEnvironment, sandboxRe
 import { executeIsolatedShellCommand, executeShellCommand, shellLaunch } from "../shell"
 import { configuredCheck, finishVerification, startVerification } from "../../../verification/service"
 import { commandPrefix, isAssignmentPrefix, splitCommand } from "../split"
+import { createStreamingOutput } from "../../../tools/streaming-output"
 
 const DEFAULT_TIMEOUT_S = 120
 const MAX_TIMEOUT_S = 600
@@ -61,7 +62,7 @@ function parameters(): Record<string, unknown> {
 }
 
 function description(): string {
-  const base = `Execute a command in a persistent shell session: cd, exported variables, and functions defined by earlier commands stay in effect for later ones. Returns combined stdout and stderr followed by the exit code. Commands run without a TTY and are killed after ${DEFAULT_TIMEOUT_S} seconds unless timeout says otherwise. Managed background execution is selected with background:true; processes detached inside the shell are not tracked. Exact configured verification commands run in a fresh foreground shell at the session workspace, without inherited shell state, and cannot be moved to the background.`
+  const base = `Execute a command in a persistent shell session: cd, exported variables, and functions defined by earlier commands stay in effect for later ones. Returns combined stdout and stderr followed by the exit code. Commands run without a TTY and time out after ${DEFAULT_TIMEOUT_S} seconds unless timeout says otherwise. A timed-out persistent shell receives TERM, then KILL after a 1.5-second grace period; its shell state is discarded, so the next command starts fresh. Managed background execution is selected with background:true; processes detached inside the shell are not tracked. Exact configured verification commands run in a fresh foreground shell at the session workspace, without inherited shell state, and cannot be moved to the background.`
   if (!sandboxAvailable()) return `${base} Commands follow the current permission mode.`
   return `${base} Sandboxed commands use OS-enforced filesystem and network restrictions; other commands follow the current permission mode. Commands with sandbox "read" requested in the same response run concurrently and may not share shell state, so request independent inspections together and never make one depend on another.`
 }
@@ -126,9 +127,9 @@ export const bashTool: Tool = {
     const verification = check ? await startVerification(check, ctx) : undefined
     ctx.signal.throwIfAborted()
     const timeoutSeconds = timeoutSecondsOf(args)
-    let output = ""
+    const output = createStreamingOutput(ctx.directory, MAX_RESULT_BYTES - 1024)
     let sink = (text: string): void => {
-      output += text
+      output.append(text)
       ctx.update(text)
     }
     const redactor = createRedactedStream()
@@ -164,7 +165,7 @@ export const bashTool: Tool = {
       : armPromotion(ctx.sessionId, () => {
           execution.clearTimeout()
           ctx.signal.removeEventListener("abort", onAbort)
-          const adopted = adoptJob(command, redactedExecution, output, ctx.cwd, ctx.sessionId, ctx.directory)
+          const adopted = adoptJob(command, redactedExecution, output.transfer(), ctx.cwd, ctx.sessionId)
           sink = adopted.sink
           promotion.resolve(adopted.job)
         })
@@ -179,8 +180,10 @@ export const bashTool: Tool = {
           output: `Moved to background job ${settled.job.id}${sandbox ? ` (${sandbox} sandbox)` : ""}. Its result is delivered automatically when it exits; read new output with job_output and stop it with job_kill.`,
         }
       }
+      disarm?.()
       const termination = settled.termination
-      const trimmed = nativeNormalizeProcessOutput(output).trimEnd()
+      const captured = await output.finish(execution.outputDropped())
+      const trimmed = nativeNormalizeProcessOutput(captured.output).trimEnd()
       const sandboxed = sandbox ? { sandbox } : {}
       let processExecution: ProcessExecution
       let footer: string
@@ -200,6 +203,7 @@ export const bashTool: Tool = {
       if (verification) await finishVerification(verification, processExecution, ctx)
       return {
         output: trimmed ? `${trimmed}\n${footer}` : footer,
+        ...(captured.outputSaved ? { outputSaved: true } : {}),
         execution: processExecution,
         maxOutputBytes: MAX_RESULT_BYTES,
       }
@@ -207,6 +211,7 @@ export const bashTool: Tool = {
       disarm?.()
       execution.clearTimeout()
       ctx.signal.removeEventListener("abort", onAbort)
+      await output.close()
     }
   },
 }

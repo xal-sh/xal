@@ -23,6 +23,7 @@ import {
 } from "../providers/types"
 import { parseTaskList } from "../tasks/types"
 import { parseProcessExecution } from "../tools/execution"
+import { parseReadCoverage } from "../tools/read-coverage"
 import { parseVerificationRecord, parseVerificationSummary } from "../verification/types"
 import { normalizeSessionTitle } from "./title"
 import type { SessionMeta, SessionRecord } from "./types"
@@ -464,8 +465,9 @@ function parseConversationItem(raw: unknown): ConversationItem | undefined {
     case "tool_result": {
       const callId = asString(raw.callId)
       const output = asString(raw.output)
-      if (!callId || output === undefined) return undefined
-      return { type: "tool_result", callId, output }
+      const read = parseReadCoverage(raw.read)
+      if (!callId || output === undefined || (raw.read !== undefined && !read)) return undefined
+      return { type: "tool_result", callId, output, ...(read ? { read } : {}) }
     }
     default:
       return undefined
@@ -496,7 +498,15 @@ function parseCompaction(raw: Record<string, unknown>): CompactionItem | undefin
       }
       retained.push(item)
     }
-    return { type: "compaction", strategy, summary, replaced, tokensBefore, retained }
+    if (raw.tail === undefined) return { type: "compaction", strategy, summary, replaced, tokensBefore, retained }
+    if (!Array.isArray(raw.tail)) return undefined
+    const tail: ConversationItem[] = []
+    for (const entry of raw.tail) {
+      const item = parseConversationItem(entry)
+      if (!item) return undefined
+      tail.push(item)
+    }
+    return { type: "compaction", strategy, summary, replaced, tokensBefore, retained, tail }
   }
   const retained: ConversationItem[] = []
   for (const entry of raw.retained) {

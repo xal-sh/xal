@@ -1,4 +1,6 @@
 import { settings } from "../../config/settings"
+import { redactHistoryItem } from "../../secrets/data"
+import { saveToolOutput } from "../../tools/output"
 import { decisions } from "../../providers/decisions"
 import { pruneWithJev } from "./jev-compaction"
 import { pruneStaleReads } from "./stale-reads"
@@ -67,12 +69,10 @@ export async function resolveCompactionTarget(
   profileId: string,
   model: string,
 ): Promise<CompactionTarget> {
-  const fastModel = model.endsWith("-fast") ? model : `${model}-fast`
-  const requestModel = fastModel === model || (await findModel(provider, profileId, fastModel)) ? fastModel : model
-  const info = await findModel(provider, profileId, requestModel)
+  const info = await findModel(provider, profileId, model)
   return {
-    model: requestModel,
-    thinking: await resolveThinking(provider, profileId, requestModel, "low"),
+    model,
+    thinking: await resolveThinking(provider, profileId, model, "low"),
     imageInput: modelSupportsImageInput(provider, info?.inputModalities),
   }
 }
@@ -125,6 +125,30 @@ export function retainAuthoredUsers(items: ConversationItem[], maximumTokens: nu
   return retained
 }
 
+export function retainRecentTools(items: ConversationItem[], maximumTokens: number): ConversationItem[] {
+  let start = items.findLastIndex((item) => item.type === "tool_call")
+  if (start < 0) return []
+  while (start > 0) {
+    const previous = items[start - 1]!
+    if (previous.type === "user_message" || previous.type === "tool_result") break
+    start -= 1
+  }
+  const tail = items.slice(start)
+  const pending = new Set<string>()
+  let tokens = 0
+  for (const item of tail) {
+    if (item.type === "user_message") return []
+    tokens += estimateConversationItemTokens(item)
+    if (tokens > maximumTokens) return []
+    if (item.type === "tool_call") {
+      if (pending.has(item.callId)) return []
+      pending.add(item.callId)
+    }
+    if (item.type === "tool_result" && !pending.delete(item.callId)) return []
+  }
+  return pending.size === 0 ? tail : []
+}
+
 export interface SummaryRequest {
   provider: Provider
   profileId: string
@@ -138,6 +162,8 @@ export interface SummaryRequest {
   imageInput: boolean
   signal: AbortSignal
   attempt?: number
+  parentRequest?: StreamRequest
+  onRequestStarted?(): void
 }
 
 function summaryRequest(instructions: string | undefined): UserMessageItem {
@@ -147,15 +173,23 @@ function summaryRequest(instructions: string | undefined): UserMessageItem {
 
 export async function summarizeHistory(request: SummaryRequest): Promise<string> {
   const target = { provider: request.provider.id, model: request.historyModel ?? request.model }
-  const prompt = {
+  const prompt = request.parentRequest ?? {
     instructions: SUMMARY_SYSTEM_INSTRUCTIONS,
     tools: [],
     cacheKey: promptCacheKey(target.model, SUMMARY_SYSTEM_INSTRUCTIONS, []),
   }
   const input = prepareConversation(
-    [...conversationForSummary(activeHistory(request.history)), summaryRequest(request.instructions)],
+    [
+      ...(request.parentRequest?.input ?? conversationForSummary(activeHistory(request.history))),
+      summaryRequest(request.instructions),
+    ],
     target,
     request.imageInput,
+  )
+  const info = await findModel(request.provider, request.profileId, request.model)
+  const maxOutputTokens = Math.max(
+    1,
+    Math.min(12_000, (info?.contextWindow ?? Infinity) - estimateRequestTokens({ ...prompt, input })),
   )
   const result = await collectStreamedText({
     provider: request.provider,
@@ -164,11 +198,15 @@ export async function summarizeHistory(request: SummaryRequest): Promise<string>
     phase: "compaction",
     emptyResponseMessage: `${request.provider.name} returned an empty summary`,
     attempt: request.attempt,
+    onRequestStarted: request.onRequestStarted,
     request: {
+      instructions: prompt.instructions,
+      tools: prompt.tools,
+      cacheKey: prompt.cacheKey,
       model: request.model,
+      maxOutputTokens,
       ...(request.historyModel === undefined ? {} : { conversationModel: request.historyModel }),
       thinking: request.thinking,
-      ...prompt,
       input,
       toolChoice: "none",
       sessionId: request.sessionId,
@@ -219,6 +257,7 @@ export interface CompactionHost {
   sessionId(): string
   profileId(): string
   history(): HistoryItem[]
+  outputDirectory(): string
   contextTokens(): number | undefined
   buildRequest(
     provider: Provider,
@@ -299,6 +338,11 @@ export async function runCompaction(
         return true
       }
     }
+    const transcript = await saveToolOutput(
+      host.outputDirectory(),
+      `${source.map((item) => JSON.stringify({ type: "item", item: redactHistoryItem(item) })).join("\n")}\n`,
+    )
+    const recovery = `Original pre-compaction transcript (JSONL): ${transcript}\nRead this archive for exact historical evidence. Do not re-run state-changing operations to reconstruct old results.`
     const compaction = settings().typesafeAI
     if (compaction.enabled) {
       let checkpoint: CompactionItem | undefined
@@ -324,7 +368,7 @@ export async function runCompaction(
           summary: "Jev pruned stale tool history; retained conversation text is unchanged.",
           replaced: before.length - retained.length,
           tokensBefore,
-          retained,
+          retained: [...retained, { type: "user_message", text: recovery, images: [] }],
         }
         if (!(await freesEnoughContext(host, provider, model, history, candidate, signal))) {
           throw new Error("Jev did not free enough context")
@@ -370,7 +414,6 @@ export async function runCompaction(
     let summary: string | undefined
     let attempt = 1
     while (summary === undefined) {
-      host.onRequestStarted()
       try {
         summary = await summarizeHistory({
           provider,
@@ -383,6 +426,8 @@ export async function runCompaction(
           history,
           instructions,
           imageInput: target.imageInput,
+          parentRequest: host.buildRequestWithHistory(history, provider, model, target.thinking, signal),
+          onRequestStarted: () => host.onRequestStarted(),
           signal,
           attempt,
         })
@@ -400,6 +445,7 @@ export async function runCompaction(
       }
     }
 
+    summary = `${summary}\n\n${recovery}`
     const baseCheckpoint: CompactionItem = {
       type: "compaction",
       strategy: "user_messages_v1",
@@ -415,16 +461,22 @@ export async function runCompaction(
         `context replacement requires approximately ${baseEstimate} tokens before retaining user messages, exceeding the ${MAX_REPLACEMENT_REQUEST_TOKENS}-token replacement budget`,
       )
     }
+    const tail = retainRecentTools(before, Math.min(8_000, MAX_REPLACEMENT_REQUEST_TOKENS - baseEstimate))
+    const tailTokens = tail.reduce((total, item) => total + estimateConversationItemTokens(item), 0)
     const retained = retainAuthoredUsers(
       before,
-      Math.min(MAX_RETAINED_USER_TOKENS, MAX_REPLACEMENT_REQUEST_TOKENS - baseEstimate),
+      Math.min(MAX_RETAINED_USER_TOKENS, MAX_REPLACEMENT_REQUEST_TOKENS - baseEstimate - tailTokens),
     )
     const retainedIds = new Set(retained.map((item) => item.messageId))
+    const kept = new Set<ConversationItem>(tail)
     const replaced = before.filter(
-      (item) => item.type !== "user_message" || item.messageId === undefined || !retainedIds.has(item.messageId),
+      (item) =>
+        !kept.has(item) &&
+        (item.type !== "user_message" || item.messageId === undefined || !retainedIds.has(item.messageId)),
     ).length
     const removedTypes = source.flatMap((item) =>
-      item.type === "user_message" && item.messageId !== undefined && retainedIds.has(item.messageId)
+      (item.type !== "compaction" && item.type !== "direct_shell" && kept.has(item)) ||
+      (item.type === "user_message" && item.messageId !== undefined && retainedIds.has(item.messageId))
         ? []
         : [item.type],
     )
@@ -432,6 +484,7 @@ export async function runCompaction(
       ...baseCheckpoint,
       replaced,
       retained,
+      ...(tail.length ? { tail } : {}),
     }
     const replacementRequest = host.buildRequestWithHistory([checkpoint], provider, model, undefined, signal)
     const replacementEstimate = estimateRequestTokens(replacementRequest)
@@ -448,7 +501,7 @@ export async function runCompaction(
       ...(tokensBefore === undefined ? {} : { tokensBefore }),
       before,
       after,
-      retained,
+      retained: [...retained, ...tail],
       summary,
       removedTypes,
     })

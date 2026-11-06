@@ -25,6 +25,7 @@ export type CompactionItem =
       replaced: number
       tokensBefore?: number
       retained: UserMessageItem[]
+      tail?: ConversationItem[]
     }
 
 export interface DirectShellItem extends DirectShellResult {
@@ -71,7 +72,7 @@ export function summaryMessage(summary: string): UserMessageItem {
 export function continuationSummaryMessage(summary: string): UserMessageItem {
   return {
     type: "user_message",
-    text: `The retained user requests and authoritative state summary below describe the coding work to continue.\n\n<conversation-summary>\n${summary}\n</conversation-summary>`,
+    text: `The retained user requests and state summary below describe the coding work to continue. The summary may be incomplete; consult retained evidence and the archived transcript when exact details matter.\n\n<conversation-summary>\n${summary}\n</conversation-summary>`,
     images: [],
   }
 }
@@ -104,7 +105,7 @@ export function activeHistory(items: HistoryItem[]): ConversationItem[] {
       if (item.strategy === "jev_v1" || item.strategy === "stale_reads_v1") {
         active.push(...item.retained)
       } else if (item.strategy === "user_messages_v1") {
-        active.push(...item.retained, continuationSummaryMessage(item.summary))
+        active.push(...item.retained, continuationSummaryMessage(item.summary), ...(item.tail ?? []))
       } else {
         active.push(summaryMessage(item.summary), ...item.retained)
       }

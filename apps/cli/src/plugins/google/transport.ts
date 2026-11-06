@@ -20,7 +20,10 @@ function buildBody(request: StreamRequest): string {
           tools: buildTools(request.tools),
           toolConfig: { functionCallingConfig: { mode: request.toolChoice === "none" ? "NONE" : "AUTO" } },
         }),
-    generationConfig: { thinkingConfig: thinkingConfig(request.model, request.thinking) },
+    generationConfig: {
+      thinkingConfig: thinkingConfig(request.model, request.thinking, request.maxOutputTokens),
+      ...(request.maxOutputTokens === undefined ? {} : { maxOutputTokens: request.maxOutputTokens }),
+    },
   })
 }
 

@@ -51,6 +51,7 @@ function responsesBody(request: StreamRequest): string {
     model: request.model,
     store: false,
     stream: true,
+    ...(request.maxOutputTokens === undefined ? {} : { max_output_tokens: request.maxOutputTokens }),
     instructions: request.instructions,
     input: buildResponseInput(request.input, {
       provider: PROVIDER_ID,

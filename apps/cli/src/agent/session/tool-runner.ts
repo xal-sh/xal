@@ -19,11 +19,13 @@ import {
   boundToolOutput,
   parseBoundedToolOutput,
   TOOL_FAILED_PREFIX,
-  TOOL_OUTPUT_UNSAVED_PREFIX,
+  unsavedToolOutput,
   toolFailed,
 } from "../../tools/output"
 import { argumentErrors } from "../../tools/arguments"
+import { ToolOutputBudget } from "../../tools/output-budget"
 import { getTool } from "../../tools/registry"
+import type { ReadCoverage } from "../../tools/read-coverage"
 import { PROGRAMMATIC_TOOLS } from "../../tools/programmatic"
 import { isInteractiveTool, isSessionTool } from "../../tools/types"
 import type {
@@ -76,7 +78,9 @@ export interface ToolCallOutcome {
   title: string
   readOnly: boolean
   output: string
+  outputSaved?: boolean
   loopOutput?: string
+  read?: ReadCoverage
   execution?: ProcessExecution
   events: ToolEvent[]
   failure?: string
@@ -119,7 +123,7 @@ export interface ToolRunnerHost {
   hookContext(signal: AbortSignal): HookContext
   emit(event: AgentEvent): void
   setState(state: AgentState): void
-  addToolOutput(call: ToolCallItem, output: string): void
+  addToolOutput(call: ToolCallItem, output: string, read?: ReadCoverage): void
   updateToolCall(call: ToolCallItem): void
   publishToolEvent(event: ToolEvent): void
   recordVerification(record: VerificationRecord): Promise<void>
@@ -221,7 +225,12 @@ export class ToolCallRunner {
     this.finishSkippedCall(entry.call, output)
   }
 
-  async runBatch(batch: ToolCallBatch, signal: AbortSignal, toolLoops: ToolLoopDetector): Promise<Error | undefined> {
+  async runBatch(
+    batch: ToolCallBatch,
+    signal: AbortSignal,
+    toolLoops: ToolLoopDetector,
+    outputBudget = new ToolOutputBudget(),
+  ): Promise<Error | undefined> {
     const profile = profileToolBatchStarted(
       this.host.sessionId(),
       this.host.kind,
@@ -281,11 +290,16 @@ export class ToolCallRunner {
             signal,
           )
 
-      for (const [index, outcome] of outcomes.entries()) {
+      const completed = outcomes.map((outcome) => {
         if (!outcome) throw new Error("tool scheduler did not produce a result")
-        this.commit(
-          prefetch?.target === outcome ? { ...outcome, output: `${outcome.output}\n\n${prefetch.text}` } : outcome,
-        )
+        return prefetch?.target === outcome
+          ? { ...outcome, output: `${outcome.output}\n\n${prefetch.text}`, read: undefined, outputSaved: undefined }
+          : outcome
+      })
+      const bounded = await outputBudget.apply(this.host.outputDirectory(), completed)
+      for (const [index, outcome] of completed.entries()) {
+        const output = bounded[index]!
+        this.commit(output === outcome.output ? outcome : { ...outcome, output, read: undefined })
         if (recorded[index]) toolLoops.record(outcome.call, outcome.loopOutput ?? outcome.output)
       }
       profileToolBatchFinished(profile, loopError ? "failed" : signal.aborted ? "interrupted" : "completed")
@@ -449,6 +463,9 @@ export class ToolCallRunner {
       this.host.emit({ type: "tool_started", callId: call.callId, tool: call.name, title, readOnly })
     }
     let output: string
+    let savedOutput: string | undefined
+    let read: ReadCoverage | undefined
+    let readOutput: string | undefined
     let failure: string | undefined
     let execution: ProcessExecution | undefined
     let events: ToolEvent[] = []
@@ -520,6 +537,11 @@ export class ToolCallRunner {
           break
       }
       output = redactText(result.output)
+      if (output === result.output) {
+        if (result.outputSaved) savedOutput = output
+        read = result.read
+        readOutput = output
+      }
       if (toolFailed(output)) failure = output
       execution = result.execution
       events = result.events ?? []
@@ -563,16 +585,19 @@ export class ToolCallRunner {
     if (scope) output = redactText(`${output}\n\nTool trace: ${scope.directory}`)
     const originalOutput = output
     let bounded = false
+    const outputSaved = savedOutput === output
     try {
-      output = await boundToolOutput(this.host.outputDirectory(), output, maxOutputBytes)
+      output = await boundToolOutput(this.host.outputDirectory(), output, maxOutputBytes, outputSaved)
       bounded = output !== originalOutput
     } catch (error) {
-      output = `${TOOL_OUTPUT_UNSAVED_PREFIX}${describeError(error)}. The operation may have changed state; inspect it before retrying.`
+      output = unsavedToolOutput(originalOutput, error, maxOutputBytes)
     }
     profileToolOutputShape(this.host.sessionId(), this.host.kind, call.name, originalOutput, output, bounded)
     return {
       ...this.outcome(call, title, readOnly, output, undefined, events, execution),
       ...(scope ? { loopOutput } : {}),
+      ...(bounded || (outputSaved && output === originalOutput) ? { outputSaved: true } : {}),
+      ...(read && readOutput === output ? { read } : {}),
     }
   }
 
@@ -681,7 +706,7 @@ export class ToolCallRunner {
   }
 
   commit(outcome: ToolCallOutcome): void {
-    this.host.addToolOutput(outcome.call, outcome.output)
+    this.host.addToolOutput(outcome.call, outcome.output, outcome.read)
     this.host.emit({
       type: "tool_finished",
       callId: outcome.call.callId,

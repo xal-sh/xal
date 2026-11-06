@@ -4,6 +4,7 @@ import {
   createProcessJob,
   finishProcessJob,
   stopJob,
+  seedProcessOutput,
   type BackgroundProcessJob,
 } from "../../../background/jobs"
 import { createJobLog } from "../../../background/log"
@@ -11,6 +12,7 @@ import { registerBackgroundTask } from "../../../background/registry"
 import { describeError } from "../../../lib/error"
 import type { CommandProcess } from "../process"
 import type { ShellExecution } from "../shell"
+import type { TransferredOutput } from "../../../tools/streaming-output"
 
 const runningProcs = new Set<CommandProcess>()
 let exitHookRegistered = false
@@ -48,7 +50,7 @@ function registerProcessTask(job: BackgroundProcessJob, command: string, cwd: st
       if (!job.record) return history
       const record =
         job.record.status === "saved"
-          ? `Full log: ${job.record.path}${job.record.complete ? "" : " (capped)"}`
+          ? `${job.record.complete ? "Full" : "Partial"} log: ${job.record.path}${job.record.complete ? "" : job.record.reason === "capped" ? " (capped)" : ` (${job.record.message})`}`
           : `Full log unavailable: ${job.record.message}`
       return history ? `${history}\n\n${record}` : record
     },
@@ -93,6 +95,7 @@ export function startJob(
         termination.status === "signaled"
           ? { status: "signaled", signal: termination.signal ?? "unknown signal" }
           : termination,
+        proc.outputDropped(),
       )
     },
     (error: unknown) => {
@@ -111,10 +114,9 @@ export function startJob(
 export function adoptJob(
   command: string,
   execution: ShellExecution,
-  initialOutput: string,
+  initialOutput: TransferredOutput,
   cwd: string,
   ownerId: string,
-  directory: string,
 ): { job: BackgroundProcessJob; sink(text: string): void } {
   const job = createProcessJob(
     "bash",
@@ -123,8 +125,8 @@ export function adoptJob(
     () => execution.terminate(),
     () => execution.kill(),
   )
-  attachJobLog(job, createJobLog(directory, job.id))
-  if (initialOutput) appendProcessOutput(job, initialOutput)
+  attachJobLog(job, initialOutput.log)
+  seedProcessOutput(job, initialOutput.text)
   execution.done.then(
     (termination) =>
       void finishProcessJob(
@@ -132,6 +134,7 @@ export function adoptJob(
         termination.status === "exited"
           ? { status: "exited", exitCode: termination.exitCode }
           : { status: "signaled", signal: termination.signal ?? "unknown signal" },
+        execution.outputDropped(),
       ),
     (error: unknown) => void finishProcessJob(job, { status: "launch_failed", message: describeError(error) }),
   )

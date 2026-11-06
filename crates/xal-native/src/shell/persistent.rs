@@ -50,6 +50,10 @@ fn feed_active(entry: &PersistentEntry, bytes: Vec<u8>) {
     let status = std::str::from_utf8(&run.pending[status_start..line_end])
         .ok()
         .and_then(|value| value.parse::<i32>().ok());
+    if run.state.timed_out() {
+        run.pending.drain(..line_end + 1);
+        return;
+    }
     let state = run.state.clone();
     *active = None;
     state.finish(match status {
@@ -92,26 +96,24 @@ fn expire_active(entry: &PersistentEntry) -> bool {
 
 pub(super) fn dispatch_persistent(entry: Arc<PersistentEntry>) {
     loop {
-        if expire_active(&entry) && !process_interrupt(&entry.process) {
-            process_signal(&entry.process, true);
+        if expire_active(&entry) {
+            entry.dead.store(true, std::sync::atomic::Ordering::Release);
+            process_terminate_after(&entry.process, Duration::from_millis(1500));
         }
         let bytes = process_drain(&entry.process);
         if !bytes.is_empty() {
             feed_active(&entry, bytes);
         }
         if let Some(termination) = process_termination(&entry.process)
-            && process_output_closed(&entry.process)
+            && process_finalized(&entry.process)
         {
             let remaining = process_drain(&entry.process);
             if !remaining.is_empty() {
                 feed_active(&entry, remaining);
             }
             entry.dead.store(true, std::sync::atomic::Ordering::Release);
-            if let Some(error) = process_reader_error(&entry.process) {
-                fail_active(
-                    &entry,
-                    format!("could not read native process output: {error}"),
-                );
+            if let Some(error) = process_error(&entry.process) {
+                fail_active(&entry, error);
             } else {
                 close_active(&entry, termination);
             }
@@ -131,14 +133,14 @@ pub(super) fn dispatch_isolated(process: Arc<ProcessState>, run: Arc<RunState>) 
             run.push(bytes);
         }
         if let Some(termination) = process_termination(&process)
-            && process_output_closed(&process)
+            && process_finalized(&process)
         {
             let remaining = process_drain(&process);
             if !remaining.is_empty() {
                 run.push(remaining);
             }
-            if let Some(error) = process_reader_error(&process) {
-                run.fail(format!("could not read native process output: {error}"));
+            if let Some(error) = process_error(&process) {
+                run.fail(error);
             } else if termination.status == "launchFailed" {
                 run.fail(
                     termination

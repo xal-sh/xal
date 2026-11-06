@@ -84,6 +84,100 @@ describe("bash compound permission policy", () => {
     setUserRules({})
   })
 
+  test("enforces explicit segment and normalized denies even in a sandbox or yolo mode", async () => {
+    registerBashCtx()
+    setUserRules({ deny: ["bash(rm *)"], allow: ["bash(*)"] })
+    for (const command of ["echo ok; rm target", "echo ok && /bin/rm target", "echo ok; env FOO=1 rm target"]) {
+      expect(
+        await evaluatePolicy({
+          sessionKey: {},
+          cwd: process.cwd(),
+          tool: "bash",
+          title: command,
+          args: { command, sandbox: "workspace" },
+          subject: command,
+          readOnly: false,
+          sandboxed: true,
+          mode: "yolo",
+        }),
+      ).toBe("deny")
+    }
+    const curl = {
+      sessionKey: {},
+      cwd: process.cwd(),
+      tool: "bash",
+      title: "curl example.com",
+      args: { command: "curl example.com", sandbox: "read" },
+      subject: "curl example.com",
+      readOnly: true,
+      sandboxed: true,
+      mode: "normal",
+    }
+    expect(await evaluatePolicy(curl)).toBe("allow")
+    setUserRules({ ask: ["bash(curl *)"] })
+    expect(await evaluatePolicy(curl)).toBe("ask")
+  })
+
+  test("checks privilege wrappers only for denies, including nested static scripts", async () => {
+    registerBashCtx()
+    const request = (command: string, mode = "normal", sandboxed = false) => ({
+      sessionKey: {},
+      cwd: process.cwd(),
+      tool: "bash",
+      title: command,
+      args: { command },
+      subject: command,
+      readOnly: false,
+      sandboxed,
+      mode,
+    })
+    setUserRules({ deny: ["bash(rm *)"], allow: ["bash(*)"] })
+    for (const command of [
+      "sudo rm target",
+      "/usr/bin/sudo -n -u root -- /bin/rm target",
+      "sudo -nu root --group=staff /bin/rm target",
+      "doas -n -u root rm target",
+      "sudo env FOO=1 rm target",
+      "env FOO=1 sudo rm target",
+      "command sudo rm target",
+      "xargs sudo rm target",
+      "xargs -n 1 sudo rm target",
+      "bash -eo pipefail -c 'sudo rm target'",
+      "bash -eO extglob -c 'sudo rm target'",
+      "sh -c 'sudo rm target'",
+      "env FOO=1 sh -c 'sudo rm target'",
+      'sh -c "sudo rm target"',
+      "sudo sh -c 'sudo rm target'",
+    ]) {
+      for (const mode of ["normal", "yolo"]) {
+        for (const sandboxed of [false, true]) {
+          expect(await evaluatePolicy(request(command, mode, sandboxed))).toBe("deny")
+        }
+      }
+    }
+    for (const command of [
+      "sudo printf '%s\\n' 'rm target'",
+      "sudo env printf %s rm target",
+      "sudo env printf %s sudo rm target",
+      "sudo -l rm target",
+      "command -v sudo rm target",
+      "printf %s sh -c 'sudo rm target'",
+      "env printf %s sh -c 'sudo rm target'",
+      "printf %s xargs sudo rm target",
+      "sudo -l sh -c 'sudo rm target'",
+      "command -v sh -c 'sudo rm target'",
+      "sh script.sh -c 'sudo rm target'",
+    ]) {
+      for (const mode of ["normal", "yolo"]) {
+        for (const sandboxed of [false, true]) {
+          expect(await evaluatePolicy(request(command, mode, sandboxed))).toBe("allow")
+        }
+      }
+    }
+    setUserRules({ allow: ["bash(rm *)"] })
+    expect(await evaluatePolicy(request("/usr/bin/sudo rm target"))).toBe("ask")
+  })
+
   test("approves matching compound commands after a session approval", async () => {
     const previousHome = process.env[homeEnv]
     const home = await mkdtemp(join(tmpdir(), `${appInfo.name}-bash-permission-test-`))

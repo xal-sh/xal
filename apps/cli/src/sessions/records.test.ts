@@ -20,6 +20,15 @@ test("parses legacy, user-only, and pruned compaction records without changing t
     summary: "Current state",
     replaced: 6,
     tokensBefore: 2400,
+    tail: [
+      { type: "tool_call", callId: "read", name: "read", args: { file_path: "a.ts" } },
+      {
+        type: "tool_result",
+        callId: "read",
+        output: "contents",
+        read: { path: "/repo/a.ts", contentHash: "hash", offset: 1, limit: 1, truncated: false },
+      },
+    ],
     retained: [
       {
         type: "user_message",
@@ -48,6 +57,14 @@ test("parses legacy, user-only, and pruned compaction records without changing t
   expect(parseRecord(itemRecord(pruned))).toEqual({ type: "item", item: pruned })
 })
 
+test("rejects malformed persisted read coverage rather than treating it as a complete read", () => {
+  for (const read of [null, {}, { path: "/a", contentHash: "hash", offset: 1, limit: -1, truncated: false }]) {
+    expect(() => parseRecord(itemRecord({ type: "tool_result", callId: "read", output: "body", read }))).toThrow(
+      "malformed session record",
+    )
+  }
+})
+
 test("rejects unknown strategies and invalid user-only retained items", () => {
   const retained = {
     type: "user_message",
@@ -57,6 +74,8 @@ test("rejects unknown strategies and invalid user-only retained items", () => {
   }
   const invalid = [
     { strategy: "future", retained: [retained] },
+    { strategy: "user_messages_v1", retained: [retained], tail: {} },
+    { strategy: "user_messages_v1", retained: [retained], tail: [{ type: "tool_result", callId: "read" }] },
     { strategy: "user_messages_v1", retained: [{ type: "assistant_message", text: "No" }] },
     { strategy: "user_messages_v1", retained: [{ ...retained, messageId: undefined }] },
     {

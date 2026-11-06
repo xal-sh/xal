@@ -20,8 +20,9 @@ mod normalize;
 mod state;
 
 pub(crate) use state::{
-    ProcessState, process_drain, process_interrupt, process_output_closed, process_reader_error,
-    process_signal, process_termination, process_write, spawn_process,
+    ProcessState, process_drain, process_dropped_bytes, process_error, process_finalized,
+    process_output_closed, process_signal, process_terminate_after, process_termination,
+    process_write, spawn_process,
 };
 use state::{
     lock, process_clear_timeout, process_set_timeout, process_timed_out, signal_process_tree,
@@ -110,6 +111,11 @@ impl NativeProcess {
     }
 
     #[napi(catch_unwind)]
+    pub fn output_dropped(&self) -> bool {
+        process_dropped_bytes(&self.state) > 0
+    }
+
+    #[napi(catch_unwind)]
     pub fn wait(&self) -> AsyncTask<WaitProcessTask> {
         AsyncTask::new(WaitProcessTask {
             state: self.state.clone(),
@@ -143,8 +149,7 @@ impl NativeProcess {
 }
 impl Drop for NativeProcess {
     fn drop(&mut self) {
-        let running =
-            process_termination(&self.state).is_none() || !process_output_closed(&self.state);
+        let running = !process_finalized(&self.state);
         {
             let mut output = lock(&self.state.output);
             output.closed = true;

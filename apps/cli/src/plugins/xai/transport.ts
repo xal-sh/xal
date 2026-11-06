@@ -27,6 +27,7 @@ function buildBody(request: StreamRequest): string {
     instructions: request.instructions,
     input: buildInput(request.input, { provider: PROVIDER_ID, model: request.conversationModel ?? request.model }),
     stream: true,
+    ...(request.maxOutputTokens === undefined ? {} : { max_output_tokens: request.maxOutputTokens }),
     store: false,
     prompt_cache_key: request.cacheKey,
     ...requestReasoning(request.thinking),

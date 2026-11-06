@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
-import { rm } from "node:fs/promises"
+import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import {
@@ -14,7 +14,7 @@ import { contributeRules } from "../../permissions/rules"
 import { registerTool, unregisterTool } from "../../tools/registry"
 import type { Tool } from "../../tools/types"
 import { ProviderError } from "../../providers/errors"
-import type { Usage } from "../../providers/types"
+import type { ToolCallItem, ToolResultItem, Usage } from "../../providers/types"
 import { updatePlanTool } from "../../tasks/tool"
 import type { AgentEvent } from "../events"
 import { registerPrompt } from "../prompt/registry"
@@ -664,6 +664,95 @@ describe("AgentSession", () => {
     expect(outcome.status).toBe("completed")
     expect(provider.requests).toHaveLength(1)
     expect(provider.requests[0]?.toolChoice).toBe("auto")
+  })
+
+  test("restores only the interrupted round's result budget even when call IDs repeat", async () => {
+    const output = "r".repeat(50 * 1024)
+    const reader: Tool = {
+      name: `resumed_read_${crypto.randomUUID().replaceAll("-", "_")}`,
+      description: "Shared read fixture",
+      parameters: { type: "object" },
+      title: () => "Read",
+      readOnly: () => true,
+      concurrency: () => "shared",
+      allowRepeatedCalls: () => true,
+      execute: async () => ({ output }),
+    }
+    const barrier: Tool = {
+      ...reader,
+      name: `resumed_barrier_${crypto.randomUUID().replaceAll("-", "_")}`,
+      concurrency: () => "exclusive",
+      execute: async () => ({ output: "barrier" }),
+    }
+    const calls = Array.from({ length: 6 }, (_, index): ToolCallItem => ({
+      type: "tool_call",
+      callId: `resumed-${index}`,
+      name: index === 2 ? barrier.name : reader.name,
+      args: {},
+    }))
+    const nextCalls = calls.slice(3).map((call) => ({ ...call, callId: `next-${call.callId}` }))
+    const provider = new ScriptedProvider([
+      round([...nextCalls.map((item) => ({ type: "item_done" as const, item })), { type: "done" }]),
+      completedRound("Resumed"),
+    ])
+    const session = harness.createSession(provider)
+    const directory = await mkdtemp(join(tmpdir(), "xal-resumed-budget-"))
+    const meta = session.exportSnapshot().meta
+    const settled = Promise.withResolvers<void>()
+    const failures: string[] = []
+    const unsubscribe = session.subscribe((event) => {
+      if (event.type === "turn_failed") failures.push(event.message)
+      if (event.type === "state_changed" && event.state === "idle") settled.resolve()
+    })
+    registerTool(reader)
+    registerTool(barrier)
+    try {
+      expect(
+        session.resume({
+          session: {
+            meta,
+            items: [
+              { type: "user_message", text: "Read the sources", images: [] },
+              { type: "tool_call", callId: calls[2]!.callId, name: reader.name, args: {} },
+              { type: "tool_result", callId: calls[2]!.callId, output },
+              { type: "assistant_message", text: "Read the remaining sources" },
+              ...calls,
+              ...calls.slice(0, 2).map((call) => ({ type: "tool_result" as const, callId: call.callId, output })),
+            ],
+            checkpoints: [],
+            events: [],
+          },
+          path: join(directory, "session.jsonl"),
+          cwd: meta.cwd,
+          provider,
+          profileId: "test-profile",
+          model: "test-model",
+          mode: meta.mode,
+          continueGoal: false,
+        }),
+      ).toBe(true)
+      expect(session.retryPendingTools()).toBe(true)
+      await settled.promise
+      expect(failures).toEqual([])
+      expect(provider.requests).toHaveLength(2)
+      const resumed = provider.requests[0]!.input.filter((item) => item.type === "tool_result").slice(-calls.length)
+      expect(resumed).toHaveLength(6)
+      expect(resumed.slice(0, 2).map((item) => item.output)).toEqual([output, output])
+      expect(resumed.reduce((total, item) => total + Buffer.byteLength(item.output), 0)).toBeLessThanOrEqual(200 * 1024)
+      expect(resumed[3]!.output).toContain("Full output saved to:")
+      expect(resumed[4]!.output).toContain("Full output saved to:")
+      expect(resumed[5]!.output).toBe(output)
+      const next = provider.requests[1]!.input.filter(
+        (item): item is ToolResultItem => item.type === "tool_result" && item.callId.startsWith("next-"),
+      )
+      expect(next.map((item) => item.output)).toEqual([output, output, output])
+    } finally {
+      unsubscribe()
+      unregisterTool(reader)
+      unregisterTool(barrier)
+      await session.flushPersistence()
+      await rm(directory, { recursive: true, force: true })
+    }
   })
 
   test("resumes legacy and user-only checkpoints with their strategy-specific ordering", async () => {

@@ -44,6 +44,38 @@ describe("thinking configuration", () => {
     expect(on.generationConfig).toEqual({ thinkingConfig: { thinkingBudget: 16_384, includeThoughts: true } })
   })
 
+  test("reserves answer space within auxiliary output limits", () => {
+    expect(
+      buildRequestBody(request({ model: "gemini-2.5-flash", thinking: "high", maxOutputTokens: 2000 }))
+        .generationConfig,
+    ).toEqual({
+      maxOutputTokens: 2000,
+      thinkingConfig: { thinkingBudget: 976, includeThoughts: true },
+    })
+  })
+
+  test.each([129, 1024, 1100])("keeps mandatory Pro thinking valid under a %s-token ceiling", (maximum) => {
+    expect(
+      buildRequestBody(request({ model: "gemini-2.5-pro", thinking: "low", maxOutputTokens: maximum }))
+        .generationConfig,
+    ).toEqual({ maxOutputTokens: maximum, thinkingConfig: { thinkingBudget: 128, includeThoughts: true } })
+  })
+
+  test("rejects a ceiling that cannot fit mandatory thinking and disables subminimum Flash-Lite thinking", () => {
+    expect(() => buildRequestBody(request({ model: "gemini-2.5-pro", maxOutputTokens: 128 }))).toThrow(
+      "mandatory thinking and an answer",
+    )
+    expect(
+      buildRequestBody(request({ model: "gemini-2.5-pro", thinking: "none", maxOutputTokens: 2000 })).generationConfig,
+    ).toEqual({ maxOutputTokens: 2000, thinkingConfig: { thinkingBudget: 128, includeThoughts: false } })
+    expect(
+      buildRequestBody(request({ model: "gemini-2.5-flash-lite", maxOutputTokens: 1535 })).generationConfig,
+    ).toEqual({ maxOutputTokens: 1535, thinkingConfig: { thinkingBudget: 0 } })
+    expect(
+      buildRequestBody(request({ model: "gemini-2.5-flash-lite", maxOutputTokens: 1536 })).generationConfig,
+    ).toEqual({ maxOutputTokens: 1536, thinkingConfig: { thinkingBudget: 512, includeThoughts: true } })
+  })
+
   test("system instructions are sent separately from contents", () => {
     const body = buildRequestBody(request())
     expect(body.systemInstruction).toEqual({ parts: [{ text: "be helpful" }] })

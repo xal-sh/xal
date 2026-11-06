@@ -1,6 +1,6 @@
 import { isDenied, matchRules } from "../../permissions/rules"
 import type { PermissionRequest, PolicyDecision } from "../../permissions/types"
-import { commandEscapesWorkspace, commandSubjects } from "./risk"
+import { commandDenySubjects, commandEscapesWorkspace, commandSubjects } from "./risk"
 import { commandSegments } from "./split"
 
 const RISKY_COMMANDS = [
@@ -32,22 +32,27 @@ export function commandRiskRules(tool: string): string[] {
 export function commandPolicy(request: PermissionRequest, command: string): PolicyDecision | undefined {
   const segments = commandSegments(command)
   if (!segments) return "ask"
+  if (segments.some((segment) => commandDenied(request, segment))) return "deny"
+  if (request.sandboxed) return undefined
   const decisions = segments.map((segment) => commandSegmentPolicy(request, segment))
   if (decisions.includes("deny")) return "deny"
   if (decisions.includes("ask")) return "ask"
   return decisions.every((decision) => decision === "allow") ? "allow" : undefined
 }
 
+function commandDenied(request: PermissionRequest, segment: string): boolean {
+  return [segment, ...commandDenySubjects(segment)].some((subject) => isDenied({ ...request, subject }))
+}
+
 export function commandSegmentPolicy(request: PermissionRequest, segment: string): PolicyDecision | undefined {
   const scoped = { ...request, subject: segment }
-  if (isDenied(scoped)) return "deny"
+  if (commandDenied(request, segment)) return "deny"
   const matched = matchRules(scoped)
   if (matched) return matched
   let normalizedAllowed = false
   for (const normalized of commandSubjects(segment)) {
     if (normalized === segment) continue
     const normalizedRequest = { ...request, subject: normalized }
-    if (isDenied(normalizedRequest)) return "deny"
     const normalizedMatch = matchRules(normalizedRequest)
     if (normalizedMatch === "ask") return "ask"
     if (normalizedMatch === "allow") normalizedAllowed = true

@@ -139,6 +139,12 @@ describe("OpenAI Responses transport", () => {
     ])
   })
 
+  test("forwards auxiliary output limits without enabling tools", async () => {
+    responses.push(sse([{ type: "response.completed", response: {} }]))
+    await collect(streamResponse("profile-1", request({ maxOutputTokens: 2000, toolChoice: "none" })))
+    expect(sentBody()).toMatchObject({ max_output_tokens: 2000, tool_choice: "none" })
+  })
+
   test("omits reasoning and tool fields for a non-reasoning request with no tools", async () => {
     responses.push(sse([{ type: "response.completed", response: {} }]))
 

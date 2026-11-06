@@ -38,6 +38,8 @@ Plugins can contribute slash commands with `ctx.registerCommand`. Commands known
 
 When the UI or CLI exits, Xal aborts `ctx.signal` so in-progress bootstrap work can stop, waits for bootstrap to settle, and then runs `shutdown` in reverse plugin order. Plugins that own child processes or network connections close them there. A dynamically discovered tool can be removed with `ctx.unregisterTool(tool)` using the same tool object that was registered. Tools that retain resources for an agent session can register per-session cleanup with `ctx.registerToolSessionDisposer`. State that is only valid while earlier tool results remain in the model's context, such as recorded file reads, can register `ctx.registerToolContextDisposer`; it runs when compaction, rewind, or redo replaces the conversation. It does not run for a stale-read pruning checkpoint, which keeps the latest result of every tool call that touched each file.
 
+Tools that save their own output may return `outputSaved: true` alongside an output preview ending in `Full output saved to: <path>` or `Partial output saved to: <path>`. Set this only after successfully closing the artifact. The harness can then shrink that preview without saving a second artifact containing only the first preview. This transient execution metadata is cleared when redaction or a hook changes the returned text; it is not restored from transcript text.
+
 ## Hooks
 
 Plugins register trusted lifecycle hooks with `ctx.registerHook`. Hooks run in built-in and configured-plugin order. Multiple hooks for the same event run sequentially, and a replacement from one hook becomes the input to the next.

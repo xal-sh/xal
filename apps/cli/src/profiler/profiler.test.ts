@@ -113,7 +113,7 @@ test("runtime profiling records retries and bounded tools without affecting requ
         completedRound("automatic summary"),
         completedRound("automatic continuation"),
       ],
-      200,
+      20_000,
       90,
     )
     const automaticSession = harness.createSession(automaticProvider, { kind: "subagent" })

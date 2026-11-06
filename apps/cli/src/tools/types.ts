@@ -7,6 +7,7 @@ import type { TaskListUpdatedEvent } from "../tasks/types"
 import type { VerificationRecord } from "../verification/types"
 import type { WorkspaceUndo } from "./undo"
 import type { ToolInvoker } from "./programmatic"
+import type { ReadCoverage } from "./read-coverage"
 
 export type ProcessSandbox = "read" | "workspace"
 
@@ -19,6 +20,8 @@ export type ProcessExecution = (
 
 export interface ToolResult {
   output: string
+  outputSaved?: boolean
+  read?: ReadCoverage
   execution?: ProcessExecution
   events?: ToolEvent[]
   maxOutputBytes?: number
