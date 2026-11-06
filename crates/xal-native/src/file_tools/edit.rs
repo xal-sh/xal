@@ -30,7 +30,6 @@ struct Replacement {
 struct Span {
     start: usize,
     end: usize,
-    new: Vec<u16>,
     edit: usize,
 }
 
@@ -54,12 +53,12 @@ fn match_positions(haystack: &[u16], needle: &[u16]) -> Vec<usize> {
     positions
 }
 
-fn apply_spans(previous: &[u16], spans: &[Span]) -> Vec<u16> {
+fn apply_spans(previous: &[u16], spans: &[Span], replacements: &[Vec<u16>]) -> Vec<u16> {
     let mut next = Vec::with_capacity(previous.len());
     let mut cursor = 0;
     for span in spans {
         next.extend_from_slice(&previous[cursor..span.start]);
-        next.extend_from_slice(&span.new);
+        next.extend_from_slice(&replacements[span.edit]);
         cursor = span.end;
     }
     next.extend_from_slice(&previous[cursor..]);
@@ -330,6 +329,7 @@ impl Task for EditTask {
         }
         let previous = previous_text.encode_utf16().collect::<Vec<_>>();
         let mut spans = Vec::new();
+        let mut replacements = Vec::with_capacity(self.edits.len());
         for (index, edit) in self.edits.iter().enumerate() {
             let label = edit_label(index, self.edits.len());
             let (old, new, positions) = resolve_match(&previous, &edit.old, &edit.new);
@@ -357,9 +357,9 @@ impl Task for EditTask {
             spans.extend(positions.into_iter().take(count).map(|start| Span {
                 start,
                 end: start + old.len(),
-                new: new.clone(),
                 edit: index,
             }));
+            replacements.push(new);
         }
         spans.sort_by_key(|span| span.start);
         if let Some((first, second)) = overlapping_edits(&spans) {
@@ -368,7 +368,7 @@ impl Task for EditTask {
                 self.display_path
             )));
         }
-        let next = apply_spans(&previous, &spans);
+        let next = apply_spans(&previous, &spans, &replacements);
         let diff = unified_diff(&previous, &next);
         let bytes = utf16_lossy(&next);
         fs::write(&self.path, bytes.as_bytes()).map_err(io_error)?;
@@ -442,13 +442,8 @@ mod tests {
         overlapping_edits, read_line_prefix_len, resolve_match, strip_read_prefixes, units,
     };
 
-    fn span(start: usize, end: usize, new: &str, edit: usize) -> Span {
-        Span {
-            start,
-            end,
-            new: units(new),
-            edit,
-        }
+    fn span(start: usize, end: usize, edit: usize) -> Span {
+        Span { start, end, edit }
     }
 
     #[test]
@@ -484,12 +479,15 @@ mod tests {
     #[test]
     fn applies_sorted_spans_and_reports_overlapping_edits() {
         let previous = units("alpha beta gamma");
-        let spans = vec![span(0, 5, "one", 1), span(11, 16, "three", 0)];
-        assert_eq!(apply_spans(&previous, &spans), units("one beta three"));
+        let spans = vec![span(0, 5, 1), span(11, 16, 0)];
+        assert_eq!(
+            apply_spans(&previous, &spans, &[units("three"), units("one")]),
+            units("one beta three")
+        );
         assert_eq!(overlapping_edits(&spans), None);
-        let touching = vec![span(0, 5, "one", 0), span(5, 6, "_", 1)];
+        let touching = vec![span(0, 5, 0), span(5, 6, 1)];
         assert_eq!(overlapping_edits(&touching), None);
-        let overlapping = vec![span(0, 10, "x", 2), span(6, 10, "y", 1)];
+        let overlapping = vec![span(0, 10, 2), span(6, 10, 1)];
         assert_eq!(overlapping_edits(&overlapping), Some((1, 2)));
     }
 

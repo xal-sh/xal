@@ -36,10 +36,13 @@ function operationOf(fields: Record<string, unknown>): NativeEditOperation {
 function editsOf(args: Record<string, unknown>): NativeEditOperation[] {
   if (args.edits === undefined || args.edits === null) return [operationOf(args)]
   if ([args.old_string, args.new_string, args.replace_all].some((value) => value !== undefined && value !== null)) {
-    throw new Error("Pass either old_string and new_string, or edits, not both")
+    throw new Error("Pass either old_string, new_string, and replace_all, or edits, not both")
   }
   if (!Array.isArray(args.edits)) throw new Error("edits must be an array")
-  return args.edits.map((edit) => operationOf(isRecord(edit) ? edit : {}))
+  return args.edits.map((edit, index) => {
+    if (!isRecord(edit)) throw new Error(`edits[${index}] must be an object`)
+    return operationOf(edit)
+  })
 }
 
 export const editTool: Tool = {

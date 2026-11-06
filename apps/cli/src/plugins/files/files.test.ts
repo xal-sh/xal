@@ -143,7 +143,7 @@ test("edit applies several replacements against the original file or none at all
         },
         ctx,
       ),
-    ).rejects.toThrow("Pass either old_string and new_string, or edits, not both")
+    ).rejects.toThrow("Pass either old_string, new_string, and replace_all, or edits, not both")
     expect(await readFile(path, "utf8")).toBe("alpha\nbeta\ngamma\n")
 
     const result = await editTool.execute(

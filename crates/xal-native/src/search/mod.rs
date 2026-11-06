@@ -71,10 +71,16 @@ fn request_error(message: &str) -> NativeSearchResult {
 }
 
 fn missing_target(root: &Path, cwd: &Path) -> Option<NativeSearchResult> {
-    match fs::metadata(root) {
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Some(request_error(
-            &missing_path_message("Path", root, &display_path(root, cwd)),
-        )),
+    match fs::symlink_metadata(root) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            let shown = display_path(root, cwd);
+            let shown = if shown.is_empty() {
+                root.to_string_lossy().into_owned()
+            } else {
+                shown
+            };
+            Some(request_error(&missing_path_message("Path", root, &shown)))
+        }
         _ => None,
     }
 }
