@@ -202,18 +202,16 @@ impl Task for GrepTask {
         }
         let matcher = match regex.build(pattern) {
             Ok(matcher) => matcher,
-            Err(error) if matches!(error.kind(), RegexErrorKind::NotAllowed(_)) => {
-                return Ok(search_error(
-                    NativeToolOutcomeKind::InvalidRequest,
-                    "ripgrep error",
-                    format!("{error}. Set multiline to true to match across lines"),
-                ));
-            }
             Err(error) => {
+                let advice = if matches!(error.kind(), RegexErrorKind::NotAllowed(_)) {
+                    ". Set multiline to true to match across lines"
+                } else {
+                    ""
+                };
                 return Ok(search_error(
                     NativeToolOutcomeKind::InvalidRequest,
                     "ripgrep error",
-                    error,
+                    format!("{error}{advice}"),
                 ));
             }
         };
@@ -247,7 +245,8 @@ impl Task for GrepTask {
             return Ok(search_result(NativeToolOutcomeKind::TimedOut));
         }
         let mut result = search_result(NativeToolOutcomeKind::Completed);
-        let mut searched = 0_usize;
+        let walked = !files.is_empty();
+        let mut searched = false;
         for path in files {
             if self.cancelled.load(Ordering::Relaxed) {
                 result.kind = NativeToolOutcomeKind::Interrupted;
@@ -264,7 +263,7 @@ impl Task for GrepTask {
             if glob.as_ref().is_some_and(|glob| !glob.is_match(&path)) {
                 continue;
             }
-            searched += 1;
+            searched = true;
             let bytes = match read_search_file(&path, &self.cancelled, deadline) {
                 Ok(SearchFile::Bytes(bytes)) => bytes,
                 Ok(SearchFile::Binary) => continue,
@@ -344,7 +343,8 @@ impl Task for GrepTask {
                 }
             }
         }
-        if searched == 0
+        if walked
+            && !searched
             && let Some(glob) = self.options.glob.as_deref()
         {
             result.output = Some(format!(

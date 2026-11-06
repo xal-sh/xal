@@ -4,11 +4,12 @@ import { grepTool } from "./grep"
 
 function summarizeSearch(output: string): string {
   const first = output.split("\n", 1)[0] ?? ""
-  const matches = /^Found (\d+) matching lines$/.exec(first)
+  const matches = /^Found (\d+) (?:matching lines|matches)$/.exec(first)
   if (matches) return `${matches[1]} matches`
   const files = /^Found (\d+) files$/.exec(first)
   if (files) return `${files[1]} files`
   if (first.startsWith("No matches found") || first.startsWith("No files found")) return "no matches"
+  if (first.startsWith("No files match glob")) return "no files searched"
   return first
 }
 
