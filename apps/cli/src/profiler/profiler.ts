@@ -44,7 +44,6 @@ type AnonymousAgentEvent =
       usage: Usage
     }
   | { type: "verification_recorded"; status: "started" | "finished" }
-  | { type: "task_list_updated"; pending: number; inProgress: number; completed: number }
   | {
       type: "session_started"
       resumed: boolean
@@ -302,13 +301,6 @@ function anonymousAgentEvent(event: AgentEvent): AnonymousAgentEvent | undefined
       }
     case "verification_recorded":
       return { type: event.type, status: event.record.status }
-    case "task_list_updated":
-      return {
-        type: event.type,
-        pending: event.tasks.filter((task) => task.status === "pending").length,
-        inProgress: event.tasks.filter((task) => task.status === "in_progress").length,
-        completed: event.tasks.filter((task) => task.status === "completed").length,
-      }
     case "session_started":
       return {
         type: event.type,

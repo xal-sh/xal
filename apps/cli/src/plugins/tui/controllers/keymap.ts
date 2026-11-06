@@ -89,8 +89,6 @@ export function bindKeys(renderer: CliRenderer, deps: KeymapDeps): void {
       case "display.clear":
       case "display.toggle-details":
         return true
-      case "display.toggle-todos":
-        return !agentPage
       case "composer.clear":
       case "composer.newline":
         return !screen.overlayVisible
@@ -177,11 +175,6 @@ export function bindKeys(renderer: CliRenderer, deps: KeymapDeps): void {
       case "display.toggle-details":
         screen.toggleDetails()
         return
-      case "display.toggle-todos": {
-        const visible = screen.taskList.toggleVisibility()
-        screen.activeStatusBar.flashNotice(`Todos ${visible ? "shown" : "hidden"}`, QUIT_WINDOW_MS)
-        return
-      }
       case "history.open":
         screen.openHistory()
         return

@@ -11,7 +11,7 @@ import {
 } from "../agent/history"
 import { isMessageId } from "../agent/message-id"
 import { projectSessionsDir, sessionsDir } from "../config/paths"
-import { parseRecord } from "./records"
+import { isRetiredEvent, parseRecord } from "./records"
 import { titleFromEvents, titleFromInput } from "./title"
 import type { LoadedSession, SessionMeta, SessionSummary } from "./types"
 
@@ -106,7 +106,7 @@ async function summarize(path: string): Promise<SessionSummary | undefined> {
         continue
       }
       const event = record.event
-      if (event.type === "reasoning_routed" || event.type === "request_measured") continue
+      if (isRetiredEvent(event)) continue
       if (event.type === "session_title_changed") recordedTitle = event.title
       if (event.type === "conversation_rewound") {
         const rewound = rewindMessageIds(messageIds, event.messageId)
@@ -254,7 +254,7 @@ export async function loadSession(path: string): Promise<LoadedSession | undefin
       }
 
       const event = record.event
-      if (event.type === "reasoning_routed" || event.type === "request_measured") continue
+      if (isRetiredEvent(event)) continue
       if (event.type === "user_message" && isMessageId(event.messageId)) {
         pendingUserMessage = event
         continue

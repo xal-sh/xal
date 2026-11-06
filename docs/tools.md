@@ -113,7 +113,6 @@ These files are local artifacts, not conversation items or replay instructions. 
 
 | Tool                 | Purpose                                   | Availability                |
 | -------------------- | ----------------------------------------- | --------------------------- |
-| `update_plan`        | Track ordered steps and their progress.   | Outside plan mode           |
 | `submit_plan`        | Submit a plan for review and approval.    | Interactive plan mode       |
 | `request_user_input` | Ask the user a structured question.       | Interactive sessions        |
 | `ask_parent`         | Ask the owning agent a blocking question. | Task agents                 |

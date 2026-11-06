@@ -86,7 +86,6 @@ export async function driveTaskToQuiescence(
       case "plan_updated":
       case "goal_updated":
       case "verification_recorded":
-      case "task_list_updated":
       case "session_started":
       case "session_replay_finished":
       case "agent_questions":

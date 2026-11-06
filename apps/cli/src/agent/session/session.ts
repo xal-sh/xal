@@ -43,7 +43,6 @@ import { isPersistable } from "../../sessions/records"
 import { normalizeSessionTitle, titleFromInput } from "../../sessions/title"
 import type { SessionMeta } from "../../sessions/types"
 import { expandSkillInvocation } from "../../skills/invoke"
-import type { TrackedTask } from "../../tasks/types"
 import { getTool, listTools } from "../../tools/registry"
 import { toolOutputDirectory } from "../../tools/output"
 import { isInteractiveTool } from "../../tools/types"
@@ -119,7 +118,6 @@ export class AgentSession {
   private readonly contextBudget = new ContextBudget()
   private providerRequests = 0
   private providerRoundActive = false
-  private tasks: TrackedTask[] = []
   private readonly verificationRecords = new Map<string, VerificationRecord>()
   private readonly listeners = new Set<(event: AgentEvent) => void>()
   private readonly recorder: SessionRecorder | undefined
@@ -359,7 +357,6 @@ export class AgentSession {
         this.checkpoints = state.checkpoints
         this.contextBudget.reset(this.items)
         disposeToolContext(this.sessionId)
-        if (this.tasks.length > 0) this.publishToolEvent({ type: "task_list_updated", tasks: [] })
       },
       recordEvent: (event) => this.recordEvent(event),
       notify: (event) => this.notifyRedacted(event),
@@ -541,7 +538,6 @@ export class AgentSession {
     this.workspaceUndo = new WorkspaceUndo(this.cwd)
     this.contextBudget.reset()
     this.verificationRecords.clear()
-    this.tasks = []
     this.plan = undefined
     this.planHandoffActive = false
     this.pendingRestart = undefined
@@ -635,7 +631,6 @@ export class AgentSession {
     )
     this.contextBudget.restoreDisplayed(recordedContext(target.session.events))
     this.verificationRecords.clear()
-    this.tasks = []
     this.modeBeforePlan = meta.mode === "plan" ? meta.modeBeforePlan : undefined
     this.plan = undefined
     this.planHandoffActive = false
@@ -647,7 +642,6 @@ export class AgentSession {
     let recordedMode = meta.mode
     for (const event of target.session.events) {
       if (event.type === "goal_updated") this.goals.restore(event.goal)
-      if (event.type === "task_list_updated") this.tasks = event.tasks
       if (event.type === "verification_recorded") this.verificationRecords.set(event.record.name, event.record)
       if (event.type === "plan_updated") {
         this.plan = event.plan
@@ -1656,10 +1650,6 @@ export class AgentSession {
         this.planHandoffActive = event.plan.status === "approved"
         this.emit(event)
         if (event.plan.status === "approved") this.changeMode(this.planExecutionMode())
-        break
-      case "task_list_updated":
-        this.tasks = event.tasks
-        this.emit(event)
         break
     }
   }

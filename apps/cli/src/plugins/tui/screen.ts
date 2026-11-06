@@ -30,7 +30,6 @@ import { QueuedInputs } from "./components/queued-inputs"
 import { SecretInput } from "./components/secret-input"
 import { ShortcutHelp } from "./components/shortcut-help"
 import { StatusBar, STATUS_ROWS } from "./components/status-bar"
-import { TaskList } from "./components/task-list"
 import { UsagePopover } from "./components/usage-popover"
 import { saveTuiConfig, type TuiConfig } from "./config"
 import { ChildEventController } from "./controllers/child-events"
@@ -97,7 +96,6 @@ export class Screen {
   readonly agentComposer: Composer
   readonly statusBar: StatusBar
   readonly tasks: BackgroundTasks
-  readonly taskList: TaskList
   private readonly shortcutHelp: ShortcutHelp
   private readonly childStores = new Map<string, ChildStore>()
   private readonly preferences: TuiConfig
@@ -133,7 +131,6 @@ export class Screen {
     this.jobViewer = new JobViewer(renderer)
     this.live = new LiveTools(renderer, () => this.syncFooter(), preferences.showOutputs)
     this.queued = new QueuedInputs(renderer, () => this.syncFooter())
-    this.taskList = new TaskList(renderer, () => this.syncFooter())
     this.permission = new PermissionPopover(renderer, actions)
     this.elicitation = new ElicitationPopover(
       renderer,
@@ -262,7 +259,6 @@ export class Screen {
     this.mainPanel = column(renderer, { paddingLeft: 2, paddingRight: 2, marginBottom: "auto" })
     this.mainPanel.add(this.live.view)
     this.mainPanel.add(this.queued.view)
-    this.mainPanel.add(this.taskList.view)
     this.view.add(this.mainPanel)
     this.view.add(this.permission.view)
     this.view.add(this.elicitation.view)
@@ -371,7 +367,6 @@ export class Screen {
     this.statusBar.setMode(mode)
     this.statusBar.resetUsage()
     this.statusBar.resetTurnElapsed()
-    this.taskList.set([])
     if (!this.tasks.closeViewer()) this.viewJob(undefined)
     this.scrollback.clear()
     this.scrollback.appendHeader({ kind: "banner", model, cwd: compactPath(cwd) })
@@ -457,7 +452,7 @@ export class Screen {
   private elicitationAvailableHeight(): number {
     const siblingRows = this.jobViewer.visible
       ? STATUS_ROWS + this.tasks.height
-      : this.live.height + this.queued.height + this.taskList.height + STATUS_ROWS + this.tasks.height
+      : this.live.height + this.queued.height + STATUS_ROWS + this.tasks.height
     return Math.max(1, this.renderer.terminalHeight - siblingRows)
   }
 
@@ -540,12 +535,7 @@ export class Screen {
     const editing = this.composer.rows + this.shortcutHelp.height + Math.max(paletteRows, this.reserved)
     this.live.setGrouped(this.scrollback.endsWithTool)
     const contentRows =
-      this.live.height +
-      this.queued.height +
-      this.taskList.height +
-      (overlaid ? overlayRows : editing) +
-      STATUS_ROWS +
-      this.tasks.height
+      this.live.height + this.queued.height + (overlaid ? overlayRows : editing) + STATUS_ROWS + this.tasks.height
     this.renderer.footerHeight = mainFooterHeight(
       this.renderer.terminalHeight,
       this.scrollback.rows + this.pendingScrollbackRows,
@@ -574,7 +564,6 @@ export class Screen {
     return (
       this.live.height +
       this.queued.height +
-      this.taskList.height +
       this.composer.rows +
       this.shortcutHelp.height +
       STATUS_ROWS +

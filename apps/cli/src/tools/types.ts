@@ -3,7 +3,6 @@ import type { SessionKind } from "../agent/types"
 import type { PermissionMode } from "../permissions/types"
 import type { PlanUpdatedEvent } from "../plans/types"
 import type { ContextUsage, ModelInputModality, Provider, ThinkingEffort, ToolDefinition } from "../providers/types"
-import type { TaskListUpdatedEvent } from "../tasks/types"
 import type { VerificationRecord } from "../verification/types"
 import type { WorkspaceUndo } from "./undo"
 import type { ToolInvoker } from "./programmatic"
@@ -27,7 +26,7 @@ export interface ToolResult {
   maxOutputBytes?: number
 }
 
-export type ToolEvent = PlanUpdatedEvent | TaskListUpdatedEvent
+export type ToolEvent = PlanUpdatedEvent
 
 export interface ElicitationOption {
   label: string
