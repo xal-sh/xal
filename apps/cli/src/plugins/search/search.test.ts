@@ -74,7 +74,42 @@ test("grep counts every match while retaining only the first 250 lines", async (
     await writeFile(join(workspace, "many.txt"), content)
     const result = await grepTool.execute({ pattern: "needle" }, context(workspace))
     expect(result.output.startsWith("Found 260 matching lines\n")).toBe(true)
-    expect(result.output.endsWith("(Showing first 250 of 260. Narrow your pattern or path.)")).toBe(true)
+    expect(
+      result.output.endsWith("(Showing 1-250 of 260. Narrow your pattern or path, or pass offset 250 for more.)"),
+    ).toBe(true)
+    const rest = await grepTool.execute({ pattern: "needle", offset: 250 }, context(workspace))
+    expect(rest.output.split("\n").slice(1)).toEqual([
+      ...Array.from({ length: 10 }, (_, index) => `many.txt:${index + 251}:needle ${index + 250}`),
+      "(Showing 251-260 of 260.)",
+    ])
+    await expect(grepTool.execute({ pattern: "needle", offset: -1 }, context(workspace))).rejects.toThrow(
+      "offset must be a non-negative integer",
+    )
+  })
+})
+
+test("grep shows surrounding context and separates non-adjacent groups", async () => {
+  await withWorkspace(async (workspace) => {
+    await writeFile(join(workspace, "code.ts"), "a\nneedle one\nb\nc\nd\ne\nneedle two\nf\n")
+    const result = await grepTool.execute({ pattern: "needle", context: 1 }, context(workspace))
+    expect(result.output).toBe(
+      [
+        "Found 2 matching lines",
+        "code.ts-1-a",
+        "code.ts:2:needle one",
+        "code.ts-3-b",
+        "--",
+        "code.ts-6-e",
+        "code.ts:7:needle two",
+        "code.ts-8-f",
+      ].join("\n"),
+    )
+    const paged = await grepTool.execute({ pattern: "needle", context: 1, offset: 1 }, context(workspace))
+    expect(paged.output).toBe(
+      ["Found 2 matching lines", "code.ts-6-e", "code.ts:7:needle two", "code.ts-8-f", "(Showing 2-2 of 2.)"].join(
+        "\n",
+      ),
+    )
   })
 })
 
@@ -92,6 +127,16 @@ test("glob returns newest matches first with a bounded payload and accurate tota
     expect(lines[0]).toBe("Found 105 files")
     expect(lines[1]).toBe("match-104.txt")
     expect(lines[100]).toBe("match-005.txt")
-    expect(lines[101]).toBe("(Showing first 100 of 105. Narrow the pattern to see the rest.)")
+    expect(lines[101]).toBe("(Showing 1-100 of 105. Narrow the pattern, or pass offset 100 for more.)")
+    const rest = await globTool.execute({ pattern: "*.txt", offset: 100 }, context(workspace))
+    expect(rest.output.split("\n")).toEqual([
+      "Found 105 files",
+      "match-004.txt",
+      "match-003.txt",
+      "match-002.txt",
+      "match-001.txt",
+      "match-000.txt",
+      "(Showing 101-105 of 105.)",
+    ])
   })
 })

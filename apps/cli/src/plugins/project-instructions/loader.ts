@@ -18,7 +18,7 @@ export interface ProjectInstructions {
   skipped: string[]
 }
 
-async function readOptional(path: string): Promise<string | undefined> {
+export async function readOptional(path: string): Promise<string | undefined> {
   try {
     return await readFile(path, "utf8")
   } catch (error) {
@@ -27,7 +27,7 @@ async function readOptional(path: string): Promise<string | undefined> {
   }
 }
 
-function directoriesToRoot(root: string, cwd: string): string[] {
+export function directoriesToRoot(root: string, cwd: string): string[] {
   const directories: string[] = []
   let directory = cwd
   while (true) {
@@ -74,6 +74,29 @@ export async function loadProjectInstructions(cwd: string, maxBytes: number): Pr
   }
 
   return { root, sources: sources.reverse(), skipped: skipped.reverse() }
+}
+
+export function renderNestedInstructions(root: string, sources: Map<string, string>, maxBytes: number): string {
+  if (sources.size === 0) return ""
+  let remaining = maxBytes
+  const sections: string[] = []
+  const omitted: string[] = []
+  for (const [path, content] of sources) {
+    const name = relative(root, path)
+    const prefix = utf8Prefix(content, remaining)
+    remaining -= encoder.encode(prefix).length
+    if (prefix.length === 0) {
+      omitted.push(name)
+      continue
+    }
+    const notice = prefix === content ? "" : "\n\n[This instruction file was truncated at the configured byte budget.]"
+    sections.push(`## ${name}\n\n${prefix}${notice}`)
+  }
+  return [
+    "Nested project instructions follow for directories this session has worked in. Each applies to files under its own directory and takes precedence over instructions from parent directories.",
+    ...sections,
+    ...(omitted.length === 0 ? [] : [`[Omitted at the configured byte budget: ${omitted.join(", ")}.]`]),
+  ].join("\n\n")
 }
 
 export function renderProjectInstructions(instructions: ProjectInstructions): string {

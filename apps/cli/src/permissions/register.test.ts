@@ -30,7 +30,7 @@ test("makes the current writable mode override stale plan-mode context", () => {
       },
     },
     goal: { evaluatorModels: {} },
-    verification: { checks: {} },
+    verification: { checks: {}, gate: false },
     typesafeAI: { enabled: false },
     redaction: { values: [], environment: [] },
     agents: { maxConcurrent: 4, timeoutMinutes: 0, maxTurns: 24 },

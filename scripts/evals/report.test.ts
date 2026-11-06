@@ -3,7 +3,16 @@ import { caseReport, compare, evalReport, median, parseReport } from "./report"
 import type { RunRecord } from "./types"
 
 function run(pass: boolean, uncachedInputTokens = 0): RunRecord {
-  return { pass, rounds: 1, toolCalls: 1, uncachedInputTokens, outputTokens: 0, durationMs: 1 }
+  return {
+    pass,
+    rounds: 1,
+    toolCalls: 1,
+    toolFailures: 0,
+    editFailures: 0,
+    uncachedInputTokens,
+    outputTokens: 0,
+    durationMs: 1,
+  }
 }
 
 test("summarizes pass rate, spread, and uncached input tokens", () => {
@@ -41,6 +50,7 @@ test("calls a difference inside the run-to-run spread noise", () => {
   expect(lines[0]).toContain("improvement beyond run-to-run spread")
   expect(lines.some((line) => line.startsWith("rounds "))).toBe(true)
   expect(lines.some((line) => line.startsWith("uncached input tokens "))).toBe(true)
+  expect(lines.some((line) => line.startsWith("edit failures "))).toBe(true)
 })
 
 test("reads a written report back in the same shape and rejects anything else", () => {

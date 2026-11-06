@@ -47,9 +47,9 @@ import type { TrackedTask } from "../../tasks/types"
 import { getTool, listTools } from "../../tools/registry"
 import { toolOutputDirectory } from "../../tools/output"
 import { isInteractiveTool } from "../../tools/types"
-import { disposeToolSession } from "../../tools/session"
+import { disposeToolContext, disposeToolSession } from "../../tools/session"
 import { WorkspaceUndo } from "../../tools/undo"
-import { verificationSummary } from "../../verification/service"
+import { verificationBaseline, verificationCorrection, verificationSummary } from "../../verification/service"
 import type { VerificationCheckStatus, VerificationRecord } from "../../verification/types"
 import type { ElicitationAnswer, RegisteredTool, ToolEvent } from "../../tools/types"
 import type { AgentEvent, AgentState, DenialCause, SessionStartedEvent } from "../events"
@@ -285,6 +285,15 @@ export class AgentSession {
       hookReporter: this.hookReporter,
       outputContract: () => this.outputContract,
       verificationStatus: (signal) => this.verificationStatus(signal),
+      verificationBaseline: (signal) => verificationBaseline(this.cwd, signal),
+      verificationCorrection: (baseline, signal) =>
+        verificationCorrection(
+          this.cwd,
+          baseline,
+          this.verificationRecords,
+          this.asyncState.hasPendingAsyncWork(),
+          signal,
+        ),
       queuedPromptNext: () => this.queue.promptFirst,
       asyncResultsQueued: () => this.asyncState.hasQueued(),
       paused: () => this.paused,
@@ -329,6 +338,7 @@ export class AgentSession {
         this.items = []
         this.saveItem(item)
         this.contextBudget.reset(this.items)
+        disposeToolContext(this.sessionId)
       },
       setState: (state) => this.setState(state),
       emit: (event) => this.emit(event),
@@ -344,6 +354,7 @@ export class AgentSession {
         this.items = state.items
         this.checkpoints = state.checkpoints
         this.contextBudget.reset(this.items)
+        disposeToolContext(this.sessionId)
         if (this.tasks.length > 0) this.publishToolEvent({ type: "task_list_updated", tasks: [] })
       },
       recordEvent: (event) => this.recordEvent(event),

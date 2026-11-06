@@ -539,3 +539,59 @@ test("leaves history unchanged when the static prefix and summary exceed the rep
   expect(replaced).toBe(false)
   expect(host.history()).toEqual(history)
 })
+
+test("replaces superseded reads locally when that frees enough context", async () => {
+  const provider = new ScriptedProvider([])
+  const content = "line of source\n".repeat(2_000)
+  let history: HistoryItem[] = [
+    { type: "user_message", text: "Refactor a.ts", images: [] },
+    { type: "tool_call", callId: "first", name: "read", args: { file_path: "a.ts" } },
+    { type: "tool_result", callId: "first", output: content },
+    { type: "tool_call", callId: "second", name: "read", args: { file_path: "a.ts" } },
+    { type: "tool_result", callId: "second", output: content },
+    { type: "tool_call", callId: "third", name: "read", args: { file_path: "a.ts" } },
+    { type: "tool_result", callId: "third", output: content },
+  ]
+  const buildRequestWithHistory = (candidateHistory: HistoryItem[]): StreamRequest => ({
+    model: "test-model",
+    instructions: prompt.instructions,
+    tools: prompt.tools,
+    cacheKey: prompt.cacheKey,
+    input: activeHistory(candidateHistory),
+    toolChoice: "auto",
+    sessionId: "stale-reads",
+  })
+  const host: CompactionHost = {
+    kind: "primary",
+    sessionId: () => "stale-reads",
+    profileId: () => "test-profile",
+    history: () => history,
+    contextTokens: () => undefined,
+    buildRequest: () => buildRequestWithHistory(history),
+    buildRequestWithHistory,
+    admitRequest: (candidateProvider, candidateRequest) => ({
+      identity: requestIdentity(candidateProvider.id, "test-profile", candidateRequest),
+      activeTokens: 0,
+      requestEstimate: 0,
+    }),
+    onRequestStarted: () => {},
+    observeCompaction: () => {},
+    replaceHistory: (item) => {
+      history = [item]
+    },
+    setState: () => {},
+    emit: () => {},
+  }
+
+  expect(await runCompaction(host, new AbortController().signal, provider, "test-model", "auto")).toBe(true)
+
+  expect(provider.requests).toHaveLength(0)
+  const checkpoint = history[0]
+  if (!checkpoint || checkpoint.type !== "compaction" || checkpoint.strategy !== "stale_reads_v1") {
+    throw new Error("missing stale-read checkpoint")
+  }
+  expect(checkpoint.replaced).toBe(2)
+  const active = activeHistory(history)
+  expect(active).toHaveLength(7)
+  expect(active.at(-1)).toEqual({ type: "tool_result", callId: "third", output: content })
+})

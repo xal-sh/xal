@@ -19,6 +19,7 @@ export interface LspQuery {
   line?: number
   column?: number
   query?: string
+  errorsOnly?: boolean
 }
 
 export class LspManager {
@@ -30,6 +31,10 @@ export class LspManager {
 
   hasAvailableServer(cwd = process.cwd()): boolean {
     return this.native.hasAvailableServer(cwd)
+  }
+
+  servesFile(filePath: string, cwd: string): boolean {
+    return this.native.servesFile(filePath, cwd)
   }
 
   statusLines(cwd = process.cwd()): string[] {

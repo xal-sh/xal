@@ -163,6 +163,23 @@ impl NativeLspManager {
     }
 
     #[napi(catch_unwind)]
+    pub fn serves_file(&self, file_path: String, cwd: String) -> bool {
+        let manager = lock(&self.state);
+        if manager.closing {
+            return false;
+        }
+        let path = absolute_path(&file_path, &cwd);
+        let Ok((config, _, _)) = match_server(&manager.definitions, &path) else {
+            return false;
+        };
+        manager
+            .clients
+            .values()
+            .any(|client| lock(client).id == config.id)
+            || executable(&config, Path::new(&cwd)).is_some()
+    }
+
+    #[napi(catch_unwind)]
     pub fn status_lines(&self, cwd: String) -> Vec<String> {
         let manager = lock(&self.state);
         if manager.definitions.is_empty() {

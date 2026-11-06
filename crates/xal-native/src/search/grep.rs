@@ -8,6 +8,8 @@ pub struct NativeGrepOptions {
     pub pattern: Option<String>,
     pub output_mode: Option<String>,
     pub case_insensitive: Option<bool>,
+    pub context: Option<u32>,
+    pub offset: Option<u32>,
     pub aborted: Option<bool>,
 }
 enum SearchFile {
@@ -61,6 +63,100 @@ fn read_search_file(
     }
 }
 
+fn shown_line(line: &[u8]) -> String {
+    let line = String::from_utf8_lossy(line);
+    let line = line.strip_suffix('\n').unwrap_or(&line);
+    let line = line.strip_suffix('\r').unwrap_or(line);
+    if line.len() > MAX_COLUMNS {
+        "[Omitted long matching line]".to_owned()
+    } else {
+        line.to_owned()
+    }
+}
+
+struct GrepSink<'a> {
+    shown_path: &'a str,
+    content: bool,
+    offset: u32,
+    result: &'a mut NativeSearchResult,
+    file_matched: bool,
+    interrupted: bool,
+    cancelled: &'a AtomicBool,
+    deadline: Instant,
+    pending: Vec<String>,
+    included: bool,
+    broke: bool,
+}
+
+impl Sink for GrepSink<'_> {
+    type Error = std::io::Error;
+
+    fn matched(
+        &mut self,
+        _searcher: &Searcher,
+        found: &SinkMatch<'_>,
+    ) -> Result<bool, Self::Error> {
+        self.file_matched = true;
+        if !self.content {
+            return Ok(false);
+        }
+        let index = self.result.total;
+        self.result.total = self.result.total.saturating_add(1);
+        let before = std::mem::take(&mut self.pending);
+        self.included = index >= self.offset && self.result.lines.len() < GREP_LIMIT;
+        if self.included {
+            let mut block = Vec::with_capacity(before.len() + 2);
+            if self.broke && !self.result.lines.is_empty() {
+                block.push("--".to_owned());
+            }
+            block.extend(before);
+            block.push(format!(
+                "{}:{}:{}",
+                self.shown_path,
+                found.line_number().unwrap_or(0),
+                shown_line(found.bytes())
+            ));
+            self.result.lines.push(block.join("\n"));
+        }
+        self.broke = false;
+        if self.cancelled.load(Ordering::Relaxed) || Instant::now() >= self.deadline {
+            self.interrupted = true;
+            return Ok(false);
+        }
+        Ok(true)
+    }
+
+    fn context(
+        &mut self,
+        _searcher: &Searcher,
+        context: &SinkContext<'_>,
+    ) -> Result<bool, Self::Error> {
+        let line = format!(
+            "{}-{}-{}",
+            self.shown_path,
+            context.line_number().unwrap_or(0),
+            shown_line(context.bytes())
+        );
+        match context.kind() {
+            SinkContextKind::After if self.included => {
+                if let Some(block) = self.result.lines.last_mut() {
+                    block.push('\n');
+                    block.push_str(&line);
+                }
+            }
+            SinkContextKind::After => {}
+            SinkContextKind::Before | SinkContextKind::Other => self.pending.push(line),
+        }
+        Ok(true)
+    }
+
+    fn context_break(&mut self, _searcher: &Searcher) -> Result<bool, Self::Error> {
+        self.pending.clear();
+        self.broke = true;
+        Ok(true)
+    }
+}
+
 pub struct GrepTask {
     options: NativeGrepOptions,
     cancelled: Arc<AtomicBool>,
@@ -86,6 +182,11 @@ impl Task for GrepTask {
             return Ok(request_error("pattern is required"));
         };
         let content = self.options.output_mode.as_deref() != Some("files");
+        let context = usize::try_from(self.options.context.unwrap_or(0)).unwrap_or(usize::MAX);
+        if context > MAX_CONTEXT {
+            return Ok(request_error("context must be at most 10 lines"));
+        }
+        let offset = self.options.offset.unwrap_or(0);
         let mut regex = RegexMatcherBuilder::new();
         regex.case_insensitive(self.options.case_insensitive.unwrap_or(false));
         let matcher = match regex.build(pattern) {
@@ -156,12 +257,25 @@ impl Task for GrepTask {
                 }
             };
             let shown_path = display_path(&path, &cwd);
-            let mut file_matched = false;
-            let mut interrupted = false;
             let mut searcher = SearcherBuilder::new()
                 .line_number(true)
+                .before_context(if content { context } else { 0 })
+                .after_context(if content { context } else { 0 })
                 .binary_detection(BinaryDetection::quit(0))
                 .build();
+            let mut sink = GrepSink {
+                shown_path: &shown_path,
+                content,
+                offset,
+                result: &mut result,
+                file_matched: false,
+                interrupted: false,
+                cancelled: &self.cancelled,
+                deadline,
+                pending: Vec::new(),
+                included: false,
+                broke: true,
+            };
             let search = searcher.search_reader(
                 &matcher,
                 CheckedCursor {
@@ -169,30 +283,9 @@ impl Task for GrepTask {
                     cancelled: &self.cancelled,
                     deadline,
                 },
-                sinks::Lossy(|line_number, line| {
-                    file_matched = true;
-                    if !content {
-                        return Ok(false);
-                    }
-                    result.total = result.total.saturating_add(1);
-                    if result.lines.len() < GREP_LIMIT {
-                        let line = line.strip_suffix('\n').unwrap_or(line);
-                        let content = if line.len() > MAX_COLUMNS {
-                            "[Omitted long matching line]"
-                        } else {
-                            line
-                        };
-                        result
-                            .lines
-                            .push(format!("{shown_path}:{line_number}:{content}"));
-                    }
-                    if self.cancelled.load(Ordering::Relaxed) || Instant::now() >= deadline {
-                        interrupted = true;
-                        return Ok(false);
-                    }
-                    Ok(true)
-                }),
+                &mut sink,
             );
+            let (file_matched, interrupted) = (sink.file_matched, sink.interrupted);
             if let Err(error) = search {
                 if self.cancelled.load(Ordering::Relaxed) {
                     return Ok(search_result(NativeToolOutcomeKind::Interrupted));
@@ -217,13 +310,14 @@ impl Task for GrepTask {
                 return Ok(result);
             }
             if file_matched && !content {
+                let index = result.total;
                 result.total = result.total.saturating_add(1);
-                if result.lines.len() < GREP_LIMIT {
+                if index >= offset && result.lines.len() < GREP_LIMIT {
                     result.lines.push(shown_path);
                 }
             }
         }
-        Ok(complete_grep(result, content))
+        Ok(complete_grep(result, content, offset))
     }
 
     fn resolve(&mut self, _env: Env, output: Self::Output) -> napi::Result<Self::JsValue> {

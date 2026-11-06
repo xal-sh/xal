@@ -1,6 +1,6 @@
 import { asNumber, asString, isJsonObject, isRecord, type JsonObject } from "../lib/json"
 import { replayMatches, type ConversationTarget } from "./conversation"
-import { ProviderError } from "./errors"
+import { OutputLimitError, ProviderError } from "./errors"
 import { parseToolArgs, sseEvents, streamError } from "./transport"
 import type {
   ConversationItem,
@@ -281,9 +281,8 @@ function stopReasonError(name: string, stopReason: string | undefined): Provider
   if (stopReason === "model_context_window_exceeded") {
     return new ProviderError(`${name} ran out of context window`, { retryable: false })
   }
-  if (stopReason === "max_tokens") {
-    return new ProviderError(`${name} stopped at the model output limit before finishing`, { retryable: false })
-  }
+  if (stopReason === "max_tokens")
+    return new OutputLimitError(`${name} stopped at the model output limit before finishing`)
   return undefined
 }
 

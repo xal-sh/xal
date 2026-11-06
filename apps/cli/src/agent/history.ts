@@ -4,7 +4,7 @@ import type { DirectShellResult } from "./events"
 export type CompactionItem =
   | {
       type: "compaction"
-      strategy: "jev_v1"
+      strategy: "jev_v1" | "stale_reads_v1"
       summary: string
       replaced: number
       tokensBefore?: number
@@ -101,7 +101,7 @@ export function activeHistory(items: HistoryItem[]): ConversationItem[] {
     }
     if (item.type === "compaction") {
       active.length = 0
-      if (item.strategy === "jev_v1") {
+      if (item.strategy === "jev_v1" || item.strategy === "stale_reads_v1") {
         active.push(...item.retained)
       } else if (item.strategy === "user_messages_v1") {
         active.push(...item.retained, continuationSummaryMessage(item.summary))

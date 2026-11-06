@@ -20,6 +20,7 @@ function context(config: Record<string, unknown>): PluginContext {
     registerTool() {},
     unregisterTool() {},
     registerToolSessionDisposer() {},
+    registerToolContextDisposer() {},
     registerProvider() {},
     registerCli() {},
     registerCommand() {},

@@ -1,8 +1,9 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import { appendProcessOutput, createProcessJob, drainOwnerDeliveries, finishProcessJob } from "../../background/jobs"
 import { contributeRules } from "../../permissions/rules"
-import { ProviderError } from "../../providers/errors"
+import { OutputLimitError, ProviderError } from "../../providers/errors"
 import { registerTool, unregisterTool } from "../../tools/registry"
+import { registerToolContextDisposer } from "../../tools/session"
 import type { ElicitationResult, InteractiveTool, Tool } from "../../tools/types"
 import type { AgentEvent } from "../events"
 import { continuationSummaryMessage } from "../history"
@@ -337,11 +338,15 @@ describe("AgentSession control flow", () => {
     const session = harness.createSession(provider)
     const observed: AgentEvent[] = []
     const unsubscribe = session.subscribe((event) => observed.push(event))
+    const disposedContexts: string[] = []
+    registerToolContextDisposer((sessionId) => disposedContexts.push(sessionId))
 
     try {
       await runSettledTurn(session, { text: "Build the original feature", images: [] })
 
+      expect(disposedContexts).not.toContain(session.id)
       expect(await session.compact("remaining implementation work")).toBe("compacted")
+      expect(disposedContexts).toContain(session.id)
       expect(session.currentState).toBe("idle")
       expect(provider.requests[1]?.instructions).toContain("You summarize coding session transcripts")
       expect(provider.requests[1]?.instructions).not.toBe(provider.requests[0]?.instructions)
@@ -985,6 +990,34 @@ describe("AgentSession control flow", () => {
     } finally {
       unregisterTool(tool)
     }
+  })
+
+  test("asks the model to continue after one output-limit stop and fails on the next", async () => {
+    const limit = new OutputLimitError("Scripted provider stopped at the model output limit before finishing")
+    const provider = new ScriptedProvider([
+      round([{ type: "text_delta", text: "Writing the file" }], limit),
+      completedRound("Wrote it in smaller steps."),
+      round([], limit),
+      round([], limit),
+    ])
+    const session = harness.createSession(provider)
+
+    const recovered = await runSettledTurn(session, { text: "Write a large file", images: [] })
+
+    expect(recovered).toEqual({
+      status: "completed",
+      response: "Wrote it in smaller steps.",
+      usage: undefined,
+      context: undefined,
+    })
+    const correction = provider.requests[1]?.input.at(-1)
+    if (!correction || correction.type !== "user_message") throw new Error("missing output-limit correction")
+    expect(correction.text).toContain("output limit")
+
+    const failed = await runSettledTurn(session, { text: "Write another large file", images: [] })
+
+    expect(failed.status).toBe("failed")
+    expect(provider.requests).toHaveLength(4)
   })
 
   test("validates and normalizes interactive elicitation answers", async () => {

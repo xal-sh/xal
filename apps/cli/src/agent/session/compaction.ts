@@ -1,6 +1,7 @@
 import { settings } from "../../config/settings"
 import { decisions } from "../../providers/decisions"
 import { pruneWithJev } from "./jev-compaction"
+import { pruneStaleReads } from "./stale-reads"
 import { resolveThinking } from "../../config/thinking"
 import { describeError } from "../../lib/error"
 import { truncateUtf8Middle } from "../../lib/text"
@@ -25,7 +26,7 @@ export type CompactionTrigger = "auto" | "manual"
 
 export interface CompactionObservation {
   trigger: CompactionTrigger
-  strategy: "legacy" | "user_messages_v1" | "jev_v1"
+  strategy: "legacy" | "user_messages_v1" | "jev_v1" | "stale_reads_v1"
   outcome: "completed" | "nothing" | "failed" | "interrupted"
   tokensBefore?: number
   before: ConversationItem[]
@@ -194,6 +195,25 @@ function activeSourceHistory(items: HistoryItem[]): HistoryItem[] {
   return checkpoint < 0 ? items : items.slice(checkpoint)
 }
 
+async function freesEnoughContext(
+  host: CompactionHost,
+  provider: Provider,
+  model: string,
+  history: HistoryItem[],
+  candidate: CompactionItem,
+  signal: AbortSignal,
+): Promise<boolean> {
+  const previousEstimate = estimateRequestTokens(
+    host.buildRequestWithHistory(history, provider, model, undefined, signal),
+  )
+  const replacementEstimate = estimateRequestTokens(
+    host.buildRequestWithHistory([candidate], provider, model, undefined, signal),
+  )
+  const info = await findModel(provider, host.profileId(), model)
+  const limit = effectiveAutoCompactTokenLimit(info?.contextWindow, info?.autoCompactTokenLimit)
+  return replacementEstimate < previousEstimate * 0.75 && (limit === undefined || replacementEstimate < limit * 0.9)
+}
+
 export interface CompactionHost {
   readonly kind: SessionKind
   sessionId(): string
@@ -252,6 +272,33 @@ export async function runCompaction(
 
   try {
     host.setState("compacting")
+    const stale = pruneStaleReads(before)
+    if (stale.pruned > 0) {
+      const candidate: CompactionItem = {
+        type: "compaction",
+        strategy: "stale_reads_v1",
+        summary: `Removed ${stale.pruned} superseded file reads; retained conversation is otherwise unchanged.`,
+        replaced: stale.pruned,
+        tokensBefore,
+        retained: stale.items,
+      }
+      if (await freesEnoughContext(host, provider, model, history, candidate, signal)) {
+        signal.throwIfAborted()
+        host.observeCompaction({
+          trigger,
+          strategy: "stale_reads_v1",
+          outcome: "completed",
+          tokensBefore,
+          before,
+          after: candidate.retained,
+          retained: candidate.retained,
+          removedTypes: [],
+        })
+        host.replaceHistory(candidate)
+        host.emit({ type: "compacted", summary: candidate.summary, replaced: candidate.replaced, tokensBefore })
+        return true
+      }
+    }
     const compaction = settings().typesafeAI
     if (compaction.enabled) {
       let checkpoint: CompactionItem | undefined
@@ -279,18 +326,7 @@ export async function runCompaction(
           tokensBefore,
           retained,
         }
-        const previousEstimate = estimateRequestTokens(
-          host.buildRequestWithHistory(history, provider, model, undefined, signal),
-        )
-        const replacementEstimate = estimateRequestTokens(
-          host.buildRequestWithHistory([candidate], provider, model, undefined, signal),
-        )
-        const info = await findModel(provider, profileId, model)
-        const limit = effectiveAutoCompactTokenLimit(info?.contextWindow, info?.autoCompactTokenLimit)
-        if (
-          replacementEstimate >= previousEstimate * 0.75 ||
-          (limit !== undefined && replacementEstimate >= limit * 0.9)
-        ) {
+        if (!(await freesEnoughContext(host, provider, model, history, candidate, signal))) {
           throw new Error("Jev did not free enough context")
         }
         signal.throwIfAborted()

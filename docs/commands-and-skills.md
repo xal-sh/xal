@@ -4,7 +4,9 @@ Reuse common instructions through project guidance, lightweight Markdown prompt 
 
 ## Project instructions
 
-Xal discovers `AGENTS.md` files and adds their guidance to the model prompt. `pluginConfig.project-instructions.maxBytes` controls the maximum combined UTF-8 byte budget for the discovered files. It must be a positive integer and defaults to `32768`.
+Xal discovers `AGENTS.md` files and adds their guidance to the model prompt. At startup it loads every `AGENTS.md` from the project root down to the working directory. `pluginConfig.project-instructions.maxBytes` controls the maximum combined UTF-8 byte budget for those files. It must be a positive integer and defaults to `32768`.
+
+Nested `AGENTS.md` files below the working directory, or in other branches of the project, are loaded when a session first uses a file under them. Using a file means a successful `read`, `edit`, or `write`, including reads inside Code Mode programs. From the next model request on, that session's prompt adds each newly found file after the startup instructions, nearer directories last, so they take precedence. Nested files have their own budget of `maxBytes`. They persist through compaction and are cleared by `/new`. Files outside the project root never load nested instructions. Adding a nested file changes the system prompt, which invalidates the provider prompt cache once.
 
 ```json
 {
@@ -51,6 +53,8 @@ After startup, type `/` in the TUI to see discovered commands in the command pal
 ## Context compaction
 
 The behavior below describes the default summary strategy. Connected TypeSafe users can opt into [Jev pruning through `/config`](/docs/configs#jev-compaction) for both `/compact` and automatic compaction, with visible fallback to the default strategy when necessary.
+
+Every compaction first tries a free local step: it removes superseded file reads. A successful `read` result is superseded when a later successful `read` of the same `file_path` covers it, meaning a full read or the same `offset` and `limit`, or when a later successful `write` replaced the file. Each superseded result is replaced with a short notice and its call is kept. Everything else stays verbatim, including reads that only `edit` calls followed. As with Jev, the result is accepted only when it reduces the estimated request by more than 25% and leaves it below 90% of the auto-compaction limit. An accepted result is saved as a `stale_reads_v1` checkpoint that reloads the pruned history without a summary. Otherwise nothing is changed and compaction continues with Jev, when enabled, or the summary strategy.
 
 `/compact [focus]` summarizes the complete active conversation and atomically replaces it with a provider-neutral checkpoint. New checkpoints retain only the newest authored user requests, without images, within a 20,000-token ceiling; the authoritative continuation summary follows them. The complete replacement request, including instructions and tools, must fit an estimated 32,000-token budget. Assistant output, reasoning, tool calls and results, direct-shell output, provider replay, and synthetic notices are summarized but never retained directly. If summary generation is interrupted, empty, fails, or cannot fit the replacement budget, the original history remains unchanged.
 

@@ -1,6 +1,6 @@
 import { asNumber, asString, isRecord, type JsonObject } from "../lib/json"
 import { omitUserMessageImages } from "./conversation"
-import { ProviderError } from "./errors"
+import { OutputLimitError, ProviderError } from "./errors"
 import { parseToolArgs, sseEvents, streamError } from "./transport"
 import type {
   AssistantMessageItem,
@@ -260,7 +260,7 @@ export async function* streamChatCompletions(
 
   if (!terminal) throw new ProviderError(`${provider.name} stream ended unexpectedly`, { retryable: true })
   if (finishReason === "length") {
-    throw new ProviderError(`${provider.name} response exceeded its output limit`, { retryable: false })
+    throw new OutputLimitError(`${provider.name} response exceeded its output limit`)
   }
   if (finishReason) {
     const error = provider.finishReasonError?.(finishReason)

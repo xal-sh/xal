@@ -1,6 +1,6 @@
 import { asNumber, asString, isJsonObject, isRecord, type JsonObject, type JsonValue } from "../lib/json"
 import { replayMatches, type ConversationTarget } from "./conversation"
-import { ProviderError } from "./errors"
+import { OutputLimitError, ProviderError } from "./errors"
 import { parseToolArgs, sseEvents, streamError } from "./transport"
 import type { ConversationItem, ProviderOutputItem, ProviderReplay, StreamEvent, Usage } from "./types"
 
@@ -11,6 +11,7 @@ export type WireSseEvent =
   | { type: "item_done"; item: JsonObject }
   | { type: "terminal"; usage?: Usage }
   | { type: "failure"; message: string; retryable: boolean }
+  | { type: "output_limit"; message: string }
 
 interface ResponseStreamOptions {
   providerId: string
@@ -54,6 +55,7 @@ export function parseSseEvent(raw: unknown): WireSseEvent | undefined {
       const response = isRecord(raw.response) ? raw.response : undefined
       const details = response && isRecord(response.incomplete_details) ? response.incomplete_details : undefined
       const reason = details ? asString(details.reason) : undefined
+      if (reason === "max_output_tokens") return { type: "output_limit", message: `response incomplete: ${reason}` }
       return failure(reason ? `response incomplete: ${reason}` : "response incomplete")
     }
     case "response.completed":
@@ -221,6 +223,8 @@ export async function* responseEvents(response: Response, options: ResponseStrea
           break
         case "failure":
           throw new ProviderError(event.message, { retryable: event.retryable })
+        case "output_limit":
+          throw new OutputLimitError(event.message)
       }
       if (terminal) break
     }

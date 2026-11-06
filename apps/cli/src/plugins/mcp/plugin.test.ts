@@ -21,6 +21,7 @@ function context(permissionRules: PermissionRules[], prompts: PromptSection[]): 
     registerTool() {},
     unregisterTool() {},
     registerToolSessionDisposer() {},
+    registerToolContextDisposer() {},
     registerProvider() {},
     registerCli() {},
     registerCommand() {},

@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test"
-import { mkdtemp, rm, writeFile } from "node:fs/promises"
+import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { LspServerDefinition } from "./config"
+import { editDiagnostics } from "./edit-diagnostics"
 import { LspManager } from "./manager"
 
 const roots: string[] = []
@@ -27,6 +28,7 @@ process.stdin.on("data", (chunk) => {
     const message = JSON.parse(buffer.subarray(end + 4, end + 4 + length).toString("utf8"))
     buffer = buffer.subarray(end + 4 + length)
     if (message.method === "initialize") send({ jsonrpc: "2.0", id: message.id, result: { capabilities: { textDocumentSync: 1, hoverProvider: true } } })
+    else if (message.method === "textDocument/didOpen" || message.method === "textDocument/didChange") send({ jsonrpc: "2.0", method: "textDocument/publishDiagnostics", params: { uri: message.params.textDocument.uri, version: message.params.textDocument.version, diagnostics: [{ range: { start: { line: 0, character: 0 }, end: { line: 0, character: 1 } }, severity: 1, message: "broken" }, { range: { start: { line: 0, character: 0 }, end: { line: 0, character: 1 } }, severity: 2, message: "unused" }] } })
     else if (message.method === "textDocument/hover") send({ jsonrpc: "2.0", id: message.id, result: { contents: "native hover" } })
     else if (message.method === "shutdown") send({ jsonrpc: "2.0", id: message.id, result: null })
     else if (message.method === "exit") process.exit(0)
@@ -87,5 +89,42 @@ describe("native LSP manager", () => {
     await expect(
       manager.query({ operation: "hover", filePath: "source.ts", line: 1, column: 1 }, root, controller.signal),
     ).rejects.toThrow("stop")
+  })
+
+  test("appends language-server errors to successful edits of served files", async () => {
+    const { root: created, definition } = await fixture()
+    const root = await realpath(created)
+    const manager = new LspManager([definition])
+    managers.push(manager)
+    const ctx = {
+      session: {
+        id: "session",
+        kind: "primary" as const,
+        cwd: root,
+        provider: "p",
+        profile: "p",
+        model: "m",
+        mode: "yolo",
+      },
+      signal: new AbortController().signal,
+    }
+    const input = {
+      callId: "call",
+      tool: "edit",
+      args: { file_path: "source.ts" },
+      title: "source.ts",
+      readOnly: false,
+      output: "Updated source.ts (+1 -1)",
+    }
+
+    expect(manager.servesFile("source.ts", root)).toBe(true)
+    expect(manager.servesFile("notes.md", root)).toBe(false)
+    expect(await editDiagnostics(manager, input, ctx)).toEqual({
+      type: "replace",
+      output: "Updated source.ts (+1 -1)\n\nLanguage server: Found 1 error\nsource.ts:1:1-1:2: error: broken",
+    })
+    expect(await editDiagnostics(manager, { ...input, args: { file_path: "notes.md" } }, ctx)).toBeUndefined()
+    expect(await editDiagnostics(manager, { ...input, output: "Tool failed: no match" }, ctx)).toBeUndefined()
+    expect(await editDiagnostics(manager, { ...input, tool: "read" }, ctx)).toBeUndefined()
   })
 })

@@ -1,7 +1,15 @@
 import { runTurnEndHooks, type HookReporter } from "../../hooks/registry"
 import type { HookContext } from "../../hooks/types"
 import type { JsonObject } from "../../lib/json"
-import type { Provider, StreamRequest, ThinkingEffort, ToolCallItem, UserInput } from "../../providers/types"
+import { OutputLimitError } from "../../providers/errors"
+import type {
+  Provider,
+  ProviderOutputItem,
+  StreamRequest,
+  ThinkingEffort,
+  ToolCallItem,
+  UserInput,
+} from "../../providers/types"
 import { TOOL_FAILED_PREFIX } from "../../tools/output"
 import type { ToolEvent } from "../../tools/types"
 import type { VerificationCheckStatus } from "../../verification/types"
@@ -19,6 +27,8 @@ export interface TurnHost {
   readonly hookReporter: HookReporter
   outputContract(): OutputContract | undefined
   verificationStatus(signal: AbortSignal): Promise<VerificationCheckStatus[] | undefined>
+  verificationBaseline(signal: AbortSignal): Promise<string | undefined>
+  verificationCorrection(baseline: string, signal: AbortSignal): Promise<string | undefined>
   queuedPromptNext(): boolean
   asyncResultsQueued(): boolean
   paused(): boolean
@@ -62,6 +72,8 @@ export async function runTurn(
   let usedTools = false
   let midWork = true
   let interjected = false
+  let outputLimited = false
+  let verificationBaseline = await host.verificationBaseline(signal)
   let resumedCalls = pendingCalls
 
   while (true) {
@@ -85,8 +97,22 @@ export async function runTurn(
       const request = await host.autoCompact(signal, provider, model, thinking)
       host.setState("streaming")
       const round = host.streamRound(usage)
-      const streamed = await streamProviderTurn(round, signal, provider, request)
+      let streamed: ProviderOutputItem[] | undefined
+      try {
+        streamed = await streamProviderTurn(round, signal, provider, request)
+      } catch (error) {
+        if (!(error instanceof OutputLimitError) || outputLimited) throw error
+        outputLimited = true
+        host.emit({ type: "error", message: `${error.message}; asking the model to continue in smaller steps.` })
+        host.pushItem({
+          type: "user_message",
+          text: "Your previous response stopped at the model output limit, so any tool call in it that was cut off did not run. Continue from where you stopped, splitting large writes or edits into several smaller tool calls.",
+          images: [],
+        })
+        continue
+      }
       if (!streamed) return
+      outputLimited = false
 
       items = streamed
       toolCalls = streamed.filter((item): item is ToolCallItem => item.type === "tool_call")
@@ -110,6 +136,14 @@ export async function runTurn(
         if (contract.exhausted) throw contract.failure()
         host.pushItem({ type: "user_message", text: correction, images: [] })
         continue
+      }
+      if (verificationBaseline !== undefined) {
+        const correction = await host.verificationCorrection(verificationBaseline, signal)
+        verificationBaseline = undefined
+        if (correction) {
+          host.pushItem({ type: "user_message", text: correction, images: [] })
+          continue
+        }
       }
       const final = items.findLast((item) => item.type === "assistant_message")
       await endTurn(host, usage, final?.type === "assistant_message" ? final.text : undefined, signal)

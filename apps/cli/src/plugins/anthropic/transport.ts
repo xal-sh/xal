@@ -1,5 +1,5 @@
 import { asString, isJsonObject, type JsonObject } from "../../lib/json"
-import { ProviderError } from "../../providers/errors"
+import { OutputLimitError, ProviderError } from "../../providers/errors"
 import { sseEvents, streamError } from "../../providers/transport"
 import type { ProviderOutputItem, StreamEvent, StreamRequest, ThinkingEffort, Usage } from "../../providers/types"
 import { anthropicFetch, PROVIDER_ID, PROVIDER_NAME } from "./api"
@@ -92,9 +92,7 @@ function stopReasonError(stopReason: string | undefined): ProviderError | undefi
     return new ProviderError(`${PROVIDER_NAME} ran out of context window`, { retryable: false })
   }
   if (stopReason === "max_tokens") {
-    return new ProviderError(`${PROVIDER_NAME} stopped at the model output limit before finishing`, {
-      retryable: false,
-    })
+    return new OutputLimitError(`${PROVIDER_NAME} stopped at the model output limit before finishing`)
   }
   return undefined
 }

@@ -33,11 +33,13 @@ export function evalReport(mode: string, runsPerCase: number, cases: CaseReport[
   }
 }
 
-function totals(report: EvalReport): { rounds: number; toolCalls: number } {
+function totals(report: EvalReport): { rounds: number; toolCalls: number; toolFailures: number; editFailures: number } {
   const runs = report.cases.flatMap((entry) => entry.runs)
   return {
     rounds: runs.reduce((total, run) => total + run.rounds, 0),
     toolCalls: runs.reduce((total, run) => total + run.toolCalls, 0),
+    toolFailures: runs.reduce((total, run) => total + run.toolFailures, 0),
+    editFailures: runs.reduce((total, run) => total + run.editFailures, 0),
   }
 }
 
@@ -62,6 +64,8 @@ export function compare(baseline: EvalReport, candidate: EvalReport): string[] {
     `pass rate ${(baseline.passRate * 100).toFixed(1)}% -> ${(candidate.passRate * 100).toFixed(1)}% (${verdict})`,
     `rounds ${before.rounds} -> ${after.rounds} (${percentChange(before.rounds, after.rounds)})`,
     `tool calls ${before.toolCalls} -> ${after.toolCalls} (${percentChange(before.toolCalls, after.toolCalls)})`,
+    `tool failures ${before.toolFailures} -> ${after.toolFailures} (${percentChange(before.toolFailures, after.toolFailures)})`,
+    `edit failures ${before.editFailures} -> ${after.editFailures} (${percentChange(before.editFailures, after.editFailures)})`,
     `uncached input tokens ${baseline.totalUncachedInputTokens} -> ${candidate.totalUncachedInputTokens} (${percentChange(baseline.totalUncachedInputTokens, candidate.totalUncachedInputTokens)})`,
   ]
 }
@@ -81,6 +85,8 @@ function parseRun(value: unknown, path: string): RunRecord {
   return {
     rounds: required(asNumber(value.rounds), `${path}.rounds`),
     toolCalls: required(asNumber(value.toolCalls), `${path}.toolCalls`),
+    toolFailures: required(asNumber(value.toolFailures), `${path}.toolFailures`),
+    editFailures: required(asNumber(value.editFailures), `${path}.editFailures`),
     uncachedInputTokens: required(asNumber(value.uncachedInputTokens), `${path}.uncachedInputTokens`),
     outputTokens: required(asNumber(value.outputTokens), `${path}.outputTokens`),
     durationMs: required(asNumber(value.durationMs), `${path}.durationMs`),

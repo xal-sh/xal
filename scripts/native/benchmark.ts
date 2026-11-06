@@ -286,7 +286,7 @@ async function nativeIoBenchmarks(): Promise<void> {
     const globStart = performance.now()
     const glob = await nativeGlob({ cwd: workspace, pattern: "*.txt" })
     const globMs = performance.now() - globStart
-    if (!glob.output.startsWith("Found 150 files\n") || !glob.output.includes("Showing first 100 of 150")) {
+    if (!glob.output.startsWith("Found 150 files\n") || !glob.output.includes("Showing 1-100 of 150")) {
       throw new Error("native glob benchmark output mismatch")
     }
 
