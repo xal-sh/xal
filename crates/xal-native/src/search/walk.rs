@@ -73,11 +73,40 @@ pub(super) fn display_path(path: &Path, cwd: &Path) -> String {
     )
 }
 
-pub(super) fn path_for_glob(path: &Path, cwd: &Path, root: &Path) -> String {
-    path.strip_prefix(cwd)
-        .or_else(|_| path.strip_prefix(root))
-        .unwrap_or(path)
-        .to_string_lossy()
+pub(super) struct GlobFilter {
+    matcher: GlobMatcher,
+    bases: Vec<PathBuf>,
+}
+
+impl GlobFilter {
+    pub(super) fn new(pattern: &str, cwd: &Path, root: &Path) -> Result<Self, NativeSearchResult> {
+        let matcher = compile_glob(pattern)?;
+        let bases = if Path::new(pattern).is_absolute() {
+            Vec::new()
+        } else if root.is_dir() {
+            vec![root.to_path_buf(), cwd.to_path_buf()]
+        } else {
+            vec![
+                root.parent().unwrap_or(root).to_path_buf(),
+                cwd.to_path_buf(),
+            ]
+        };
+        Ok(Self { matcher, bases })
+    }
+
+    pub(super) fn is_match(&self, path: &Path) -> bool {
+        if self.bases.is_empty() {
+            return self.matcher.is_match(slash_path(path));
+        }
+        self.bases.iter().any(|base| {
+            path.strip_prefix(base)
+                .is_ok_and(|relative| self.matcher.is_match(slash_path(relative)))
+        })
+    }
+}
+
+fn slash_path(path: &Path) -> String {
+    path.to_string_lossy()
         .replace(std::path::MAIN_SEPARATOR, "/")
 }
 

@@ -23,6 +23,7 @@ export interface NativeGrepOptions {
   outputMode?: string
   caseInsensitive?: boolean
   literal?: boolean
+  multiline?: boolean
   context?: number
   offset?: number
   aborted?: boolean

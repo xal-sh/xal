@@ -9,6 +9,7 @@ pub struct NativeGrepOptions {
     pub output_mode: Option<String>,
     pub case_insensitive: Option<bool>,
     pub literal: Option<bool>,
+    pub multiline: Option<bool>,
     pub context: Option<u32>,
     pub offset: Option<u32>,
     pub aborted: Option<bool>,
@@ -111,12 +112,15 @@ impl Sink for GrepSink<'_> {
                 block.push("--".to_owned());
             }
             block.extend(before);
-            block.push(format!(
-                "{}:{}:{}",
-                self.shown_path,
-                found.line_number().unwrap_or(0),
-                shown_line(found.bytes())
-            ));
+            let first = found.line_number().unwrap_or(0);
+            for (index, line) in (0_u64..).zip(found.lines()) {
+                block.push(format!(
+                    "{}:{}:{}",
+                    self.shown_path,
+                    first + index,
+                    shown_line(line)
+                ));
+            }
             self.result.lines.push(block.join("\n"));
         }
         self.broke = false;
@@ -188,20 +192,36 @@ impl Task for GrepTask {
             return Ok(request_error("context must be at most 10 lines"));
         }
         let offset = self.options.offset.unwrap_or(0);
+        let multiline = self.options.multiline.unwrap_or(false);
         let mut regex = RegexMatcherBuilder::new();
         regex.case_insensitive(self.options.case_insensitive.unwrap_or(false));
         regex.fixed_strings(self.options.literal.unwrap_or(false));
+        regex.multi_line(true);
+        if !multiline {
+            regex.line_terminator(Some(b'\n'));
+        }
         let matcher = match regex.build(pattern) {
             Ok(matcher) => matcher,
             Err(error) => {
+                let advice = if matches!(error.kind(), RegexErrorKind::NotAllowed(_)) {
+                    ". Set multiline to true to match across lines"
+                } else {
+                    ""
+                };
                 return Ok(search_error(
                     NativeToolOutcomeKind::InvalidRequest,
                     "ripgrep error",
-                    error,
+                    format!("{error}{advice}"),
                 ));
             }
         };
-        let glob = match self.options.glob.as_deref().map(compile_glob).transpose() {
+        let glob = match self
+            .options
+            .glob
+            .as_deref()
+            .map(|glob| GlobFilter::new(glob, &cwd, &root))
+            .transpose()
+        {
             Ok(glob) => glob,
             Err(error) => return Ok(error),
         };
@@ -225,6 +245,8 @@ impl Task for GrepTask {
             return Ok(search_result(NativeToolOutcomeKind::TimedOut));
         }
         let mut result = search_result(NativeToolOutcomeKind::Completed);
+        let walked = !files.is_empty();
+        let mut searched = false;
         for path in files {
             if self.cancelled.load(Ordering::Relaxed) {
                 result.kind = NativeToolOutcomeKind::Interrupted;
@@ -238,12 +260,10 @@ impl Task for GrepTask {
                 result.lines.clear();
                 return Ok(result);
             }
-            if glob
-                .as_ref()
-                .is_some_and(|glob| !glob.is_match(path_for_glob(&path, &cwd, &root)))
-            {
+            if glob.as_ref().is_some_and(|glob| !glob.is_match(&path)) {
                 continue;
             }
+            searched = true;
             let bytes = match read_search_file(&path, &self.cancelled, deadline) {
                 Ok(SearchFile::Bytes(bytes)) => bytes,
                 Ok(SearchFile::Binary) => continue,
@@ -266,6 +286,7 @@ impl Task for GrepTask {
                 .line_number(true)
                 .before_context(if content { context } else { 0 })
                 .after_context(if content { context } else { 0 })
+                .multi_line(multiline)
                 .binary_detection(BinaryDetection::quit(0))
                 .build();
             let mut sink = GrepSink {
@@ -322,7 +343,16 @@ impl Task for GrepTask {
                 }
             }
         }
-        Ok(complete_grep(result, content, offset))
+        if walked
+            && !searched
+            && let Some(glob) = self.options.glob.as_deref()
+        {
+            result.output = Some(format!(
+                "No files match glob {glob}, so nothing was searched. Globs match paths relative to the search path or the working directory."
+            ));
+            return Ok(result);
+        }
+        Ok(complete_grep(result, content, multiline, offset))
     }
 
     fn resolve(&mut self, _env: Env, output: Self::Output) -> napi::Result<Self::JsValue> {

@@ -11,7 +11,7 @@ use std::sync::{
 use std::time::{Duration, Instant, SystemTime};
 
 use globset::{Glob, GlobMatcher};
-use grep_regex::RegexMatcherBuilder;
+use grep_regex::{ErrorKind as RegexErrorKind, RegexMatcherBuilder};
 use grep_searcher::{
     BinaryDetection, Searcher, SearcherBuilder, Sink, SinkContext, SinkContextKind, SinkMatch,
 };
@@ -37,7 +37,7 @@ mod grep;
 mod walk;
 
 pub(crate) use walk::walk_files;
-use walk::{absolute_target, display_path, path_for_glob};
+use walk::{GlobFilter, absolute_target, display_path};
 
 #[napi(object)]
 pub struct NativeSearchResult {
@@ -144,11 +144,18 @@ fn page_footer(offset: u32, shown: usize, total: u32, advice: &str) -> String {
     )
 }
 
-fn complete_grep(mut result: NativeSearchResult, content: bool, offset: u32) -> NativeSearchResult {
+fn complete_grep(
+    mut result: NativeSearchResult,
+    content: bool,
+    multiline: bool,
+    offset: u32,
+) -> NativeSearchResult {
     result.output = Some(if result.total == 0 {
         "No matches found".to_owned()
     } else {
-        let header = if content {
+        let header = if multiline && content {
+            format!("Found {} matches", result.total)
+        } else if content {
             format!("Found {} matching lines", result.total)
         } else {
             format!("Found {} files", result.total)

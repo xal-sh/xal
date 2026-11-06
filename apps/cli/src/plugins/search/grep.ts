@@ -22,7 +22,8 @@ export const grepTool: Tool = {
       },
       glob: {
         type: "string",
-        description: "Only search files matching this glob, e.g. *.ts or src/**",
+        description:
+          "Only search files matching this glob, relative to path or the working directory, e.g. *.ts or src/**",
       },
       output_mode: {
         type: "string",
@@ -37,6 +38,11 @@ export const grepTool: Tool = {
       literal: {
         type: "boolean",
         description: "True matches pattern as literal text, so characters such as ( . [ need no escaping",
+      },
+      multiline: {
+        type: "boolean",
+        description:
+          "True lets a match span lines, e.g. foo\\n\\s*bar; add (?s) to make . match newlines. Without it, a pattern containing a newline fails",
       },
       context: {
         type: "number",
@@ -70,6 +76,7 @@ export const grepTool: Tool = {
     const outputMode = asString(args.output_mode)
     const caseInsensitive = asBoolean(args.case_insensitive)
     const literal = asBoolean(args.literal)
+    const multiline = asBoolean(args.multiline)
     const context = countArgument(args.context, "context")
     const offset = countArgument(args.offset, "offset")
     return nativeGrep(
@@ -82,6 +89,7 @@ export const grepTool: Tool = {
         ...(outputMode === undefined ? {} : { outputMode }),
         ...(caseInsensitive === undefined ? {} : { caseInsensitive }),
         ...(literal === undefined ? {} : { literal }),
+        ...(multiline === undefined ? {} : { multiline }),
         ...(context === undefined ? {} : { context }),
         ...(offset === undefined ? {} : { offset }),
       },
