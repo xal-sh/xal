@@ -1,5 +1,6 @@
 import { registerBasePrompt } from "./agent/prompt/base"
 import { registerBehaviorPrompt } from "./agent/prompt/behavior"
+import { registerWorkspacePrompt } from "./agent/prompt/workspace"
 import { registerAgentClis } from "./agent/cli"
 import { registerAgentCommands } from "./agent/commands"
 import { registerTaskAgents } from "./agent/task/tool"
@@ -21,6 +22,7 @@ import { isPermissionMode, permissionModes } from "./permissions/modes"
 import { registerPermissions } from "./permissions/register"
 import { registerPlans } from "./plans/register"
 import { bootstrapPlugins, registerBootstrapStep, registerPlugins, shutdownPlugins } from "./plugins/discover"
+import type { PluginStatus } from "./events"
 import { prepareProjectMcp } from "./plugins/mcp/project"
 import { startProfiler, stopProfiler } from "./profiler/profiler"
 import { registerProviderClis } from "./providers/cli"
@@ -59,7 +61,7 @@ const ctx: CliContext = {
   },
 }
 
-export function registerCore(settings: Settings): void {
+function registerCore(settings: Settings): void {
   registerBasePrompt()
   registerBehaviorPrompt()
   registerPermissions(settings)
@@ -85,6 +87,13 @@ export function registerCore(settings: Settings): void {
   registerTrustClis()
 }
 
+export async function registerApp(settings: Settings): Promise<PluginStatus> {
+  registerCore(settings)
+  const plugins = await registerPlugins(settings)
+  registerWorkspacePrompt()
+  return plugins
+}
+
 async function initializeApp(args: string[], profile: boolean) {
   startProfiler(profile)
   const trusted = await ensureWorkspaceTrust({
@@ -100,8 +109,7 @@ async function initializeApp(args: string[], profile: boolean) {
     choose: args.length === 0 && process.stdin.isTTY && process.stdout.isTTY ? chooseOption : undefined,
   })
   await loadCredentialSecrets()
-  registerCore(settings)
-  const plugins = await registerPlugins(settings)
+  const plugins = await registerApp(settings)
   return { settings, plugins }
 }
 

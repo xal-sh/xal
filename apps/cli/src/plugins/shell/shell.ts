@@ -27,22 +27,30 @@ function shellProblem(path: string, label: string): string | undefined {
   return undefined
 }
 
-export function selectShell(): ShellSelection {
-  if (selected) return selected
+function configuredShell(): ShellSelection {
   const configured = process.env.SHELL?.trim()
-  if (!configured) {
-    selected = { executable: "/bin/sh", label: "sh" }
-    return selected
-  }
+  if (!configured) return { executable: "/bin/sh", label: "sh" }
   const label = basename(configured)
   const problem = shellProblem(configured, label)
-  selected = problem
-    ? {
-        executable: "/bin/sh",
-        label: "sh",
-        diagnostic: `$SHELL ${JSON.stringify(configured)} ${problem}; using /bin/sh (supported shells: sh, bash, dash, ksh, mksh, zsh)`,
-      }
-    : { executable: configured, label }
+  if (!problem) return { executable: configured, label }
+  return {
+    executable: "/bin/sh",
+    label: "sh",
+    diagnostic: `$SHELL ${JSON.stringify(configured)} ${problem}; using /bin/sh (supported shells: sh, bash, dash, ksh, mksh, zsh)`,
+  }
+}
+
+function pathBash(): ShellSelection | undefined {
+  if (process.platform === "win32") return undefined
+  const executable = Bun.which("bash")
+  if (!executable || shellProblem(executable, "bash")) return undefined
+  return { executable, label: "bash" }
+}
+
+export function selectShell(): ShellSelection {
+  if (selected) return selected
+  const configured = configuredShell()
+  selected = configured.label === "bash" ? configured : (pathBash() ?? configured)
   return selected
 }
 

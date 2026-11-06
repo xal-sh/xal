@@ -39,6 +39,7 @@ export function registerBehaviorPrompt(): void {
         : [
             "Verify with the narrowest check that covers the change, then widen only once it passes.",
             "Do not add a test framework to a project that has none, and do not chase failures your change did not cause.",
+            "If a fix fails twice, stop trying variations: reread the failure and the code involved to find the cause, or ask the user.",
             "If a check cannot be run, say so and say what remains unverified.",
           ].join("\n"),
   })

@@ -6,12 +6,12 @@ import { AgentSession } from "../apps/cli/src/agent/session/session"
 import { effectiveAutoCompactTokenLimit } from "../apps/cli/src/agent/session/context-budget"
 import { runAgentTurn } from "../apps/cli/src/agent/run"
 import type { SessionKind } from "../apps/cli/src/agent/types"
-import { registerCore } from "../apps/cli/src/app"
+import { registerApp } from "../apps/cli/src/app"
 import { findProfile, loadCredentialSecrets } from "../apps/cli/src/config/credentials"
 import { loadSettings } from "../apps/cli/src/config/settings"
 import { resolveThinking } from "../apps/cli/src/config/thinking"
 import { isRecord } from "../apps/cli/src/lib/json"
-import { bootstrapPlugins, registerPlugins, shutdownPlugins } from "../apps/cli/src/plugins/discover"
+import { bootstrapPlugins, shutdownPlugins } from "../apps/cli/src/plugins/discover"
 import { startProfiler, stopProfiler } from "../apps/cli/src/profiler/profiler"
 import { clearModelCatalog, findModel } from "../apps/cli/src/providers/catalog"
 import { estimateConversationItemTokens, estimateRequestTokens } from "../apps/cli/src/providers/request-size"
@@ -837,8 +837,7 @@ export async function captureLive(options: LiveCaptureOptions): Promise<void> {
   if (scenarios.length === 0) throw new Error(`suite ${options.suite} has no scenarios`)
   const settings = await loadSettings()
   await loadCredentialSecrets()
-  registerCore(settings)
-  const plugins = await registerPlugins(settings)
+  const plugins = await registerApp(settings)
   if (plugins.failures.length > 0) throw new Error("plugin registration failed during live benchmark")
   const bootstrapped = await bootstrapPlugins()
   if (bootstrapped.failures.length > 0) throw new Error("plugin bootstrap failed during live benchmark")

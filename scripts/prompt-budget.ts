@@ -1,8 +1,7 @@
-import { registerCore } from "../apps/cli/src/app"
+import { registerApp } from "../apps/cli/src/app"
 import { appInfo } from "../apps/cli/src/app-info"
 import { composeSystemPrompt } from "../apps/cli/src/agent/prompt/registry"
 import { loadSettings } from "../apps/cli/src/config/settings"
-import { registerPlugins } from "../apps/cli/src/plugins/discover"
 import { listTools } from "../apps/cli/src/tools/registry"
 import type { RegisteredTool } from "../apps/cli/src/tools/types"
 import type { SessionKind } from "../apps/cli/src/agent/types"
@@ -37,8 +36,7 @@ function toolSize(tool: RegisteredTool): number {
 async function main(args: string[]): Promise<void> {
   const options = parseArgs(args)
   const settings = await loadSettings()
-  registerCore(settings)
-  const plugins = await registerPlugins(settings)
+  const plugins = await registerApp(settings)
   if (plugins.failures.length > 0) {
     throw new Error(
       `plugin registration failed: ${plugins.failures.map((failure) => `${failure.plugin} (${failure.reason})`).join(", ")}`,

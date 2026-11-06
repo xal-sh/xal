@@ -1,0 +1,1 @@
+Orders need an optional percentage discount. `createOrder(items, discount)` should accept it with a default of 0, `total` should apply it, and the receipt should show a `Discount: 10%` line right before the total line, only when there is a discount.

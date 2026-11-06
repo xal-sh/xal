@@ -18,6 +18,10 @@ Nested `AGENTS.md` files below the working directory, or in other branches of th
 }
 ```
 
+## Workspace context
+
+Before a session's first turn, Xal adds the local date and a Git snapshot to the end of the model prompt: the branch, up to 20 changed or untracked paths in `git status --short` notation with a count of the rest, and the last five commit subjects. Untracked directories appear as one entry, as in `git status`. Outside a Git repository only the date is added, and if Git cannot run, the prompt says why. The snapshot is taken once per session workspace and labeled as taken at session start, so it does not change the system prompt or invalidate the provider prompt cache while the agent edits files. Entering or leaving a worktree takes a new snapshot on the next turn.
+
 ## Prompt commands
 
 Xal discovers reusable Markdown prompt commands from two directories:

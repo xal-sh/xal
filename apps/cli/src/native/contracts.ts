@@ -21,6 +21,7 @@ export interface NativeGrepOptions {
   pattern?: string
   outputMode?: string
   caseInsensitive?: boolean
+  literal?: boolean
   context?: number
   offset?: number
   aborted?: boolean
