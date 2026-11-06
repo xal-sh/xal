@@ -103,6 +103,65 @@ test("edit replaces every requested occurrence and reports accurate line counts"
   })
 })
 
+test("edit applies several replacements against the original file or none at all", async () => {
+  await withWorkspace(async (workspace) => {
+    const path = join(workspace, "multi.txt")
+    await writeFile(path, "alpha\nbeta\ngamma\n")
+    const ctx = context(workspace)
+
+    await expect(
+      editTool.execute(
+        {
+          file_path: "multi.txt",
+          edits: [
+            { old_string: "alpha", new_string: "one" },
+            { old_string: "missing", new_string: "two" },
+          ],
+        },
+        ctx,
+      ),
+    ).rejects.toThrow("edits[1]: old_string not found in multi.txt.")
+    await expect(
+      editTool.execute(
+        {
+          file_path: "multi.txt",
+          edits: [
+            { old_string: "alpha\nbeta", new_string: "one" },
+            { old_string: "beta\ngamma", new_string: "two" },
+          ],
+        },
+        ctx,
+      ),
+    ).rejects.toThrow("edits[0] and edits[1] replace overlapping text in multi.txt. Merge them into one edit.")
+    await expect(
+      editTool.execute(
+        {
+          file_path: "multi.txt",
+          old_string: "alpha",
+          new_string: "one",
+          edits: [{ old_string: "beta", new_string: "two" }],
+        },
+        ctx,
+      ),
+    ).rejects.toThrow("Pass either old_string and new_string, or edits, not both")
+    expect(await readFile(path, "utf8")).toBe("alpha\nbeta\ngamma\n")
+
+    const result = await editTool.execute(
+      {
+        file_path: "multi.txt",
+        edits: [
+          { old_string: "gamma", new_string: "three" },
+          { old_string: "alpha", new_string: "beta" },
+          { old_string: "beta\n", new_string: "two\n" },
+        ],
+      },
+      ctx,
+    )
+    expect(await readFile(path, "utf8")).toBe("beta\ntwo\nthree\n")
+    expect(result.output).toStartWith("Updated multi.txt (+2 -2)")
+  })
+})
+
 test("edit reports missing paths and exact no-match failures without mutation", async () => {
   await withWorkspace(async (workspace) => {
     await expect(
@@ -170,9 +229,7 @@ test("edit rejects empty matches and invalid UTF-8 without modifying the file", 
       nativeEditFile({
         path: join(workspace, "missing.txt"),
         displayPath: "missing.txt",
-        oldString: "",
-        newString: "new",
-        replaceAll: false,
+        edits: [{ oldString: "", newString: "new", replaceAll: false }],
       }),
     ).rejects.toThrow("old_string is required and must be non-empty")
     const path = join(workspace, "invalid-utf8.txt")

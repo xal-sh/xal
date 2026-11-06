@@ -205,6 +205,9 @@ impl Task for GrepTask {
             Ok(glob) => glob,
             Err(error) => return Ok(error),
         };
+        if let Some(missing) = missing_target(&root, &cwd) {
+            return Ok(missing);
+        }
         let files = match walk_files(&root, &self.cancelled, Some(deadline)) {
             Ok(files) => files,
             Err(error) => {

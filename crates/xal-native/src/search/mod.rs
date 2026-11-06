@@ -20,6 +20,7 @@ use napi::bindgen_prelude::{AbortSignal, AsyncTask};
 use napi::{Env, Error, Status, Task};
 use napi_derive::napi;
 
+use crate::file_tools::missing_path_message;
 use crate::tool_contracts::{
     NativeToolError, NativeToolOutcomeKind, cancellation_flag, first_line_message, normalize_path,
 };
@@ -66,6 +67,15 @@ fn request_error(message: &str) -> NativeSearchResult {
         error: Some(NativeToolError {
             message: message.to_owned(),
         }),
+    }
+}
+
+fn missing_target(root: &Path, cwd: &Path) -> Option<NativeSearchResult> {
+    match fs::metadata(root) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Some(request_error(
+            &missing_path_message("Path", root, &display_path(root, cwd)),
+        )),
+        _ => None,
     }
 }
 
