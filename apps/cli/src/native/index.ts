@@ -53,6 +53,7 @@ import { hostNativeTarget } from "./targets"
 
 export type {
   NativeDiff,
+  NativeEditOperation,
   NativeEditRequest,
   NativeFuzzyCandidate,
   NativeFuzzyField,

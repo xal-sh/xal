@@ -50,12 +50,16 @@ export interface NativeReadRequest {
   limit?: number
 }
 
-export interface NativeEditRequest {
-  path?: string
-  displayPath: string
+export interface NativeEditOperation {
   oldString?: string
   newString?: string
   replaceAll?: boolean
+}
+
+export interface NativeEditRequest {
+  path?: string
+  displayPath: string
+  edits: NativeEditOperation[]
   expected?: string
 }
 

@@ -10,7 +10,7 @@ Every call is checked against the tool's declared parameters before permission r
 | ------- | ------------------------------------------------------------------------ | ------------------- |
 | `read`  | Read a text file with line numbers, or list a directory's entries.       | Always              |
 | `write` | Replace a file entirely, or create it along with missing parent folders. | Writable modes only |
-| `edit`  | Replace an exact string in an existing file.                             | Writable modes only |
+| `edit`  | Replace exact text in an existing file, once or several times per call.  | Writable modes only |
 
 `write` and `edit` are withheld in read-only modes such as `plan`, because every call would be refused before it ran. `bash` stays available there, since whether a command mutates anything depends on its arguments.
 
@@ -32,6 +32,10 @@ When `old_string` does not occur in the file, the failure points at the closest 
 
 When `old_string` occurs more than once and `replace_all` is not set, the failure lists the lines where the matches start, up to 10 lines, so the model can widen `old_string` around the intended one without reading the file again.
 
+### Several replacements in one call
+
+`edit` takes either `old_string` and `new_string` for one replacement, or `edits`, a list of `old_string`, `new_string`, and optional `replace_all` entries, for several replacements in the same file. Passing both forms fails the call. Every `old_string` is matched against the file as it was before the call, not against the result of earlier entries, so the line numbers in failure hints refer to the file the model read. Entries whose matched text overlaps fail the call with the indexes of both entries. With two or more entries, a failure that comes from one entry, such as text that is not found or matches more than once, names it as `edits[n]`, counting from 0. The file is written only when every entry applies, so a failed call leaves it unchanged, and the result shows a single diff of all the replacements. Any entry with `replace_all` brings in the same read-and-unchanged check as a single `replace_all` edit.
+
 ## Search and inspection
 
 | Tool       | Purpose                                              | Availability                |
@@ -44,7 +48,7 @@ When `old_string` occurs more than once and `replace_all` is not set, the failur
 | `skill`    | Load the full instructions for a catalogued skill.   | Always                      |
 | `memory`   | Read or replace user-global memory.                  | Primary sessions            |
 
-`grep` returns at most 250 results and `glob` at most 100. Both accept `offset` to skip leading results, and the footer of a truncated result names the offset that continues it. `grep` treats `pattern` as a Rust regular expression unless `literal` is true, which matches the text literally so characters such as `(`, `.`, and `[` need no escaping. In content mode, `grep` also accepts `context` to show up to 10 lines before and after each match. Context lines are written `path-line-text` instead of `path:line:text`, `--` separates groups that are not adjacent, and only matches count toward the limit and the offset.
+`grep` returns at most 250 results and `glob` at most 100. Both accept `offset` to skip leading results, and the footer of a truncated result names the offset that continues it. When `path` does not exist, both fail with `Path not found` and the same similar-name suggestions as `read`. `grep` treats `pattern` as a Rust regular expression unless `literal` is true, which matches the text literally so characters such as `(`, `.`, and `[` need no escaping. In content mode, `grep` also accepts `context` to show up to 10 lines before and after each match. Context lines are written `path-line-text` instead of `path:line:text`, `--` separates groups that are not adjacent, and only matches count toward the limit and the offset.
 
 `bash` runs commands with Bash so that common idioms such as unmatched globs and word splitting behave as models expect. It uses `$SHELL` when that names Bash, otherwise the first `bash` on `PATH`. When Bash is not installed, and on Windows, it uses `$SHELL`, falling back to `/bin/sh` when `$SHELL` is unset or not a supported shell. Interactive startup files are not loaded, and the system prompt names the shell in use.
 

@@ -7,14 +7,32 @@ const MAX_HINT_LINE_CHARS: usize = 300;
 const MAX_MATCH_LINES: usize = 10;
 
 #[napi(object)]
-pub struct NativeEditRequest {
-    pub path: Option<String>,
-    pub display_path: String,
+pub struct NativeEditOperation {
     pub old_string: Option<Utf16String>,
     pub new_string: Option<Utf16String>,
     pub replace_all: Option<bool>,
+}
+
+#[napi(object)]
+pub struct NativeEditRequest {
+    pub path: Option<String>,
+    pub display_path: String,
+    pub edits: Vec<NativeEditOperation>,
     pub expected: Option<String>,
 }
+
+struct Replacement {
+    old: Vec<u16>,
+    new: Vec<u16>,
+    replace_all: bool,
+}
+
+struct Span {
+    start: usize,
+    end: usize,
+    edit: usize,
+}
+
 fn match_positions(haystack: &[u16], needle: &[u16]) -> Vec<usize> {
     if needle.is_empty() {
         return Vec::new();
@@ -35,23 +53,36 @@ fn match_positions(haystack: &[u16], needle: &[u16]) -> Vec<usize> {
     positions
 }
 
-fn replace_matches(
-    previous: &[u16],
-    old: &[u16],
-    new: &[u16],
-    positions: &[usize],
-    replace_all: bool,
-) -> Vec<u16> {
-    let count = if replace_all { positions.len() } else { 1 };
+fn apply_spans(previous: &[u16], spans: &[Span], replacements: &[Vec<u16>]) -> Vec<u16> {
     let mut next = Vec::with_capacity(previous.len());
     let mut cursor = 0;
-    for position in positions.iter().take(count).copied() {
-        next.extend_from_slice(&previous[cursor..position]);
-        next.extend_from_slice(new);
-        cursor = position + old.len();
+    for span in spans {
+        next.extend_from_slice(&previous[cursor..span.start]);
+        next.extend_from_slice(&replacements[span.edit]);
+        cursor = span.end;
     }
     next.extend_from_slice(&previous[cursor..]);
     next
+}
+
+fn overlapping_edits(spans: &[Span]) -> Option<(usize, usize)> {
+    spans
+        .windows(2)
+        .find(|pair| pair[0].end > pair[1].start)
+        .map(|pair| {
+            (
+                pair[0].edit.min(pair[1].edit),
+                pair[0].edit.max(pair[1].edit),
+            )
+        })
+}
+
+fn edit_label(index: usize, count: usize) -> String {
+    if count == 1 {
+        String::new()
+    } else {
+        format!("edits[{index}]: ")
+    }
 }
 
 fn has_crlf(units: &[u16]) -> bool {
@@ -258,9 +289,7 @@ fn match_lines(text: &[u16], positions: &[usize]) -> String {
 pub struct EditTask {
     path: PathBuf,
     display_path: String,
-    old: Vec<u16>,
-    new: Vec<u16>,
-    replace_all: bool,
+    edits: Vec<Replacement>,
     expected: Option<String>,
 }
 
@@ -277,7 +306,7 @@ impl Task for EditTask {
                 self.display_path
             )));
         }
-        if self.replace_all && self.expected.is_none() {
+        if self.edits.iter().any(|edit| edit.replace_all) && self.expected.is_none() {
             return Err(failed(format!(
                 "{} has not been read in this session. Read it before replacing every occurrence.",
                 self.display_path
@@ -299,28 +328,47 @@ impl Task for EditTask {
             )));
         }
         let previous = previous_text.encode_utf16().collect::<Vec<_>>();
-        let (old, new, positions) = resolve_match(&previous, &self.old, &self.new);
-        let matches = checked_count(positions.len(), "edit match")?;
-        if positions.is_empty() {
-            let message = format!(
-                "old_string not found in {}. It must match the file text exactly, including whitespace and indentation.",
-                self.display_path
-            );
-            return Err(failed(
-                match closest_match(&previous_text, &utf16_lossy(&old)) {
-                    Some(hint) => format!("{message} {hint}"),
-                    None => message,
-                },
-            ));
+        let mut spans = Vec::new();
+        let mut replacements = Vec::with_capacity(self.edits.len());
+        for (index, edit) in self.edits.iter().enumerate() {
+            let label = edit_label(index, self.edits.len());
+            let (old, new, positions) = resolve_match(&previous, &edit.old, &edit.new);
+            let matches = checked_count(positions.len(), "edit match")?;
+            if positions.is_empty() {
+                let message = format!(
+                    "{label}old_string not found in {}. It must match the file text exactly, including whitespace and indentation.",
+                    self.display_path
+                );
+                return Err(failed(
+                    match closest_match(&previous_text, &utf16_lossy(&old)) {
+                        Some(hint) => format!("{message} {hint}"),
+                        None => message,
+                    },
+                ));
+            }
+            if positions.len() > 1 && !edit.replace_all {
+                return Err(failed(format!(
+                    "{label}old_string matches {matches} locations in {}, starting at lines {}. Add surrounding lines to make it unique, or set replace_all to true.",
+                    self.display_path,
+                    match_lines(&previous, &positions)
+                )));
+            }
+            let count = if edit.replace_all { positions.len() } else { 1 };
+            spans.extend(positions.into_iter().take(count).map(|start| Span {
+                start,
+                end: start + old.len(),
+                edit: index,
+            }));
+            replacements.push(new);
         }
-        if positions.len() > 1 && !self.replace_all {
+        spans.sort_by_key(|span| span.start);
+        if let Some((first, second)) = overlapping_edits(&spans) {
             return Err(failed(format!(
-                "old_string matches {matches} locations in {}, starting at lines {}. Add surrounding lines to make it unique, or set replace_all to true.",
-                self.display_path,
-                match_lines(&previous, &positions)
+                "edits[{first}] and edits[{second}] replace overlapping text in {}. Merge them into one edit.",
+                self.display_path
             )));
         }
-        let next = replace_matches(&previous, &old, &new, &positions, self.replace_all);
+        let next = apply_spans(&previous, &spans, &replacements);
         let diff = unified_diff(&previous, &next);
         let bytes = utf16_lossy(&next);
         fs::write(&self.path, bytes.as_bytes()).map_err(io_error)?;
@@ -344,26 +392,45 @@ impl Task for EditTask {
 
 #[napi(js_name = "nativeEditFile", catch_unwind)]
 pub fn native_edit_file(request: NativeEditRequest) -> napi::Result<AsyncTask<EditTask>> {
-    let old = request
-        .old_string
-        .ok_or_else(|| invalid("old_string is required and must be non-empty"))?;
-    if old.is_empty() {
-        return Err(invalid("old_string is required and must be non-empty"));
+    if request.edits.is_empty() {
+        return Err(invalid("edits must contain at least one replacement"));
     }
-    let new = request
-        .new_string
-        .ok_or_else(|| invalid("new_string is required"))?;
-    if old.to_vec() == new.to_vec() {
-        return Err(invalid(
-            "old_string and new_string are identical; nothing to change",
-        ));
-    }
+    let count = request.edits.len();
+    let edits = request
+        .edits
+        .into_iter()
+        .enumerate()
+        .map(|(index, edit)| {
+            let label = edit_label(index, count);
+            let old = edit
+                .old_string
+                .map(|old| old.to_vec())
+                .filter(|old| !old.is_empty())
+                .ok_or_else(|| {
+                    invalid(format!(
+                        "{label}old_string is required and must be non-empty"
+                    ))
+                })?;
+            let new = edit
+                .new_string
+                .ok_or_else(|| invalid(format!("{label}new_string is required")))?
+                .to_vec();
+            if old == new {
+                return Err(invalid(format!(
+                    "{label}old_string and new_string are identical; nothing to change"
+                )));
+            }
+            Ok(Replacement {
+                old,
+                new,
+                replace_all: edit.replace_all.unwrap_or(false),
+            })
+        })
+        .collect::<napi::Result<Vec<_>>>()?;
     Ok(AsyncTask::new(EditTask {
         path: required_path(request.path)?,
         display_path: request.display_path,
-        old: old.to_vec(),
-        new: new.to_vec(),
-        replace_all: request.replace_all.unwrap_or(false),
+        edits,
         expected: request.expected,
     }))
 }
@@ -371,9 +438,13 @@ pub fn native_edit_file(request: NativeEditRequest) -> napi::Result<AsyncTask<Ed
 #[cfg(test)]
 mod tests {
     use super::{
-        align_newlines, closest_match, match_lines, match_positions, read_line_prefix_len,
-        replace_matches, resolve_match, strip_read_prefixes, units,
+        Span, align_newlines, apply_spans, closest_match, match_lines, match_positions,
+        overlapping_edits, read_line_prefix_len, resolve_match, strip_read_prefixes, units,
     };
+
+    fn span(start: usize, end: usize, edit: usize) -> Span {
+        Span { start, end, edit }
+    }
 
     #[test]
     fn points_at_the_closest_text_when_old_string_is_missing() {
@@ -402,11 +473,22 @@ mod tests {
         let old = units("same");
         let positions = match_positions(&previous, &old);
         assert_eq!(positions, vec![0, 5, 10]);
-        assert_eq!(
-            replace_matches(&previous, &old, &units("next"), &positions, true),
-            units("next next next")
-        );
         assert!(match_positions(&previous, &[]).is_empty());
+    }
+
+    #[test]
+    fn applies_sorted_spans_and_reports_overlapping_edits() {
+        let previous = units("alpha beta gamma");
+        let spans = vec![span(0, 5, 1), span(11, 16, 0)];
+        assert_eq!(
+            apply_spans(&previous, &spans, &[units("three"), units("one")]),
+            units("one beta three")
+        );
+        assert_eq!(overlapping_edits(&spans), None);
+        let touching = vec![span(0, 5, 0), span(5, 6, 1)];
+        assert_eq!(overlapping_edits(&touching), None);
+        let overlapping = vec![span(0, 10, 2), span(6, 10, 1)];
+        assert_eq!(overlapping_edits(&overlapping), Some((1, 2)));
     }
 
     #[test]

@@ -303,9 +303,7 @@ async function nativeIoBenchmarks(): Promise<void> {
     const edit = await nativeEditFile({
       path: largePath,
       displayPath: largePath,
-      oldString: "unique-edit-target",
-      newString: "updated-edit-target",
-      replaceAll: false,
+      edits: [{ oldString: "unique-edit-target", newString: "updated-edit-target", replaceAll: false }],
     })
     const editMs = performance.now() - editStart
     if (

@@ -71,6 +71,19 @@ test("grep handles explicit targets, invalid expressions, literal text, binary f
   })
 })
 
+test("grep and glob name a missing search path and similarly named siblings", async () => {
+  await withWorkspace(async (workspace) => {
+    await mkdir(join(workspace, "src", "tests"), { recursive: true })
+
+    await expect(grepTool.execute({ pattern: "needle", path: "src/Tests.d" }, context(workspace))).rejects.toThrow(
+      "Path not found: src/Tests.d. Similarly named files in the same directory: src/tests",
+    )
+    await expect(globTool.execute({ pattern: "*.ts", path: "gone/src" }, context(workspace))).rejects.toThrow(
+      "Path not found: gone/src. Its directory does not exist either.",
+    )
+  })
+})
+
 test("grep counts every match while retaining only the first 250 lines", async () => {
   await withWorkspace(async (workspace) => {
     const content = Array.from({ length: 260 }, (_, index) => `needle ${index}`).join("\n")

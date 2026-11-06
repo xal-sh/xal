@@ -104,17 +104,17 @@ fn sibling_display(display_path: &str, name: &str) -> String {
     }
 }
 
-fn missing_file(path: &Path, display_path: &str) -> Error {
-    let message = format!("File not found: {display_path}");
+pub(crate) fn missing_path_message(kind: &str, path: &Path, display_path: &str) -> String {
+    let message = format!("{kind} not found: {display_path}");
     let (Some(parent), Some(name)) = (path.parent(), path.file_name()) else {
-        return failed(message);
+        return message;
     };
     let entries = match fs::read_dir(parent) {
         Ok(entries) => entries,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return failed(format!("{message}. Its directory does not exist either."));
+            return format!("{message}. Its directory does not exist either.");
         }
-        Err(_) => return failed(message),
+        Err(_) => return message,
     };
     let name = name.to_string_lossy();
     let stem = name_stem(&name);
@@ -124,7 +124,7 @@ fn missing_file(path: &Path, display_path: &str) -> Error {
         .filter(|candidate| *candidate != name && name_stem(candidate) == stem)
         .collect::<Vec<_>>();
     if similar.is_empty() {
-        return failed(message);
+        return message;
     }
     similar.sort();
     similar.truncate(MAX_SUGGESTIONS);
@@ -133,9 +133,11 @@ fn missing_file(path: &Path, display_path: &str) -> Error {
         .map(|candidate| sibling_display(display_path, candidate))
         .collect::<Vec<_>>()
         .join(", ");
-    failed(format!(
-        "{message}. Similarly named files in the same directory: {listed}"
-    ))
+    format!("{message}. Similarly named files in the same directory: {listed}")
+}
+
+fn missing_file(path: &Path, display_path: &str) -> Error {
+    failed(missing_path_message("File", path, display_path))
 }
 
 fn required_path(path: Option<String>) -> napi::Result<PathBuf> {
