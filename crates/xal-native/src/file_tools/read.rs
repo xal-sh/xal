@@ -14,18 +14,60 @@ pub struct ReadTask {
     limit: usize,
 }
 
+impl ReadTask {
+    fn list_directory(&self) -> napi::Result<NativeReadOutput> {
+        let mut entries = Vec::new();
+        for entry in fs::read_dir(&self.path).map_err(io_error)? {
+            let entry = entry.map_err(io_error)?;
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let directory = fs::metadata(entry.path()).is_ok_and(|metadata| metadata.is_dir());
+            entries.push(if directory { format!("{name}/") } else { name });
+        }
+        let total = entries.len();
+        if total == 0 {
+            return Ok(NativeReadOutput {
+                output: format!("(empty directory {})", self.display_path).into(),
+                content_hash: None,
+            });
+        }
+        if self.offset > total {
+            return Err(failed(format!(
+                "Offset {} is past the end of the directory ({total} entries)",
+                self.offset
+            )));
+        }
+        entries.sort();
+        let end = total.min(self.offset - 1 + self.limit);
+        let footer = if end >= total {
+            format!("(End of directory - {total} entries)")
+        } else {
+            format!(
+                "(Showing entries {}-{end} of {total}. Use offset={} to continue.)",
+                self.offset,
+                end + 1
+            )
+        };
+        Ok(NativeReadOutput {
+            output: format!(
+                "{} is a directory. Its entries:\n{}\n{footer}",
+                self.display_path,
+                entries[self.offset - 1..end].join("\n")
+            )
+            .into(),
+            content_hash: None,
+        })
+    }
+}
+
 impl Task for ReadTask {
-    type Output = NativeFileToolOutput;
-    type JsValue = NativeFileToolOutput;
+    type Output = NativeReadOutput;
+    type JsValue = NativeReadOutput;
 
     fn compute(&mut self) -> napi::Result<Self::Output> {
-        let metadata = fs::metadata(&self.path)
-            .map_err(|_| failed(format!("File not found: {}", self.display_path)))?;
+        let metadata =
+            fs::metadata(&self.path).map_err(|_| missing_file(&self.path, &self.display_path))?;
         if metadata.is_dir() {
-            return Err(failed(format!(
-                "Path is a directory, not a file: {}",
-                self.display_path
-            )));
+            return self.list_directory();
         }
         let file = fs::File::open(&self.path).map_err(io_error)?;
         let mut reader = BufReader::new(file);
@@ -70,9 +112,9 @@ impl Task for ReadTask {
         }
         let total_output = checked_count(total, "read line")?;
         if total == 0 {
-            return Ok(NativeFileToolOutput {
+            return Ok(NativeReadOutput {
                 output: "(empty file)".to_owned().into(),
-                content_hash: hasher.finish(),
+                content_hash: Some(hasher.finish()),
             });
         }
         if self.offset > total {
@@ -91,9 +133,9 @@ impl Task for ReadTask {
             )
         };
         output.extend(footer.encode_utf16());
-        Ok(NativeFileToolOutput {
+        Ok(NativeReadOutput {
             output: output.into(),
-            content_hash: hasher.finish(),
+            content_hash: Some(hasher.finish()),
         })
     }
 
@@ -148,12 +190,62 @@ mod tests {
         };
         let output = task.compute().expect("read should succeed");
         fs::remove_file(&path).ok();
-        output.content_hash
+        output
+            .content_hash
+            .expect("a file read should hash its content")
     }
 
     #[test]
     fn hashes_distinguish_a_trailing_newline() {
         assert_ne!(hash_of("foo\n", "with"), hash_of("foo", "without"));
+    }
+
+    #[test]
+    fn lists_a_directory_and_suggests_similar_names_for_a_missing_file() {
+        let root = std::env::temp_dir().join(format!("xal-native-read-dir-{}", std::process::id()));
+        fs::create_dir_all(root.join("sub")).expect("fixture should create");
+        for name in ["foo.ts", "Foo.test.tsx", "bar.ts"] {
+            fs::write(root.join(name), "x").expect("fixture should write");
+        }
+        let task = |path: &str, offset: usize, limit: usize| ReadTask {
+            path: root.join(path),
+            display_path: format!("dir/{path}"),
+            offset,
+            limit,
+        };
+        let listing = task("", 1, 2000).compute().expect("listing should succeed");
+        assert_eq!(listing.content_hash, None);
+        assert_eq!(
+            String::from_utf16_lossy(&listing.output),
+            "dir/ is a directory. Its entries:\nFoo.test.tsx\nbar.ts\nfoo.ts\nsub/\n(End of directory - 4 entries)"
+        );
+        let page = task("", 2, 2).compute().expect("page should succeed");
+        assert_eq!(
+            String::from_utf16_lossy(&page.output),
+            "dir/ is a directory. Its entries:\nbar.ts\nfoo.ts\n(Showing entries 2-3 of 4. Use offset=4 to continue.)"
+        );
+        let missing = task("foo.js", 1, 2000)
+            .compute()
+            .err()
+            .expect("missing file should fail");
+        assert_eq!(
+            missing.reason,
+            "File not found: dir/foo.js. Similarly named files in the same directory: dir/Foo.test.tsx, dir/foo.ts"
+        );
+        let unrelated = task("baz.ts", 1, 2000)
+            .compute()
+            .err()
+            .expect("missing file should fail");
+        assert_eq!(unrelated.reason, "File not found: dir/baz.ts");
+        let orphan = task("gone/foo.ts", 1, 2000)
+            .compute()
+            .err()
+            .expect("missing file should fail");
+        assert_eq!(
+            orphan.reason,
+            "File not found: dir/gone/foo.ts. Its directory does not exist either."
+        );
+        fs::remove_dir_all(&root).ok();
     }
 
     #[test]

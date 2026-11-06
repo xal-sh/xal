@@ -18,6 +18,7 @@ import {
   parsePathRanker,
   parseSearchOutcome,
   parseFileToolOutput,
+  parseReadOutput,
   parseToolOutput,
   parseWorkspaceIndex,
   type NativeDiff,
@@ -39,6 +40,7 @@ import {
   type NativeSearchOutcome,
   type NativeSkillRequest,
   type NativeFileToolOutput,
+  type NativeReadOutput,
   type NativeToolOutput,
   type NativeWebFetchRequest,
   type NativeWorkspaceIndex,
@@ -79,6 +81,7 @@ export type {
   NativeSearchOutcome,
   NativeSkillRequest,
   NativeFileToolOutput,
+  NativeReadOutput,
   NativeToolOutput,
   NativeWebFetchRequest,
   NativeWorkspaceIndex,
@@ -128,7 +131,7 @@ interface NativeBinding {
     displayPath: string
     worktree: NativeManagedWorktree
   }): NativeToolOutput
-  readFile(request: NativeReadRequest): Promise<NativeFileToolOutput>
+  readFile(request: NativeReadRequest): Promise<NativeReadOutput>
   editFile(request: NativeEditRequest): Promise<NativeFileToolOutput>
   writeFile(request: NativeWriteRequest): Promise<NativeFileToolOutput>
   skill(request: NativeSkillRequest): Promise<NativeToolOutput>
@@ -363,10 +366,7 @@ function createBinding(value: unknown): NativeBinding {
       )
     },
     async readFile(request) {
-      return parseFileToolOutput(
-        await Promise.resolve(Reflect.apply(nativeReadFile, value, [request])),
-        "native read returned an invalid value",
-      )
+      return parseReadOutput(await Promise.resolve(Reflect.apply(nativeReadFile, value, [request])))
     },
     async editFile(request) {
       return parseFileToolOutput(
@@ -527,7 +527,7 @@ export function nativeFormatWorktreeTool(request: {
   return nativeBinding().formatWorktreeTool(request)
 }
 
-export function nativeReadFile(request: NativeReadRequest): Promise<NativeFileToolOutput> {
+export function nativeReadFile(request: NativeReadRequest): Promise<NativeReadOutput> {
   return nativeBinding().readFile(request)
 }
 

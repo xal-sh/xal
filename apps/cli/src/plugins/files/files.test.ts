@@ -4,6 +4,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { appInfo } from "../../app-info"
 import { nativeEditFile, nativeUnifiedDiff } from "../../native"
+import { knownFileState } from "../../tools/file-state"
 import type { ToolExecutionContext } from "../../tools/types"
 import { editTool } from "./edit"
 import { readTool } from "./read"
@@ -189,15 +190,21 @@ test("read handles empty, missing, directory, and binary files", async () => {
   await withWorkspace(async (workspace) => {
     await writeFile(join(workspace, "empty.txt"), "")
     await writeFile(join(workspace, "binary.dat"), "text\u0000tail")
-    await mkdir(join(workspace, "directory"))
+    await mkdir(join(workspace, "directory", "nested"), { recursive: true })
+    await writeFile(join(workspace, "directory", "entry.ts"), "")
 
     expect((await readTool.execute({ file_path: "empty.txt" }, context(workspace))).output).toBe("(empty file)")
     await expect(readTool.execute({ file_path: "missing.txt" }, context(workspace))).rejects.toThrow(
       "File not found: missing.txt",
     )
-    await expect(readTool.execute({ file_path: "directory" }, context(workspace))).rejects.toThrow(
-      "Path is a directory, not a file: directory",
+    await expect(readTool.execute({ file_path: "directory/entry.js" }, context(workspace))).rejects.toThrow(
+      "File not found: directory/entry.js. Similarly named files in the same directory: directory/entry.ts",
     )
+    const listing = context(workspace)
+    expect((await readTool.execute({ file_path: "directory" }, listing)).output).toBe(
+      "directory is a directory. Its entries:\nentry.ts\nnested/\n(End of directory - 2 entries)",
+    )
+    expect(knownFileState(listing.sessionId, join(workspace, "directory"))).toBeUndefined()
     await expect(readTool.execute({ file_path: "binary.dat" }, context(workspace))).rejects.toThrow(
       "Cannot read binary file: binary.dat",
     )

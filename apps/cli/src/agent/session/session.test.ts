@@ -164,6 +164,44 @@ describe("AgentSession", () => {
     }
   })
 
+  test("returns invalid arguments to the model without running the tool", async () => {
+    let executed = false
+    const tool: Tool = {
+      name: `strict_${crypto.randomUUID().replaceAll("-", "_")}`,
+      description: "Takes a numeric offset",
+      parameters: {
+        type: "object",
+        properties: { offset: { type: "number" } },
+        required: ["offset"],
+        additionalProperties: false,
+      },
+      title: () => "Strict",
+      execute: async () => {
+        executed = true
+        return { output: "ran" }
+      },
+    }
+    const provider = new ScriptedProvider([
+      toolRound("call-strict", tool.name, { offset: "3" }),
+      completedRound("Done"),
+    ])
+    const session = harness.createSession(provider)
+
+    registerTool(tool)
+    try {
+      await runSettledTurn(session, { text: "Use the strict tool", images: [] })
+
+      expect(executed).toBe(false)
+      const result = provider.requests[1]?.input.find((item) => item.type === "tool_result")
+      if (result?.type !== "tool_result") throw new Error("missing tool result")
+      expect(result.output).toBe(
+        `Tool failed: Invalid arguments for ${tool.name}: offset must be number, got string. Correct them and call ${tool.name} again.`,
+      )
+    } finally {
+      unregisterTool(tool)
+    }
+  })
+
   test("offers job tools only once the session owns a job and keeps them after it settles", async () => {
     const jobTools = [jobOutputTool, jobStatusTool, jobKillTool, jobSendTool, jobExtendTool, waitAgentTool]
     const provider = new ScriptedProvider([

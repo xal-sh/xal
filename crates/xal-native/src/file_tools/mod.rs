@@ -2,7 +2,7 @@
 
 use std::fs;
 use std::io::{BufRead, BufReader};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use napi::bindgen_prelude::{AsyncTask, Utf16String};
 use napi::{Env, Error, Status, Task};
@@ -15,6 +15,7 @@ use crate::tool_contracts::{checked_count, truncate_utf16, utf16_lossy};
 const DEFAULT_READ_LIMIT: u32 = 2000;
 const MAX_OUTPUT_UNITS: usize = 50_000;
 const MAX_LINE_UNITS: usize = 2000;
+const MAX_SUGGESTIONS: usize = 5;
 
 mod edit;
 mod read;
@@ -54,6 +55,12 @@ pub fn content_hash(bytes: &[u8]) -> String {
 }
 
 #[napi(object)]
+pub struct NativeReadOutput {
+    pub output: Utf16String,
+    pub content_hash: Option<String>,
+}
+
+#[napi(object)]
 pub struct NativeDiffResult {
     pub hunks: Utf16String,
     pub added: u32,
@@ -80,6 +87,54 @@ fn failed(message: impl Into<String>) -> Error {
 
 fn io_error(error: impl std::fmt::Display) -> Error {
     failed(error.to_string())
+}
+
+fn name_stem(name: &str) -> String {
+    let lower = name.to_lowercase();
+    match lower.split_once('.') {
+        Some((stem, _)) if !stem.is_empty() => stem.to_owned(),
+        _ => lower,
+    }
+}
+
+fn sibling_display(display_path: &str, name: &str) -> String {
+    match display_path.rfind(['/', '\\']) {
+        Some(index) => format!("{}{name}", &display_path[..=index]),
+        None => name.to_owned(),
+    }
+}
+
+fn missing_file(path: &Path, display_path: &str) -> Error {
+    let message = format!("File not found: {display_path}");
+    let (Some(parent), Some(name)) = (path.parent(), path.file_name()) else {
+        return failed(message);
+    };
+    let entries = match fs::read_dir(parent) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return failed(format!("{message}. Its directory does not exist either."));
+        }
+        Err(_) => return failed(message),
+    };
+    let stem = name_stem(&name.to_string_lossy());
+    let mut similar = entries
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|candidate| name_stem(candidate) == stem)
+        .collect::<Vec<_>>();
+    if similar.is_empty() {
+        return failed(message);
+    }
+    similar.sort();
+    similar.truncate(MAX_SUGGESTIONS);
+    let listed = similar
+        .iter()
+        .map(|candidate| sibling_display(display_path, candidate))
+        .collect::<Vec<_>>()
+        .join(", ");
+    failed(format!(
+        "{message}. Similarly named files in the same directory: {listed}"
+    ))
 }
 
 fn required_path(path: Option<String>) -> napi::Result<PathBuf> {

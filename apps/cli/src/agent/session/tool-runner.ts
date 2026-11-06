@@ -22,6 +22,7 @@ import {
   TOOL_OUTPUT_UNSAVED_PREFIX,
   toolFailed,
 } from "../../tools/output"
+import { argumentErrors } from "../../tools/arguments"
 import { getTool } from "../../tools/registry"
 import { PROGRAMMATIC_TOOLS } from "../../tools/programmatic"
 import { isInteractiveTool, isSessionTool } from "../../tools/types"
@@ -316,6 +317,12 @@ export class ToolCallRunner {
         type: "outcome",
         outcome: this.outcome(call, title, readOnly, reason, "policy"),
       }
+    }
+
+    const errors = tool === this.host.outputContract()?.tool ? [] : argumentErrors(tool.parameters, call.args)
+    if (errors.length > 0) {
+      const output = `${TOOL_FAILED_PREFIX}Invalid arguments for ${call.name}: ${errors.join("; ")}. Correct them and call ${call.name} again.`
+      return { type: "outcome", outcome: { ...this.outcome(call, title, readOnly, output), failure: output } }
     }
 
     const sandboxed = tool.sandboxed?.(call.args, { cwd: this.host.cwd() }) ?? false
