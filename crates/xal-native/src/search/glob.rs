@@ -48,7 +48,7 @@ impl Task for GlobTask {
         let keep = usize::try_from(offset)
             .unwrap_or(usize::MAX)
             .saturating_add(GLOB_LIMIT);
-        let matcher = match compile_glob(pattern) {
+        let matcher = match GlobFilter::new(pattern, &cwd, &root) {
             Ok(matcher) => matcher,
             Err(error) => return Ok(error),
         };
@@ -80,7 +80,7 @@ impl Task for GlobTask {
             if Instant::now() >= deadline {
                 return Ok(search_result(NativeToolOutcomeKind::TimedOut));
             }
-            if !matcher.is_match(path_for_glob(&path, &cwd, &root)) {
+            if !matcher.is_match(&path) {
                 continue;
             }
             let modified = match fs::metadata(&path).and_then(|metadata| metadata.modified()) {

@@ -84,6 +84,37 @@ test("grep and glob name a missing search path and similarly named siblings", as
   })
 })
 
+test("grep and glob match globs relative to the search path and say when a glob excludes every file", async () => {
+  await withWorkspace(async (workspace) => {
+    await mkdir(join(workspace, "src", "tools"), { recursive: true })
+    await writeFile(join(workspace, "src", "tools", "registry.ts"), "needle\n")
+    await writeFile(join(workspace, "src", "main.ts"), "needle\n")
+
+    const scoped = await globTool.execute({ pattern: "tools/*.ts", path: "src" }, context(workspace))
+    expect(scoped.output).toBe("Found 1 files\nsrc/tools/registry.ts")
+    const absolute = await globTool.execute({ pattern: join(workspace, "src", "*.ts") }, context(workspace))
+    expect(absolute.output.split("\n")[0]).toBe("Found 2 files")
+    const filtered = await grepTool.execute({ pattern: "needle", path: "src", glob: "tools/**" }, context(workspace))
+    expect(filtered.output).toBe("Found 1 matching lines\nsrc/tools/registry.ts:1:needle")
+    const excluded = await grepTool.execute({ pattern: "needle", glob: "*.rs" }, context(workspace))
+    expect(excluded.output).toBe(
+      "No files match glob *.rs, so nothing was searched. Globs match paths relative to the search path or the working directory.",
+    )
+  })
+})
+
+test("grep fails on line breaks unless multiline is set, then shows every line of a match", async () => {
+  await withWorkspace(async (workspace) => {
+    await writeFile(join(workspace, "code.ts"), "call(\n  first,\n  second,\n)\ncall(only)\n")
+
+    await expect(grepTool.execute({ pattern: "call\\(\\n" }, context(workspace))).rejects.toThrow(
+      "Set multiline to true to match across lines",
+    )
+    const result = await grepTool.execute({ pattern: "call\\(\\n\\s*first", multiline: true }, context(workspace))
+    expect(result.output).toBe("Found 1 matches\ncode.ts:1:call(\ncode.ts:2:  first,")
+  })
+})
+
 test("grep counts every match while retaining only the first 250 lines", async () => {
   await withWorkspace(async (workspace) => {
     const content = Array.from({ length: 260 }, (_, index) => `needle ${index}`).join("\n")

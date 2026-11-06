@@ -13,7 +13,8 @@ export const globTool: Tool = {
     properties: {
       pattern: {
         type: "string",
-        description: "Glob to match file paths, e.g. *.ts or src/**/*.test.ts",
+        description:
+          "Glob matched against paths relative to path or the working directory, or an absolute glob, e.g. *.ts or src/**/*.test.ts",
       },
       path: {
         type: "string",
