@@ -9,7 +9,7 @@ const builtins: ModeDefinition[] = [
     readOnly: false,
     skipAsk: false,
     guidance:
-      "Routine actions run without confirmation. Actions that reach outside the workspace, privileged or destructive system commands, and actions the user marked as sensitive ask for approval first. A denied action means the user declined it; adjust instead of retrying.",
+      "File operations inside the working directory run without confirmation unless marked sensitive. Access outside it, including reads and temporary files, asks for approval unless the user has whitelisted it. Shell commands, language-server queries, and MCP calls can access outside the working directory and require approval even when sandboxed. Prefer dedicated file and search tools for workspace-only operations. A denied action means the user declined it; adjust instead of retrying.",
     subagentGuidance:
       "This delegation may modify the workspace. Routine actions run automatically, but any action that still requires separate approval will be denied.",
   },
@@ -18,7 +18,7 @@ const builtins: ModeDefinition[] = [
     readOnly: true,
     skipAsk: false,
     guidance:
-      "Plan mode is active. Read-only tools may be used for investigation. File-modifying tools are withheld entirely, and shell commands that are not read-only are refused before they run. Never retry a refused action.",
+      "Plan mode is active. Read-only tools may be used for investigation. Reads outside the working directory, including temporary files and symlink targets, require approval unless whitelisted. Shell and language-server queries also require approval because they can read outside the working directory. File-modifying tools are withheld entirely, and shell commands that are not read-only are refused before they run. Approval never enables writes in plan mode. Never retry a refused action.",
     subagentGuidance:
       "This is a read-only delegation. Use only read-only tools, make no workspace changes, and return your findings to the primary agent.",
   },

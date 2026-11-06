@@ -143,6 +143,12 @@ export const taskTool: SessionTool = {
   concurrency() {
     return "shared"
   },
+  permission(args) {
+    const outsideWorkspace =
+      Array.isArray(args.tasks) && args.tasks.some((item) => isRecord(item) && item.isolation === "worktree")
+    const subject = outsideWorkspace ? "worktree" : "shared"
+    return { subject, suggestion: `task(${subject})`, outsideWorkspace }
+  },
   async execute(args, ctx) {
     if (ctx.session.kind !== "primary") throw new Error("task is available only to primary sessions")
     const { context, tasks } = prepareTaskBatch(args)

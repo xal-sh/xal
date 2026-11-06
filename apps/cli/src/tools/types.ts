@@ -51,7 +51,9 @@ export type ElicitationResult = { status: "answered"; answers: ElicitationAnswer
 
 export interface ToolPermission {
   subject: string
+  subjectAliases?: string[]
   suggestion?: string
+  outsideWorkspace?: boolean
 }
 
 export type ToolConcurrency = "shared" | "exclusive"

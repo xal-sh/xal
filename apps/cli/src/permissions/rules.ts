@@ -12,7 +12,7 @@ interface Entry extends Matcher {
   decision: "allow" | "ask"
 }
 
-const RULE = /^([^()]+?)(?:\((.*)\))?$/
+const RULE = /^([^()]+?)(?:\(([\s\S]*)\))?$/
 
 const defaults: Entry[] = []
 let config: Entry[] = []
@@ -60,10 +60,12 @@ function toMatchers(patterns: string[] | undefined): Matcher[] {
   })
 }
 
-function matches(matcher: Matcher, request: PermissionRequest): boolean {
+function matches(matcher: Matcher, request: PermissionRequest, includeAliases = false): boolean {
   if (matcher.toolPattern ? !matcher.toolPattern.test(request.tool) : matcher.tool !== request.tool) return false
-  if (!matcher.pattern) return true
-  return request.subject !== undefined && matcher.pattern.test(request.subject)
+  const pattern = matcher.pattern
+  if (!pattern) return true
+  const subjects = [request.subject, ...(includeAliases ? (request.subjectAliases ?? []) : [])]
+  return subjects.some((subject) => subject !== undefined && pattern.test(subject))
 }
 
 export function contributeRules(rules: PermissionRules): void {
@@ -124,13 +126,13 @@ export async function rememberRule(
 export function isDenied(request: PermissionRequest): boolean {
   const inherited = request.inheritedDenyMode ? (modeDenies.get(request.inheritedDenyMode) ?? []) : []
   const scoped = [...(modeDenies.get(request.mode) ?? []), ...inherited]
-  return [...denies, ...scoped].some((matcher) => matches(matcher, request))
+  return [...denies, ...scoped].some((matcher) => matches(matcher, request, true))
 }
 
-export function matchRules(request: PermissionRequest): PolicyDecision | undefined {
+export function matchRules(request: PermissionRequest, includeDefaults = true): PolicyDecision | undefined {
   const key = projectKey(request.cwd)
   const entries = [
-    ...defaults,
+    ...(includeDefaults ? defaults : []),
     ...config,
     ...(modeEntries.get(request.mode) ?? []),
     ...(project.get(key) ?? []),
@@ -138,7 +140,7 @@ export function matchRules(request: PermissionRequest): PolicyDecision | undefin
   ]
   for (let index = entries.length - 1; index >= 0; index--) {
     const entry = entries[index]!
-    if (matches(entry, request)) return entry.decision
+    if (matches(entry, request, entry.decision === "ask")) return entry.decision
   }
   return undefined
 }

@@ -1,6 +1,7 @@
 import { asNumber, asString } from "../../lib/json"
-import { displayPath } from "../../lib/path"
+import { displayPath, resolveFilePath } from "../../lib/path"
 import type { Tool } from "../../tools/types"
+import { pathPermission } from "../../permissions/path"
 import type { LspManager, LspOperation } from "./manager"
 
 const operations: LspOperation[] = [
@@ -85,8 +86,8 @@ export function lspTool(manager: LspManager): Tool {
     concurrency() {
       return "shared"
     },
-    permission(args) {
-      return { subject: asString(args.file_path) ?? "" }
+    permission(args, ctx) {
+      return { ...pathPermission("lsp", asString(args.file_path) ?? "", ctx.cwd), outsideWorkspace: true }
     },
     async execute(args, ctx) {
       const operation = operationOf(args.operation)
@@ -110,7 +111,7 @@ export function lspTool(manager: LspManager): Tool {
         output: await manager.query(
           {
             operation,
-            filePath,
+            filePath: resolveFilePath(filePath, ctx.cwd),
             ...(line ? { line } : {}),
             ...(column ? { column } : {}),
             ...(query ? { query } : {}),

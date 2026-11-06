@@ -12,6 +12,8 @@ Xal registers its built-in tools at startup, but the model is only offered the o
 
 `write` and `edit` are withheld in read-only modes such as `plan`, because every call would be refused before it ran. `bash` stays available there, since whether a command mutates anything depends on its arguments.
 
+In `normal` and `plan`, file access outside the working directory requires approval, including reads, search roots, temporary files, and paths reached through symlinks. The prompt supports once, session, and persistent project-scoped approvals. Shell commands and language-server queries require approval even for apparently local inputs because they can access other files indirectly; a read sandbox does not bypass approval. See [permissions](permissions.md#outside-directory-access-and-whitelisting).
+
 ### Reading before writing
 
 `write` will not replace a file the session has not read. An existing file must have been read with `read` in the current session, and its contents must not have changed since that read; otherwise the call fails and asks for the file to be read again. Creating a new file has no precondition.

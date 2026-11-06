@@ -3,7 +3,7 @@ import { displayPath, resolveFilePath } from "../../lib/path"
 import { nativeReadFile } from "../../native"
 import { recordFileState } from "../../tools/file-state"
 import type { Tool } from "../../tools/types"
-import { pathPermission } from "./permission"
+import { pathPermission } from "../../permissions/path"
 
 const DEFAULT_LIMIT = 2000
 const MAX_LINE_CHARS = 2000
@@ -40,7 +40,7 @@ export const readTool: Tool = {
     return "shared"
   },
   permission(args, ctx) {
-    return pathPermission("read", args, ctx.cwd)
+    return pathPermission("read", asString(args.file_path) ?? "", ctx.cwd)
   },
   async execute(args, ctx) {
     const path = asString(args.file_path)

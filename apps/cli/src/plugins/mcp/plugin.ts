@@ -21,7 +21,6 @@ const plugin: Plugin = {
     })
     ctx.registerToolSessionDisposer(disposeMcpSession)
     for (const tool of mcpTools(manager)) ctx.registerTool(tool)
-    ctx.registerPermissionRules({ allow: ["mcp__*", "mcp_read_resource", "mcp_get_prompt"] })
     ctx.registerCommand(mcpCommand(manager))
     ctx.registerPrompt({ id: "mcp", text: (prompt) => manager?.instructionsForSession(prompt.sessionId) ?? "" })
   },
