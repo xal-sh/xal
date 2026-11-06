@@ -19,6 +19,7 @@ import { pendingToolCalls, prepareConversation } from "../../providers/conversat
 import { occupiedContext } from "../../providers/types"
 import type {
   ContextUsage,
+  ImageInput,
   ModelInputModality,
   Provider,
   ProviderPrompt,
@@ -246,7 +247,7 @@ export class AgentSession {
       hookContext: (signal) => this.hookContext(signal),
       emit: (event) => this.emit(event),
       setState: (state) => this.setState(state),
-      addToolOutput: (call, output, read) => this.addToolOutput(call, output, read),
+      addToolOutput: (call, output, read, images) => this.addToolOutput(call, output, read, images),
       updateToolCall: (call) => this.updateToolCall(call),
       publishToolEvent: (event) => this.publishToolEvent(event),
       recordVerification: (record) => this.recordVerification(record),
@@ -1550,8 +1551,14 @@ export class AgentSession {
     this.emit({ type: "state_changed", state })
   }
 
-  private addToolOutput(call: ToolCallItem, output: string, read?: ReadCoverage): void {
-    this.pushItem({ type: "tool_result", callId: call.callId, output, ...(read ? { read } : {}) })
+  private addToolOutput(call: ToolCallItem, output: string, read?: ReadCoverage, images?: ImageInput[]): void {
+    this.pushItem({
+      type: "tool_result",
+      callId: call.callId,
+      output,
+      ...(read ? { read } : {}),
+      ...(images ? { images } : {}),
+    })
   }
 
   private recordProviderRequest(): void {

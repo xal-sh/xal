@@ -146,6 +146,40 @@ describe("prepareConversation", () => {
     ])
   })
 
+  test("sends tool result images as one user message after the run of results, or a notice when text-only", () => {
+    const shot = { mediaType: "image/png" as const, data: "c2hvdA==" }
+    const photo = { mediaType: "image/jpeg" as const, data: "cGhvdG8=" }
+    const items: ConversationItem[] = [
+      { type: "tool_call", callId: "first", name: "read", args: {} },
+      { type: "tool_call", callId: "second", name: "read", args: {} },
+      { type: "tool_call", callId: "third", name: "read", args: {} },
+      { type: "tool_result", callId: "first", output: "Image a.png", images: [shot] },
+      { type: "tool_result", callId: "second", output: "Image b.jpg", images: [photo] },
+    ]
+
+    expect(prepareConversation(items, target, true)).toEqual([
+      { type: "tool_call", callId: "first", name: "read", args: {} },
+      { type: "tool_call", callId: "second", name: "read", args: {} },
+      { type: "tool_call", callId: "third", name: "read", args: {} },
+      { type: "tool_result", callId: "first", output: "Image a.png" },
+      { type: "tool_result", callId: "second", output: "Image b.jpg" },
+      {
+        type: "tool_result",
+        callId: "third",
+        output: "Tool execution was interrupted before returning a result.",
+      },
+      { type: "user_message", text: "Images returned by the tool results above, in order.", images: [shot, photo] },
+    ])
+    expect(prepareConversation(items.slice(0, 1).concat(items[3]!), target, false)).toEqual([
+      { type: "tool_call", callId: "first", name: "read", args: {} },
+      {
+        type: "tool_result",
+        callId: "first",
+        output: "Image a.png\n\n[Image omitted: the current model does not accept image input]",
+      },
+    ])
+  })
+
   test("closes pending calls at the end and discards duplicate calls and orphan results", () => {
     const call: ConversationItem = { type: "tool_call", callId: "call-id", name: "read", args: {} }
     const items: ConversationItem[] = [

@@ -1,6 +1,7 @@
 import type {
   AssistantMessageItem,
   ConversationItem,
+  ImageInput,
   ProviderReplay,
   ReasoningItem,
   ToolCallItem,
@@ -128,21 +129,50 @@ export function pendingToolCalls(items: ConversationItem[], target: Conversation
   return normalizedConversation(items, target).pending
 }
 
+function attachToolImages(items: ConversationItem[], imageInput: boolean): ConversationItem[] {
+  const result: ConversationItem[] = []
+  let images: ImageInput[] = []
+  const flush = (): void => {
+    if (images.length === 0) return
+    const text =
+      images.length === 1
+        ? "Image returned by the tool result above."
+        : "Images returned by the tool results above, in order."
+    result.push({ type: "user_message", text, images })
+    images = []
+  }
+  for (const item of items) {
+    if (item.type !== "tool_result") flush()
+    if (item.type !== "tool_result" || !item.images) {
+      result.push(item)
+      continue
+    }
+    const { images: attached, ...rest } = item
+    if (!imageInput) {
+      result.push({
+        ...rest,
+        output: `${rest.output}\n\n[Image omitted: the current model does not accept image input]`,
+      })
+      continue
+    }
+    result.push(rest)
+    images = [...images, ...attached]
+  }
+  flush()
+  return result
+}
+
 export function prepareConversation(
   items: ConversationItem[],
   target: ConversationTarget,
   imageInput: boolean,
 ): ConversationItem[] {
   const normalized = normalizedConversation(items, target)
-  const result = imageInput
-    ? normalized.result
-    : normalized.result.map((item) => (item.type === "user_message" ? omitUserMessageImages(item) : item))
-  for (const call of normalized.pending) {
-    result.push({
-      type: "tool_result",
-      callId: call.callId,
-      output: "Tool execution was interrupted before returning a result.",
-    })
-  }
-  return result
+  const interrupted = normalized.pending.map((call): ConversationItem => ({
+    type: "tool_result",
+    callId: call.callId,
+    output: "Tool execution was interrupted before returning a result.",
+  }))
+  const result = attachToolImages([...normalized.result, ...interrupted], imageInput)
+  return imageInput ? result : result.map((item) => (item.type === "user_message" ? omitUserMessageImages(item) : item))
 }

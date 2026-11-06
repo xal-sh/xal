@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test"
 import type { CompactionItem } from "../agent/history"
+import type { ToolResultItem } from "../providers/types"
 import { parseRecord } from "./records"
 
 function itemRecord(item: unknown): string {
@@ -55,6 +56,20 @@ test("parses legacy, user-only, and pruned compaction records without changing t
   expect(parseRecord(itemRecord(legacy))).toEqual({ type: "item", item: legacy })
   expect(parseRecord(itemRecord(current))).toEqual({ type: "item", item: current })
   expect(parseRecord(itemRecord(pruned))).toEqual({ type: "item", item: pruned })
+})
+
+test("reads tool result images back in the shape they were written and rejects malformed ones", () => {
+  const item: ToolResultItem = {
+    type: "tool_result",
+    callId: "read",
+    output: "Image a.png",
+    images: [{ mediaType: "image/png", data: "c2hvdA==" }],
+  }
+  expect(parseRecord(itemRecord(item))).toEqual({ type: "item", item })
+  const malformed: unknown[] = [null, [{ mediaType: "image/gif", data: "c2hvdA==" }]]
+  for (const images of malformed) {
+    expect(() => parseRecord(itemRecord({ ...item, images }))).toThrow("malformed session record")
+  }
 })
 
 test("rejects malformed persisted read coverage rather than treating it as a complete read", () => {

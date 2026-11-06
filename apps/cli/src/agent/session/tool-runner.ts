@@ -9,6 +9,7 @@ import { profileToolBatchFinished, profileToolBatchStarted, profileToolOutputSha
 import type {
   ContextUsage,
   ConversationItem,
+  ImageInput,
   ModelInputModality,
   Provider,
   ThinkingEffort,
@@ -81,6 +82,7 @@ export interface ToolCallOutcome {
   outputSaved?: boolean
   loopOutput?: string
   read?: ReadCoverage
+  images?: ImageInput[]
   execution?: ProcessExecution
   events: ToolEvent[]
   failure?: string
@@ -123,7 +125,7 @@ export interface ToolRunnerHost {
   hookContext(signal: AbortSignal): HookContext
   emit(event: AgentEvent): void
   setState(state: AgentState): void
-  addToolOutput(call: ToolCallItem, output: string, read?: ReadCoverage): void
+  addToolOutput(call: ToolCallItem, output: string, read?: ReadCoverage, images?: ImageInput[]): void
   updateToolCall(call: ToolCallItem): void
   publishToolEvent(event: ToolEvent): void
   recordVerification(record: VerificationRecord): Promise<void>
@@ -466,6 +468,7 @@ export class ToolCallRunner {
     let savedOutput: string | undefined
     let read: ReadCoverage | undefined
     let readOutput: string | undefined
+    let images: ImageInput[] | undefined
     let failure: string | undefined
     let execution: ProcessExecution | undefined
     let events: ToolEvent[] = []
@@ -543,6 +546,7 @@ export class ToolCallRunner {
         readOutput = output
       }
       if (toolFailed(output)) failure = output
+      if (result.images && result.images.length > 0) images = result.images
       execution = result.execution
       events = result.events ?? []
       maxOutputBytes = result.maxOutputBytes
@@ -574,6 +578,9 @@ export class ToolCallRunner {
     }
     output = redactText(output)
     if (program && failure && !toolFailed(output)) output = `${failure}\n\n${output}`
+    if (parentCallId && images) {
+      output = `${output}\n\n[Image not shown: images reach the model only from direct tool calls]`
+    }
     if (parentCallId) {
       profileToolOutputShape(this.host.sessionId(), this.host.kind, call.name, output, "", true)
       return {
@@ -598,6 +605,7 @@ export class ToolCallRunner {
       ...(scope ? { loopOutput } : {}),
       ...(bounded || (outputSaved && output === originalOutput) ? { outputSaved: true } : {}),
       ...(read && readOutput === output ? { read } : {}),
+      ...(images ? { images } : {}),
     }
   }
 
@@ -691,14 +699,11 @@ export class ToolCallRunner {
     })
     if (decision !== "allow") return undefined
     try {
-      return redactText(
-        (
-          await tool.execute(
-            args,
-            this.toolContext(signal, () => {}, true),
-          )
-        ).output,
+      const result = await tool.execute(
+        args,
+        this.toolContext(signal, () => {}, true),
       )
+      return result.images?.length ? undefined : redactText(result.output)
     } catch (error) {
       if (isAbortError(error) || signal.aborted) throw error
       return undefined
@@ -706,7 +711,7 @@ export class ToolCallRunner {
   }
 
   commit(outcome: ToolCallOutcome): void {
-    this.host.addToolOutput(outcome.call, outcome.output, outcome.read)
+    this.host.addToolOutput(outcome.call, outcome.output, outcome.read, outcome.images)
     this.host.emit({
       type: "tool_finished",
       callId: outcome.call.callId,

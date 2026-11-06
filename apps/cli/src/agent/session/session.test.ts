@@ -163,6 +163,35 @@ describe("AgentSession", () => {
     }
   })
 
+  test("sends images returned by a tool to the model after the tool results", async () => {
+    const image = { mediaType: "image/png" as const, data: "c2hvdA==" }
+    const tool: Tool = {
+      name: `look_${crypto.randomUUID().replaceAll("-", "_")}`,
+      description: "Returns an image",
+      parameters: { type: "object" },
+      title: () => "Look",
+      execute: async () => ({ output: "Image shot.png", images: [image] }),
+    }
+    class ImageProvider extends ScriptedProvider {
+      override readonly capabilities = { imageInput: true }
+    }
+    const provider = new ImageProvider([toolRound("call-look", tool.name, {}), completedRound("Seen")])
+    const session = harness.createSession(provider)
+
+    registerTool(tool)
+    try {
+      await runSettledTurn(session, { text: "Look at it", images: [] })
+
+      expect(provider.requests[1]?.input.slice(-3)).toEqual([
+        { type: "tool_call", callId: "call-look", name: tool.name, args: {} },
+        { type: "tool_result", callId: "call-look", output: "Image shot.png" },
+        { type: "user_message", text: "Image returned by the tool result above.", images: [image] },
+      ])
+    } finally {
+      unregisterTool(tool)
+    }
+  })
+
   test("returns invalid arguments to the model without running the tool", async () => {
     let executed = false
     const tool: Tool = {
