@@ -1,5 +1,5 @@
 import { afterAll, expect, test } from "bun:test"
-import { mkdtemp, rm, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { disposeToolSession } from "../../tools/session"
@@ -81,4 +81,27 @@ test("states only the date outside a repository and a clean tree before the firs
   const emptySession = crypto.randomUUID()
   await captureWorkspaceContext(emptySession, empty, new AbortController().signal)
   expect(prompt(emptySession, empty)).toMatch(/^Date: .+\nGit at session start: branch trunk, clean working tree\.$/)
+})
+
+test("lists at most 20 changes, collapses untracked directories, and drops captures of disposed sessions", async () => {
+  const cwd = await workspace()
+  await git(cwd, ["init", "-q", "-b", "main"])
+  await git(cwd, ["config", "status.showUntrackedFiles", "all"])
+  await mkdir(join(cwd, "untracked"))
+  await writeFile(join(cwd, "untracked", "inside.txt"), "inside\n")
+  await Promise.all(Array.from({ length: 22 }, (_, index) => writeFile(join(cwd, `file-${index}.txt`), "new\n")))
+  const sessionId = crypto.randomUUID()
+
+  await captureWorkspaceContext(sessionId, cwd, new AbortController().signal)
+  const captured = prompt(sessionId, cwd)
+  expect(captured).toContain("Git at session start: branch main, 23 changed paths.")
+  expect(captured).not.toContain("inside.txt")
+  expect(captured.split("\n").filter((line) => line.startsWith("?? "))).toHaveLength(20)
+  expect(captured).toEndWith("\n... 3 more")
+
+  const disposed = crypto.randomUUID()
+  const pending = captureWorkspaceContext(disposed, cwd, new AbortController().signal)
+  disposeToolSession(disposed)
+  await pending
+  expect(prompt(disposed, cwd)).toBe("")
 })

@@ -65,7 +65,11 @@ test.skipIf(process.platform === "win32" || !Bun.which("bash"))(
 
     try {
       expect(
-        await run(sessionId, 'words="a b"; for word in $words; do echo "$word"; done; echo *.missing', workspace),
+        await run(
+          sessionId,
+          'test -n "$BASH_VERSION" || exit 1; words="a b"; for word in $words; do echo "$word"; done; echo *.missing',
+          workspace,
+        ),
       ).toBe("a\nb\n*.missing")
     } finally {
       disposeShellSession(sessionId)

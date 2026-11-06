@@ -228,7 +228,9 @@ fn closest_match(text: &str, old: &str) -> Option<String> {
 }
 
 fn match_lines(text: &[u16], positions: &[usize]) -> String {
-    let mut lines: Vec<usize> = Vec::new();
+    let mut shown: Vec<String> = Vec::new();
+    let mut distinct = 0;
+    let mut previous = 0;
     let mut line = 1;
     let mut cursor = 0;
     for &position in positions {
@@ -237,18 +239,18 @@ fn match_lines(text: &[u16], positions: &[usize]) -> String {
             .filter(|&&unit| unit == LF)
             .count();
         cursor = position;
-        if lines.last() != Some(&line) {
-            lines.push(line);
+        if line == previous {
+            continue;
+        }
+        previous = line;
+        distinct += 1;
+        if shown.len() < MAX_MATCH_LINES {
+            shown.push(line.to_string());
         }
     }
-    let mut listed = lines
-        .iter()
-        .take(MAX_MATCH_LINES)
-        .map(ToString::to_string)
-        .collect::<Vec<_>>()
-        .join(", ");
-    if lines.len() > MAX_MATCH_LINES {
-        listed.push_str(&format!(", and {} more", lines.len() - MAX_MATCH_LINES));
+    let mut listed = shown.join(", ");
+    if distinct > MAX_MATCH_LINES {
+        listed.push_str(&format!(", and {} more", distinct - MAX_MATCH_LINES));
     }
     listed
 }

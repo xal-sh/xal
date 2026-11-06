@@ -9,6 +9,7 @@ import { registerPrompt } from "./registry"
 const MAX_CHANGED_FILES = 20
 
 const snapshots = new Map<string, { cwd: string; text: string }>()
+const captures = new Map<string, object>()
 
 function localDate(date: Date): string {
   const month = String(date.getMonth() + 1).padStart(2, "0")
@@ -37,7 +38,7 @@ function changeOf(entry: string, original: string | undefined): string | undefin
 async function gitSummary(cwd: string, signal: AbortSignal): Promise<string | undefined> {
   const root = await findProjectRoot(cwd)
   if (!(await pathExists(join(root, ".git")))) return undefined
-  const status = await runGit(root, ["status", "--porcelain=v2", "--branch", "-z"], signal)
+  const status = await runGit(root, ["status", "--porcelain=v2", "--branch", "-z", "--untracked-files=normal"], signal)
   let branch = "detached HEAD"
   let initial = false
   const changes: string[] = []
@@ -60,8 +61,7 @@ async function gitSummary(cwd: string, signal: AbortSignal): Promise<string | un
   return [...lines, "Recent commits:", commits].join("\n")
 }
 
-export async function captureWorkspaceContext(sessionId: string, cwd: string, signal: AbortSignal): Promise<void> {
-  if (snapshots.get(sessionId)?.cwd === cwd) return
+async function workspaceText(cwd: string, signal: AbortSignal): Promise<string> {
   let git: string | undefined
   try {
     git = await gitSummary(cwd, signal)
@@ -69,8 +69,19 @@ export async function captureWorkspaceContext(sessionId: string, cwd: string, si
     if (signal.aborted) throw error
     git = `Git status unavailable: ${describeError(error)}`
   }
-  const text = [`Date: ${localDate(new Date())}.`, ...(git ? [git] : [])].join("\n")
-  snapshots.set(sessionId, { cwd, text })
+  return [`Date: ${localDate(new Date())}.`, ...(git ? [git] : [])].join("\n")
+}
+
+export async function captureWorkspaceContext(sessionId: string, cwd: string, signal: AbortSignal): Promise<void> {
+  if (snapshots.get(sessionId)?.cwd === cwd) return
+  const capture = {}
+  captures.set(sessionId, capture)
+  try {
+    const text = await workspaceText(cwd, signal)
+    if (captures.get(sessionId) === capture) snapshots.set(sessionId, { cwd, text })
+  } finally {
+    if (captures.get(sessionId) === capture) captures.delete(sessionId)
+  }
 }
 
 export function registerWorkspacePrompt(): void {
@@ -81,5 +92,8 @@ export function registerWorkspacePrompt(): void {
       return snapshot?.cwd === prompt.cwd ? snapshot.text : ""
     },
   })
-  registerToolSessionDisposer((sessionId) => snapshots.delete(sessionId))
+  registerToolSessionDisposer((sessionId) => {
+    snapshots.delete(sessionId)
+    captures.delete(sessionId)
+  })
 }
