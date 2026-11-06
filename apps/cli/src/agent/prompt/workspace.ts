@@ -23,6 +23,7 @@ function changeOf(entry: string, original: string | undefined): string | undefin
     case "1":
       return `${status} ${fields.slice(8).join(" ")}`
     case "2":
+      if (original === undefined) throw new Error("git status reported a rename without its original path")
       return `${status} ${original} -> ${fields.slice(9).join(" ")}`
     case "u":
       return `${status} ${fields.slice(10).join(" ")}`
