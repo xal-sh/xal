@@ -281,9 +281,9 @@ function wakeProcess(job: BackgroundProcessJob): void {
   backgroundTasksChanged("progress")
 }
 
-function appendProcess(job: BackgroundProcessJob, text: string): void {
+function appendProcess(job: BackgroundProcessJob, text: string, persist = true): void {
   if (!text) return
-  jobLogs.get(job)?.append(text)
+  if (persist) jobLogs.get(job)?.append(text)
   job.pending += text
   if (job.pending.length > MAX_PENDING_CHARS) {
     job.pending = job.pending.slice(-MAX_PENDING_CHARS)
@@ -291,6 +291,10 @@ function appendProcess(job: BackgroundProcessJob, text: string): void {
   }
   job.history.append(text)
   wakeProcess(job)
+}
+
+export function seedProcessOutput(job: BackgroundProcessJob, text: string): void {
+  appendProcess(job, text, false)
 }
 
 export function appendProcessOutput(job: BackgroundProcessJob, text: string): void {
@@ -515,12 +519,21 @@ function processDetail(termination: ProcessTermination, logFailure: string | und
   return logFailure ? `${base}; log persistence failed: ${logFailure}` : base
 }
 
-export async function finishProcessJob(job: BackgroundProcessJob, termination: ProcessTermination): Promise<void> {
+export async function finishProcessJob(
+  job: BackgroundProcessJob,
+  termination: ProcessTermination,
+  outputDropped = false,
+): Promise<void> {
   if (job.done || finishing.has(job)) return
   finishing.add(job)
   appendProcess(job, redactorOf(job).end())
   redactors.delete(job)
   job.termination = termination
+  const outputFailure = outputDropped
+    ? "process output queue dropped data"
+    : termination.status === "launch_failed"
+      ? "process output collection did not complete"
+      : undefined
   const log = jobLogs.get(job)
   let logFailure: string | undefined
   if (log) {
@@ -531,13 +544,21 @@ export async function finishProcessJob(job: BackgroundProcessJob, termination: P
     }
     job.record = logFailure
       ? { status: "failed", message: logFailure }
-      : log.capped()
-        ? { status: "saved", path: log.path, complete: false, reason: "capped" }
-        : { status: "saved", path: log.path, complete: true }
+      : outputFailure
+        ? {
+            status: "saved",
+            path: log.path,
+            complete: false,
+            reason: "unavailable",
+            message: outputFailure,
+          }
+        : log.capped()
+          ? { status: "saved", path: log.path, complete: false, reason: "capped" }
+          : { status: "saved", path: log.path, complete: true }
   }
   completeJob(
     job,
-    processDetail(termination, logFailure),
+    `${processDetail(termination, logFailure)}${outputFailure ? `; output incomplete: ${outputFailure}` : ""}`,
     termination.status === "signaled"
       ? "interrupted"
       : termination.status === "exited" && termination.exitCode === 0 && !logFailure

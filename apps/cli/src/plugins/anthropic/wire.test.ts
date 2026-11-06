@@ -31,6 +31,13 @@ describe("thinking configuration", () => {
     expect(body.output_config).toEqual({ effort: "xhigh" })
   })
 
+  test("honors an auxiliary output ceiling without an invalid thinking budget", () => {
+    expect(buildRequestBody(request({ maxOutputTokens: 12_000 })).max_tokens).toBe(12_000)
+    const body = buildRequestBody(request({ model: "claude-sonnet-4-5", maxOutputTokens: 2_000, thinking: "high" }))
+    expect(body.max_tokens).toBe(2_000)
+    expect(body.thinking).toEqual({ type: "disabled" })
+  })
+
   test("never sends sampling parameters or a token budget", () => {
     const body = buildRequestBody(request({ thinking: "high" }))
     expect(body.temperature).toBeUndefined()

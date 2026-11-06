@@ -33,6 +33,7 @@ impl ReadTask {
             return Ok(NativeReadOutput {
                 output: format!("(empty directory {})", self.display_path).into(),
                 content_hash: None,
+                coverage: None,
             });
         }
         if self.offset > total {
@@ -67,6 +68,7 @@ impl ReadTask {
         Ok(NativeReadOutput {
             output: output.into(),
             content_hash: None,
+            coverage: None,
         })
     }
 }
@@ -89,6 +91,7 @@ impl Task for ReadTask {
         let mut shown = 0_usize;
         let mut end = self.offset.saturating_sub(1);
         let mut retaining = true;
+        let mut truncated = false;
         let mut hasher = ContentHasher::new();
         loop {
             buffer.clear();
@@ -117,6 +120,7 @@ impl Task for ReadTask {
                 retaining = false;
                 continue;
             }
+            truncated |= source.encode_utf16().count() > MAX_LINE_UNITS;
             output.extend(row);
             output.push(b'\n' as u16);
             shown += 1;
@@ -127,6 +131,15 @@ impl Task for ReadTask {
             return Ok(NativeReadOutput {
                 output: "(empty file)".to_owned().into(),
                 content_hash: Some(hasher.finish()),
+                coverage: Some(NativeReadCoverage {
+                    path: fs::canonicalize(&self.path)
+                        .map_err(io_error)?
+                        .to_string_lossy()
+                        .into_owned(),
+                    offset: 1,
+                    limit: 0,
+                    truncated: false,
+                }),
             });
         }
         if self.offset > total {
@@ -148,6 +161,15 @@ impl Task for ReadTask {
         Ok(NativeReadOutput {
             output: output.into(),
             content_hash: Some(hasher.finish()),
+            coverage: Some(NativeReadCoverage {
+                path: fs::canonicalize(&self.path)
+                    .map_err(io_error)?
+                    .to_string_lossy()
+                    .into_owned(),
+                offset: checked_count(self.offset, "read offset")?,
+                limit: checked_count(shown, "shown lines")?,
+                truncated,
+            }),
         })
     }
 

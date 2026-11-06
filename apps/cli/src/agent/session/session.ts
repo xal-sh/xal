@@ -70,6 +70,7 @@ import { StreamBuffer, type StreamRoundHost } from "./stream"
 import { readAheadOrNotice } from "./read-ahead"
 import { runDirectShell, runTurn, type TurnHost, type TurnSummary } from "./turn"
 import { ToolCallRunner, type ToolRunnerHost } from "./tool-runner"
+import type { ReadCoverage } from "../../tools/read-coverage"
 import {
   addUsage,
   interruptForSteering,
@@ -247,7 +248,7 @@ export class AgentSession {
       hookContext: (signal) => this.hookContext(signal),
       emit: (event) => this.emit(event),
       setState: (state) => this.setState(state),
-      addToolOutput: (call, output) => this.addToolOutput(call, output),
+      addToolOutput: (call, output, read) => this.addToolOutput(call, output, read),
       updateToolCall: (call) => this.updateToolCall(call),
       publishToolEvent: (event) => this.publishToolEvent(event),
       recordVerification: (record) => this.recordVerification(record),
@@ -284,6 +285,7 @@ export class AgentSession {
     return {
       toolRunner: this.toolRunner,
       hookReporter: this.hookReporter,
+      history: () => this.items,
       outputContract: () => this.outputContract,
       verificationStatus: (signal) => this.verificationStatus(signal),
       verificationBaseline: (signal) => verificationBaseline(this.cwd, signal),
@@ -328,6 +330,7 @@ export class AgentSession {
       sessionId: () => this.sessionId,
       profileId: () => this.selectedProfileId(),
       history: () => this.items,
+      outputDirectory: () => this.outputDirectory,
       contextTokens: () => this.contextBudget.currentTokens,
       buildRequest: (provider, model, thinking, signal) => this.buildStreamRequest(provider, model, thinking, signal),
       buildRequestWithHistory: (history, provider, model, thinking, signal) =>
@@ -1553,8 +1556,8 @@ export class AgentSession {
     this.emit({ type: "state_changed", state })
   }
 
-  private addToolOutput(call: ToolCallItem, output: string): void {
-    this.pushItem({ type: "tool_result", callId: call.callId, output })
+  private addToolOutput(call: ToolCallItem, output: string, read?: ReadCoverage): void {
+    this.pushItem({ type: "tool_result", callId: call.callId, output, ...(read ? { read } : {}) })
   }
 
   private recordProviderRequest(): void {

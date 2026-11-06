@@ -1,4 +1,7 @@
 import { expect, test } from "bun:test"
+import { mkdtemp, rm } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import type { AgentEvent } from "../agent/events"
 import { activeHistory, type HistoryItem } from "../agent/history"
 import { runCompaction, type CompactionHost } from "../agent/session/compaction"
@@ -97,6 +100,7 @@ test("connecting a decision provider leaves the harness unchanged and exposes on
 
 test("manual and automatic compaction use Jev atomically, with visible summary fallback and no fallback on user cancellation", async () => {
   const harness = await setupAgentSessionTests("decision-compact-")
+  const directory = await mkdtemp(join(tmpdir(), "xal-decision-output-"))
   const previous = settings().typesafeAI
   try {
     await loadSettings()
@@ -131,6 +135,7 @@ test("manual and automatic compaction use Jev atomically, with visible summary f
         sessionId: () => "session",
         profileId: () => "text-profile",
         history: () => history,
+        outputDirectory: () => directory,
         contextTokens: () => 12_000,
         buildRequest: () => build(history),
         buildRequestWithHistory: build,
@@ -181,6 +186,7 @@ test("manual and automatic compaction use Jev atomically, with visible summary f
     }
   } finally {
     settings().typesafeAI = previous
+    await rm(directory, { recursive: true, force: true })
     await harness.cleanup()
   }
 })

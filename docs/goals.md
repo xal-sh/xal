@@ -24,7 +24,7 @@ The evaluator stays on the active provider. Configure a provider-specific model 
 }
 ```
 
-When no override is configured, the active session model evaluates the goal with the lowest thinking effort it supports. Evaluator requests have no tools, but their tokens are billed and included in goal usage. The evaluator can judge only conversation evidence, so effective conditions name both a measurable end state and how the agent should prove it, such as `` `bun checks` exits successfully and `git status --short` is empty ``.
+When no override is configured, the active session model evaluates the goal with the lowest thinking effort it supports. Evaluator requests have no tools and a 2,000-token output allowance, but their tokens are billed and included in goal usage. Before streaming, the complete estimated request plus output allowance must fit the selected evaluator model's known context window; oversized evidence fails evaluation and suspends continuation rather than being silently truncated. Returned tool calls and excessive text are rejected. Supported transports forward the output cap; ChatGPT subscription transport uses a local text safety limit and cancellation instead, which does not guarantee billed-token usage. The evaluator can judge only conversation evidence, so effective conditions name both a measurable end state and how the agent should prove it, such as `` `bun checks` exits successfully and `git status --short` is empty ``.
 
 ## Permissions and planning
 

@@ -50,6 +50,10 @@ fn feed_active(entry: &PersistentEntry, bytes: Vec<u8>) {
     let status = std::str::from_utf8(&run.pending[status_start..line_end])
         .ok()
         .and_then(|value| value.parse::<i32>().ok());
+    if run.state.timed_out() {
+        run.pending.drain(..line_end + 1);
+        return;
+    }
     let state = run.state.clone();
     *active = None;
     state.finish(match status {
@@ -91,9 +95,16 @@ fn expire_active(entry: &PersistentEntry) -> bool {
 }
 
 pub(super) fn dispatch_persistent(entry: Arc<PersistentEntry>) {
+    let mut kill_deadline = None;
     loop {
-        if expire_active(&entry) && !process_interrupt(&entry.process) {
+        if expire_active(&entry) {
+            entry.dead.store(true, std::sync::atomic::Ordering::Release);
+            process_signal(&entry.process, false);
+            kill_deadline = Some(Instant::now() + Duration::from_millis(1500));
+        }
+        if kill_deadline.is_some_and(|deadline| Instant::now() >= deadline) {
             process_signal(&entry.process, true);
+            kill_deadline = None;
         }
         let bytes = process_drain(&entry.process);
         if !bytes.is_empty() {
@@ -107,6 +118,9 @@ pub(super) fn dispatch_persistent(entry: Arc<PersistentEntry>) {
                 feed_active(&entry, remaining);
             }
             entry.dead.store(true, std::sync::atomic::Ordering::Release);
+            if kill_deadline.is_some() {
+                process_signal(&entry.process, true);
+            }
             if let Some(error) = process_reader_error(&entry.process) {
                 fail_active(
                     &entry,

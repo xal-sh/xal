@@ -54,6 +54,11 @@ export const readTool: Tool = {
       ...(limit === undefined ? {} : { limit }),
     })
     if (resolved && result.contentHash && !ctx.speculative) recordFileState(ctx.sessionId, resolved, result.contentHash)
-    return { output: result.output }
+    return {
+      output: result.output,
+      ...(result.coverage && result.contentHash
+        ? { read: { ...result.coverage, contentHash: result.contentHash } }
+        : {}),
+    }
   },
 }

@@ -92,6 +92,7 @@ export async function evaluateGoal(request: GoalEvaluationRequest): Promise<Goal
     emptyResponseMessage: `${request.provider.name} returned an empty goal verdict`,
     request: {
       model: request.evaluatorModel,
+      maxOutputTokens: 2_000,
       conversationModel: request.sessionModel,
       thinking: request.thinking,
       instructions: EVALUATOR_INSTRUCTIONS,

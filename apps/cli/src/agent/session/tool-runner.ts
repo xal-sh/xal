@@ -23,7 +23,9 @@ import {
   toolFailed,
 } from "../../tools/output"
 import { argumentErrors } from "../../tools/arguments"
+import { ToolOutputBudget } from "../../tools/output-budget"
 import { getTool } from "../../tools/registry"
+import type { ReadCoverage } from "../../tools/read-coverage"
 import { PROGRAMMATIC_TOOLS } from "../../tools/programmatic"
 import { isInteractiveTool, isSessionTool } from "../../tools/types"
 import type {
@@ -77,6 +79,7 @@ export interface ToolCallOutcome {
   readOnly: boolean
   output: string
   loopOutput?: string
+  read?: ReadCoverage
   execution?: ProcessExecution
   events: ToolEvent[]
   failure?: string
@@ -119,7 +122,7 @@ export interface ToolRunnerHost {
   hookContext(signal: AbortSignal): HookContext
   emit(event: AgentEvent): void
   setState(state: AgentState): void
-  addToolOutput(call: ToolCallItem, output: string): void
+  addToolOutput(call: ToolCallItem, output: string, read?: ReadCoverage): void
   updateToolCall(call: ToolCallItem): void
   publishToolEvent(event: ToolEvent): void
   recordVerification(record: VerificationRecord): Promise<void>
@@ -221,7 +224,12 @@ export class ToolCallRunner {
     this.finishSkippedCall(entry.call, output)
   }
 
-  async runBatch(batch: ToolCallBatch, signal: AbortSignal, toolLoops: ToolLoopDetector): Promise<Error | undefined> {
+  async runBatch(
+    batch: ToolCallBatch,
+    signal: AbortSignal,
+    toolLoops: ToolLoopDetector,
+    outputBudget = new ToolOutputBudget(),
+  ): Promise<Error | undefined> {
     const profile = profileToolBatchStarted(
       this.host.sessionId(),
       this.host.kind,
@@ -281,11 +289,19 @@ export class ToolCallRunner {
             signal,
           )
 
-      for (const [index, outcome] of outcomes.entries()) {
+      const completed = outcomes.map((outcome) => {
         if (!outcome) throw new Error("tool scheduler did not produce a result")
-        this.commit(
-          prefetch?.target === outcome ? { ...outcome, output: `${outcome.output}\n\n${prefetch.text}` } : outcome,
-        )
+        return prefetch?.target === outcome
+          ? { ...outcome, output: `${outcome.output}\n\n${prefetch.text}`, read: undefined }
+          : outcome
+      })
+      const bounded = await outputBudget.apply(
+        this.host.outputDirectory(),
+        completed.map((outcome) => outcome.output),
+      )
+      for (const [index, outcome] of completed.entries()) {
+        const output = bounded[index]!
+        this.commit(output === outcome.output ? outcome : { ...outcome, output, read: undefined })
         if (recorded[index]) toolLoops.record(outcome.call, outcome.loopOutput ?? outcome.output)
       }
       profileToolBatchFinished(profile, loopError ? "failed" : signal.aborted ? "interrupted" : "completed")
@@ -449,6 +465,8 @@ export class ToolCallRunner {
       this.host.emit({ type: "tool_started", callId: call.callId, tool: call.name, title, readOnly })
     }
     let output: string
+    let read: ReadCoverage | undefined
+    let readOutput: string | undefined
     let failure: string | undefined
     let execution: ProcessExecution | undefined
     let events: ToolEvent[] = []
@@ -520,6 +538,10 @@ export class ToolCallRunner {
           break
       }
       output = redactText(result.output)
+      if (output === result.output) {
+        read = result.read
+        readOutput = output
+      }
       if (toolFailed(output)) failure = output
       execution = result.execution
       events = result.events ?? []
@@ -573,6 +595,7 @@ export class ToolCallRunner {
     return {
       ...this.outcome(call, title, readOnly, output, undefined, events, execution),
       ...(scope ? { loopOutput } : {}),
+      ...(read && readOutput === output ? { read } : {}),
     }
   }
 
@@ -681,7 +704,7 @@ export class ToolCallRunner {
   }
 
   commit(outcome: ToolCallOutcome): void {
-    this.host.addToolOutput(outcome.call, outcome.output)
+    this.host.addToolOutput(outcome.call, outcome.output, outcome.read)
     this.host.emit({
       type: "tool_finished",
       callId: outcome.call.callId,

@@ -202,6 +202,7 @@ function buildBody(request: StreamRequest, provider: ChatCompletionProvider): st
     stream: true,
     stream_options: { include_usage: true },
     ...provider.requestOptions(request),
+    ...(request.maxOutputTokens === undefined ? {} : { max_tokens: request.maxOutputTokens }),
     ...(request.tools.length === 0
       ? {}
       : {

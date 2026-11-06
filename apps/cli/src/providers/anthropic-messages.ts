@@ -223,7 +223,10 @@ export function buildAnthropicBody(provider: AnthropicMessagesProvider, request:
   }
   return JSON.stringify({
     model: request.model,
-    max_tokens: provider.maxTokens(request.model),
+    max_tokens: Math.min(
+      request.maxOutputTokens ?? provider.maxTokens(request.model),
+      provider.maxTokens(request.model),
+    ),
     stream: true,
     system: buildSystem(request.instructions),
     messages: cacheBreakpoint(buildMessages(request.input, target)),

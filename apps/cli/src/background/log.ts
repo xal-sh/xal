@@ -4,6 +4,7 @@ import { join } from "node:path"
 import { describeError } from "../lib/error"
 
 const MAX_LOG_CHARS = 64 * 1024 * 1024
+const MAX_PENDING_CHARS = 1024 * 1024
 
 export interface JobLog {
   path: string
@@ -18,25 +19,40 @@ export function createJobLog(directory: string, jobId: string): JobLog {
   let stream: WriteStream | undefined
   let failure: string | undefined
   let written = 0
+  let pending = 0
   let capped = false
+  let closing: Promise<void> | undefined
+  const flush = (active: WriteStream, text: string): void => {
+    active.write(text, (error) => {
+      pending -= text.length
+      if (error) failure ??= describeError(error)
+    })
+  }
   const ready = mkdir(directory, { recursive: true, mode: 0o700 })
     .then(() => {
+      if (failure) return
       stream = createWriteStream(path, { flags: "wx", mode: 0o600 })
       stream.on("error", (error) => {
         failure ??= describeError(error)
       })
-      for (const chunk of buffered.splice(0)) stream.write(chunk)
+      for (const chunk of buffered.splice(0)) flush(stream, chunk)
     })
     .catch((error: unknown) => {
       failure ??= describeError(error)
     })
   const write = (text: string): void => {
-    if (stream) stream.write(text)
+    if (pending + text.length > MAX_PENDING_CHARS) {
+      failure = "output log could not keep up; pending writes exceeded 1 Mi characters and further output was dropped"
+      return
+    }
+    pending += text.length
+    if (stream) flush(stream, text)
     else buffered.push(text)
   }
   return {
     path,
     append(text) {
+      if (closing) throw new Error("output log is already closing")
       if (failure || capped || !text) return
       if (written + text.length > MAX_LOG_CHARS) {
         capped = true
@@ -48,16 +64,20 @@ export function createJobLog(directory: string, jobId: string): JobLog {
       write(text)
     },
     capped: () => capped,
-    async close() {
-      await ready
-      const active = stream
-      if (active) {
-        await new Promise<void>((resolve) => {
-          active.once("error", () => resolve())
-          active.end(() => resolve())
-        })
-      }
-      if (failure) throw new Error(failure)
+    close() {
+      closing ??= (async () => {
+        await ready
+        buffered.length = 0
+        const active = stream
+        if (active && !active.destroyed) {
+          await new Promise<void>((resolve) => {
+            active.once("error", () => resolve())
+            active.end(() => resolve())
+          })
+        }
+        if (failure) throw new Error(failure)
+      })()
+      return closing
     },
   }
 }

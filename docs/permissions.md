@@ -16,7 +16,7 @@ Control which tools can run, define permission modes, and prevent sensitive valu
 
 `allow`, `ask`, and `deny` are arrays of permission rules. A rule is either a tool name, such as `bash`, or a tool and subject pattern, such as `bash(git status*)` or `write(src/*)`. `*` matches any sequence of characters and also works in the tool name, so `mcp__github__*` matches every tool from that MCP server and `*` alone matches every tool. Deny rules are evaluated before all other permission rules.
 
-Chained commands are evaluated per segment, so `git status && rm /etc/hosts` asks even though `git status` alone would not. Commands using substitution or grouping that cannot be split safely always ask. Built-in risky-command rules are ordinary rules, so configuration can override them. For example, `"allow": ["bash(curl *)"]` stops `curl` from asking.
+Chained commands are evaluated per segment, so `git status && rm /etc/hosts` asks even though `git status` alone would not. Commands using substitution or grouping that cannot be split safely always ask. Explicit deny rules are also checked against parsed segments and normalized command subjects before sandbox heuristics are suppressed. For example, `bash(rm *)` still denies `echo ok; /bin/rm target` in a workspace sandbox or `yolo`, even with a broad allow rule. This is not a complete shell-language authorization boundary: constructs the parser cannot split retain their ask behavior, which `yolo` can allow. Built-in risky-command rules are ordinary rules, so configuration can override them. For example, `"allow": ["bash(curl *)"]` stops `curl` from asking.
 
 ## Built-in modes
 

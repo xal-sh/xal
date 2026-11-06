@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test"
 import type { Provider, StreamEvent, StreamRequest } from "./types"
+import { ScriptedProvider, round } from "../agent/session/test-support"
 import { collectStreamedText, StreamedTextAttemptError } from "./streamed-text"
 
 function provider(events: AsyncIterable<StreamEvent>): Provider {
@@ -91,6 +92,49 @@ test("reports provider events before failure and treats empty completion as rece
       expect(error.receivedEvent).toBe(true)
       expect(error.cause).toMatchObject({ message })
     }
+  }
+})
+
+test("checks auxiliary input and output against the selected target before streaming", async () => {
+  const target = new ScriptedProvider([], 1024)
+  await expect(
+    collectStreamedText({
+      provider: target,
+      profileId: "profile",
+      request: { ...request(), model: "test-model", maxOutputTokens: 2000 },
+      phase: "goal_evaluation",
+      emptyResponseMessage: "empty",
+    }),
+  ).rejects.toMatchObject({ receivedEvent: false, message: expect.stringContaining("context window") })
+  expect(target.requests).toHaveLength(0)
+})
+
+test("rejects auxiliary tool calls and excessive text rather than accepting partial evidence", async () => {
+  const cases: { events: StreamEvent[]; message: string }[] = [
+    {
+      events: [{ type: "item_done", item: { type: "tool_call", callId: "call", name: "bash", args: {} } }],
+      message: "tool call",
+    },
+    { events: [{ type: "text_delta", text: "x".repeat(801) }], message: "text safety limit" },
+    { events: [{ type: "reasoning_delta", text: "x".repeat(801) }], message: "text safety limit" },
+    {
+      events: [{ type: "item_done", item: { type: "assistant_message", text: "x".repeat(801) } }],
+      message: "text safety limit",
+    },
+  ]
+  for (const entry of cases) {
+    const target = new ScriptedProvider([round(entry.events)], 10_000)
+    await expect(
+      collectStreamedText({
+        provider: target,
+        profileId: "profile",
+        request: { ...request(), model: "test-model", maxOutputTokens: 100 },
+        phase: "compaction",
+        emptyResponseMessage: "empty",
+      }),
+    ).rejects.toMatchObject({ receivedEvent: true, message: expect.stringContaining(entry.message) })
+    expect(target.requests[0]?.maxOutputTokens).toBe(100)
+    expect(target.requests[0]?.signal?.aborted).toBe(true)
   }
 })
 

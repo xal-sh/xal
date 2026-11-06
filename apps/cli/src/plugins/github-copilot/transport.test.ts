@@ -223,6 +223,19 @@ describe("GitHub Copilot transport", () => {
     ])
   })
 
+  test("forwards auxiliary output limits through both protocols", async () => {
+    responses.push(sse([{ type: "response.completed", response: { usage: {} } }]))
+    await collect(streamResponse("profile-1", request({ maxOutputTokens: 2000, toolChoice: "none" })))
+    expect(JSON.parse(String(requests[0]!.init.body))).toMatchObject({ max_output_tokens: 2000, tool_choice: "none" })
+    responses.push(
+      new Response('data: {"choices":[{"delta":{"content":"done"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n'),
+    )
+    await collect(
+      streamResponse("profile-1", request({ model: "claude-sonnet-4.6", maxOutputTokens: 2000, toolChoice: "none" })),
+    )
+    expect(JSON.parse(String(requests[1]!.init.body))).toMatchObject({ max_tokens: 2000, tool_choice: "none" })
+  })
+
   test("omits the vision header when a turn carries no image attachments", async () => {
     responses.push(sse([{ type: "response.completed", response: { usage: {} } }]))
 

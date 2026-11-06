@@ -70,6 +70,7 @@ export interface ShellExecution {
   setTimeout(milliseconds: number): void
   clearTimeout(): void
   timedOut(): boolean
+  outputDropped(): boolean
   terminate(): void
   kill(): void
 }
@@ -129,7 +130,10 @@ function shellExecution(native: NativeShellExecution, onOutput: (text: string) =
     const tail = decoder.decode()
     if (tail) onOutput(tail)
   }
-  const pumped = pump()
+  const pumped = pump().catch((error: unknown) => {
+    native.kill()
+    throw error
+  })
   return {
     done: Promise.all([nativeDone, pumped]).then(([termination]) => {
       if (termination.status === "launchFailed") throw new Error(termination.signal)
@@ -138,6 +142,7 @@ function shellExecution(native: NativeShellExecution, onOutput: (text: string) =
     setTimeout: (milliseconds) => native.setTimeout(milliseconds),
     clearTimeout: () => native.clearTimeout(),
     timedOut: () => native.timedOut(),
+    outputDropped: () => native.outputDropped(),
     terminate: () => native.terminate(),
     kill: () => native.kill(),
   }

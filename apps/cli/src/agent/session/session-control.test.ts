@@ -204,7 +204,7 @@ describe("AgentSession control flow", () => {
         completedRound("Recovered summary"),
         completedRound("Stopped and returned the compacted result."),
       ],
-      200,
+      20_000,
       90,
     )
     const session = harness.createSession(provider, { kind: "subagent" })
@@ -348,10 +348,9 @@ describe("AgentSession control flow", () => {
       expect(await session.compact("remaining implementation work")).toBe("compacted")
       expect(disposedContexts).toContain(session.id)
       expect(session.currentState).toBe("idle")
-      expect(provider.requests[1]?.instructions).toContain("You summarize coding session transcripts")
-      expect(provider.requests[1]?.instructions).not.toBe(provider.requests[0]?.instructions)
-      expect(provider.requests[1]?.cacheKey).not.toBe(provider.requests[0]?.cacheKey)
-      expect(provider.requests[1]?.tools).toEqual([])
+      expect(provider.requests[1]?.instructions).toBe(provider.requests[0]?.instructions)
+      expect(provider.requests[1]?.cacheKey).toBe(provider.requests[0]?.cacheKey)
+      expect(provider.requests[1]?.tools).toEqual(provider.requests[0]?.tools)
       expect(provider.requests[1]?.toolChoice).toBe("none")
       const summaryRequest = provider.requests[1]?.input.at(-1)
       if (!summaryRequest || summaryRequest.type !== "user_message") throw new Error("missing summary request")
@@ -360,12 +359,14 @@ describe("AgentSession control flow", () => {
       expect(observed.filter((event) => event.type === "compacted")).toEqual([
         {
           type: "compacted",
-          summary: "Condensed history",
+          summary: expect.stringContaining("Condensed history\n\nOriginal pre-compaction transcript"),
           replaced: 1,
           tokensBefore: undefined,
         },
       ])
 
+      const compacted = observed.find((event) => event.type === "compacted")
+      if (!compacted) throw new Error("missing compaction event")
       const outcome = await runSettledTurn(session, { text: "Continue", images: [] })
 
       expect(outcome).toEqual({
@@ -376,7 +377,7 @@ describe("AgentSession control flow", () => {
       })
       expect(provider.requests[2]?.input).toEqual([
         { type: "user_message", text: "Build the original feature", images: [] },
-        continuationSummaryMessage("Condensed history"),
+        continuationSummaryMessage(compacted.summary),
         { type: "user_message", text: "Continue", images: [] },
       ])
     } finally {
@@ -414,7 +415,7 @@ describe("AgentSession control flow", () => {
         completedRound("Automatic summary"),
         completedRound("Continued after automatic compaction"),
       ],
-      200,
+      20_000,
       90,
     )
     const session = harness.createSession(provider)
@@ -438,37 +439,36 @@ describe("AgentSession control flow", () => {
       { type: "assistant_message", text: longResponse },
       { type: "user_message", text: "Continue after it fills", images: [] },
     ])
-    expect(provider.requests[1]?.instructions).toContain("You summarize coding session transcripts")
-    expect(provider.requests[1]?.instructions).not.toBe(provider.requests[0]?.instructions)
-    expect(provider.requests[1]?.cacheKey).not.toBe(provider.requests[0]?.cacheKey)
-    expect(provider.requests[1]?.tools).toEqual([])
+    expect(provider.requests[1]?.instructions).toBe(provider.requests[0]?.instructions)
+    expect(provider.requests[1]?.cacheKey).toBe(provider.requests[0]?.cacheKey)
+    expect(provider.requests[1]?.tools).toEqual(provider.requests[0]?.tools)
     expect(provider.requests[1]?.toolChoice).toBe("none")
     const summaryRequest = provider.requests[1]?.input.at(-1)
     if (!summaryRequest || summaryRequest.type !== "user_message") throw new Error("missing summary request")
     expect(summaryRequest.text).toContain("Preserve exact identifiers")
+    const compacted = observed.find((event) => event.type === "compacted")
+    if (!compacted) throw new Error("missing compaction event")
     expect(provider.requests[2]?.input).toEqual([
       { type: "user_message", text: "Fill the context", images: [] },
       { type: "user_message", text: "Continue after it fills", images: [] },
-      continuationSummaryMessage("Automatic summary"),
+      continuationSummaryMessage(compacted.summary),
     ])
-    const compacted = observed.find((event) => event.type === "compacted")
     expect(compacted).toMatchObject({
       type: "compacted",
-      summary: "Automatic summary",
+      summary: expect.stringContaining("Automatic summary\n\nOriginal pre-compaction transcript"),
       replaced: 1,
     })
-    if (!compacted || compacted.type !== "compacted") throw new Error("missing compaction event")
     expect(compacted.tokensBefore).toBeGreaterThan(90)
   })
 
   test("automatically compacts at the default 80% limit", async () => {
     const provider = new ScriptedProvider(
       [
-        completedRound("Initial response", { totalInputTokens: 165 }),
+        completedRound("Initial response", { totalInputTokens: 16_500 }),
         completedRound("Early summary"),
         completedRound("Continued after early compaction"),
       ],
-      200,
+      20_000,
     )
     const session = harness.createSession(provider)
     const observed: AgentEvent[] = []
@@ -480,8 +480,8 @@ describe("AgentSession control flow", () => {
     expect(provider.requests.map((request) => request.toolChoice)).toEqual(["auto", "none", "auto"])
     const compacted = observed.find((event) => event.type === "compacted")
     if (!compacted || compacted.type !== "compacted") throw new Error("missing compaction event")
-    expect(compacted.tokensBefore).toBeGreaterThanOrEqual(160)
-    expect(compacted.tokensBefore).toBeLessThan(180)
+    expect(compacted.tokensBefore).toBeGreaterThanOrEqual(16_000)
+    expect(compacted.tokensBefore).toBeLessThan(18_000)
   })
 
   test("uses the same successful automatic admission path for subagents", async () => {
@@ -491,7 +491,7 @@ describe("AgentSession control flow", () => {
         completedRound("Subagent summary"),
         completedRound("Subagent continued"),
       ],
-      200,
+      20_000,
       90,
     )
     const session = harness.createSession(provider, { kind: "subagent" })
@@ -569,7 +569,10 @@ describe("AgentSession control flow", () => {
     expect(provider.requests[2]?.input).toEqual([
       { type: "user_message", text: "Start", images: [] },
       { type: "user_message", text: "q".repeat(12_000), images: [] },
-      continuationSummaryMessage("Queued summary"),
+      expect.objectContaining({
+        type: "user_message",
+        text: expect.stringContaining("Queued summary\n\nOriginal pre-compaction transcript"),
+      }),
     ])
   })
 
@@ -708,7 +711,7 @@ describe("AgentSession control flow", () => {
           round([], new ProviderError("temporary compaction failure", { retryable: true, retryAfterMs: 0 })),
           round([], new ProviderError("repeated compaction failure", { retryable: true, retryAfterMs: 0 })),
         ],
-        200,
+        20_000,
         90,
       )
       const session = harness.createSession(provider, { kind })
@@ -735,7 +738,7 @@ describe("AgentSession control flow", () => {
           new ProviderError("compaction disconnected", { retryable: true, retryAfterMs: 0 }),
         ),
       ],
-      200,
+      20_000,
       90,
     )
     const session = harness.createSession(provider)
@@ -764,7 +767,7 @@ describe("AgentSession control flow", () => {
     for (const testCase of cases) {
       const provider = new ScriptedProvider(
         [completedRound(`${testCase.name}-${"x".repeat(1_000)}`, { totalInputTokens: 90 }), testCase.failure],
-        200,
+        20_000,
         90,
       )
       const session = harness.createSession(provider)
@@ -778,7 +781,7 @@ describe("AgentSession control flow", () => {
     }
   })
 
-  test("does not send a normal request at the hard context window", async () => {
+  test("does not send an oversized auxiliary or normal request at the hard context window", async () => {
     const provider = new ScriptedProvider([completedRound("s".repeat(100))], 10, 8)
     const session = harness.createSession(provider)
 
@@ -786,10 +789,9 @@ describe("AgentSession control flow", () => {
 
     expect(outcome.status).toBe("failed")
     if (outcome.status !== "failed") throw new Error("expected failed turn")
-    expect(outcome.error).toContain("exceeding the 10-token context window")
-    expect(provider.requests).toHaveLength(1)
-    expect(provider.requests[0]?.toolChoice).toBe("none")
-    expect(session.providerRequestCount).toBe(1)
+    expect(outcome.error).toContain("exceeding test-model's 10-token context window")
+    expect(provider.requests).toHaveLength(0)
+    expect(session.providerRequestCount).toBe(0)
   })
 
   test("interrupts a pending approval and settles without executing the tool", async () => {

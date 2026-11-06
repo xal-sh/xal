@@ -1,5 +1,6 @@
 import { isAbsolute } from "node:path"
 import { asNumber, asString, isRecord } from "../lib/json"
+import { parseReadCoverage } from "../tools/read-coverage"
 
 export interface NativeFuzzyField {
   text: string
@@ -80,6 +81,12 @@ export interface NativeFileToolOutput extends NativeToolOutput {
 
 export interface NativeReadOutput extends NativeToolOutput {
   contentHash?: string
+  coverage?: {
+    path: string
+    offset: number
+    limit: number
+    truncated: boolean
+  }
 }
 
 export interface NativeWebFetchRequest {
@@ -239,6 +246,7 @@ export interface NativeProcess {
   closeStdin(): void
   drain(): Uint8Array
   outputClosed(): boolean
+  outputDropped(): boolean
   wait(): Promise<NativeProcessTermination>
   setTimeout(milliseconds: number): void
   clearTimeout(): void
@@ -260,6 +268,7 @@ export interface NativeShellRequest {
 export interface NativeShellExecution {
   drain(): Uint8Array
   outputClosed(): boolean
+  outputDropped(): boolean
   wait(): Promise<NativeProcessTermination>
   setTimeout(milliseconds: number): void
   clearTimeout(): void
@@ -364,7 +373,14 @@ export function parseReadOutput(value: unknown): NativeReadOutput {
   if (output === undefined || (value.contentHash !== undefined && contentHash === undefined)) {
     throw new Error("native read returned an invalid value")
   }
-  return contentHash === undefined ? { output } : { output, contentHash }
+  if (value.coverage === undefined) return contentHash === undefined ? { output } : { output, contentHash }
+  const coverage = isRecord(value.coverage) ? parseReadCoverage({ ...value.coverage, contentHash }) : undefined
+  if (!coverage) throw new Error("native read returned invalid coverage")
+  return {
+    output,
+    contentHash,
+    coverage: { path: coverage.path, offset: coverage.offset, limit: coverage.limit, truncated: coverage.truncated },
+  }
 }
 
 export function parseGitCommandOutput(value: unknown): NativeGitCommandOutput {
@@ -604,6 +620,7 @@ function parseProcessControl(value: unknown, message: string): NativeShellExecut
   if (!isRecord(value)) throw new Error(message)
   const drain = value.drain
   const outputClosed = value.outputClosed
+  const outputDropped = value.outputDropped
   const wait = value.wait
   const setTimeout = value.setTimeout
   const clearTimeout = value.clearTimeout
@@ -613,6 +630,7 @@ function parseProcessControl(value: unknown, message: string): NativeShellExecut
   if (
     typeof drain !== "function" ||
     typeof outputClosed !== "function" ||
+    typeof outputDropped !== "function" ||
     typeof wait !== "function" ||
     typeof setTimeout !== "function" ||
     typeof clearTimeout !== "function" ||
@@ -631,6 +649,11 @@ function parseProcessControl(value: unknown, message: string): NativeShellExecut
     outputClosed() {
       const output: unknown = Reflect.apply(outputClosed, value, [])
       if (typeof output !== "boolean") throw new Error("native process returned invalid output state")
+      return output
+    },
+    outputDropped() {
+      const output: unknown = Reflect.apply(outputDropped, value, [])
+      if (typeof output !== "boolean") throw new Error("native process returned invalid output completeness")
       return output
     },
     async wait() {

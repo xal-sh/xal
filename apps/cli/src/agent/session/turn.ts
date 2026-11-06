@@ -3,6 +3,7 @@ import type { HookContext } from "../../hooks/types"
 import type { JsonObject } from "../../lib/json"
 import { OutputLimitError } from "../../providers/errors"
 import type {
+  ConversationItem,
   Provider,
   ProviderOutputItem,
   StreamRequest,
@@ -11,10 +12,11 @@ import type {
   UserInput,
 } from "../../providers/types"
 import { TOOL_FAILED_PREFIX } from "../../tools/output"
+import { ToolOutputBudget } from "../../tools/output-budget"
 import type { ToolEvent } from "../../tools/types"
 import type { VerificationCheckStatus } from "../../verification/types"
 import type { AgentEvent, AgentState } from "../events"
-import type { HistoryItem } from "../history"
+import { activeHistory, type HistoryItem } from "../history"
 import { ToolLoopDetector } from "./loop-detection"
 import type { OutputContract } from "./output-contract"
 import { directShellCommand, interjectionResumeMessage } from "./queue"
@@ -25,6 +27,7 @@ import { ToolCallRunner, type PreparedToolCall, type ToolCallEntry, type ToolCal
 export interface TurnHost {
   readonly toolRunner: ToolCallRunner
   readonly hookReporter: HookReporter
+  history(): HistoryItem[]
   outputContract(): OutputContract | undefined
   verificationStatus(signal: AbortSignal): Promise<VerificationCheckStatus[] | undefined>
   verificationBaseline(signal: AbortSignal): Promise<string | undefined>
@@ -59,6 +62,23 @@ export interface TurnSummary {
   usedTools: boolean
 }
 
+function frozenToolOutputs(items: ConversationItem[], pendingCalls: ToolCallItem[]): string[] {
+  let start = items.findLastIndex((item) => item.type === "tool_call" && item.callId === pendingCalls[0]?.callId)
+  if (start < 0) throw new Error("pending tool call is missing from history")
+  while (start > 0) {
+    const previous = items[start - 1]!
+    if (previous.type === "user_message" || previous.type === "tool_result") break
+    start -= 1
+  }
+  const calls = new Set<string>()
+  const outputs: string[] = []
+  for (const item of items.slice(start)) {
+    if (item.type === "tool_call") calls.add(item.callId)
+    if (item.type === "tool_result" && calls.delete(item.callId)) outputs.push(item.output)
+  }
+  return outputs
+}
+
 export async function runTurn(
   host: TurnHost,
   signal: AbortSignal,
@@ -83,6 +103,7 @@ export async function runTurn(
     return true
   }
   let resumedCalls = pendingCalls
+  const frozenOutputs = pendingCalls.length ? frozenToolOutputs(activeHistory(host.history()), pendingCalls) : []
 
   while (true) {
     if (host.paused()) return
@@ -156,6 +177,7 @@ export async function runTurn(
     interjected = false
     let loopError: Error | undefined
     let sharedEntries: ToolCallEntry[] = []
+    const outputBudget = new ToolOutputBudget(restoringCalls ? frozenOutputs : [])
     for (const [index, call] of toolCalls.entries()) {
       const entry: ToolCallEntry = restoringCalls
         ? { type: "call", call }
@@ -166,7 +188,12 @@ export async function runTurn(
       }
 
       if (sharedEntries.length > 0) {
-        loopError = await host.toolRunner.runBatch({ concurrency: "shared", entries: sharedEntries }, signal, toolLoops)
+        loopError = await host.toolRunner.runBatch(
+          { concurrency: "shared", entries: sharedEntries },
+          signal,
+          toolLoops,
+          outputBudget,
+        )
         sharedEntries = []
         const stopReason = host.toolRunner.stopReason(loopError, signal)
         if (stopReason) {
@@ -176,14 +203,24 @@ export async function runTurn(
         }
       }
 
-      loopError = await host.toolRunner.runBatch({ concurrency: "exclusive", entries: [entry] }, signal, toolLoops)
+      loopError = await host.toolRunner.runBatch(
+        { concurrency: "exclusive", entries: [entry] },
+        signal,
+        toolLoops,
+        outputBudget,
+      )
       const stopReason = host.toolRunner.stopReason(loopError, signal)
       if (!stopReason) continue
       for (const remaining of toolCalls.slice(index + 1)) host.toolRunner.finishSkippedCall(remaining, stopReason)
       break
     }
     if (sharedEntries.length > 0) {
-      loopError = await host.toolRunner.runBatch({ concurrency: "shared", entries: sharedEntries }, signal, toolLoops)
+      loopError = await host.toolRunner.runBatch(
+        { concurrency: "shared", entries: sharedEntries },
+        signal,
+        toolLoops,
+        outputBudget,
+      )
     }
     if (loopError) throw loopError
     const contract = host.outputContract()

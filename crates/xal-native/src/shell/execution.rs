@@ -5,6 +5,7 @@ struct RunOutput {
     bytes: usize,
     closed: bool,
     lossy: bool,
+    dropped: bool,
 }
 
 pub(super) struct RunState {
@@ -15,6 +16,8 @@ pub(super) struct RunState {
     deadline: Mutex<Option<Instant>>,
     timed_out: AtomicBool,
     process: Arc<ProcessState>,
+    initial_dropped_bytes: u64,
+    process_dropped: AtomicBool,
 }
 
 impl RunState {
@@ -25,12 +28,15 @@ impl RunState {
                 bytes: 0,
                 closed: false,
                 lossy: false,
+                dropped: false,
             }),
             output_changed: Condvar::new(),
             completion: Mutex::new(None),
             completed: Condvar::new(),
             deadline: Mutex::new(None),
             timed_out: AtomicBool::new(false),
+            initial_dropped_bytes: crate::process::process_dropped_bytes(&process),
+            process_dropped: AtomicBool::new(false),
             process,
         })
     }
@@ -39,18 +45,20 @@ impl RunState {
         if bytes.is_empty() {
             return;
         }
+        let mut output = lock(&self.output);
         let bytes = if bytes.len() > OUTPUT_CAPACITY {
+            output.dropped = true;
             bytes[bytes.len() - OUTPUT_CAPACITY..].to_vec()
         } else {
             bytes
         };
-        let mut output = lock(&self.output);
         while !output.closed && output.bytes + bytes.len() > OUTPUT_CAPACITY {
             if output.lossy {
                 let Some(dropped) = output.chunks.pop_front() else {
                     break;
                 };
                 output.bytes -= dropped.len();
+                output.dropped = true;
                 continue;
             }
             let (next, timeout) = self
@@ -72,6 +80,10 @@ impl RunState {
         if completion.is_some() {
             return;
         }
+        self.process_dropped.store(
+            crate::process::process_dropped_bytes(&self.process) > self.initial_dropped_bytes,
+            std::sync::atomic::Ordering::Relaxed,
+        );
         *completion = Some(Ok(termination));
         drop(completion);
         self.completed.notify_all();
@@ -82,6 +94,10 @@ impl RunState {
         if completion.is_some() {
             return;
         }
+        self.process_dropped.store(
+            crate::process::process_dropped_bytes(&self.process) > self.initial_dropped_bytes,
+            std::sync::atomic::Ordering::Relaxed,
+        );
         *completion = Some(Err(error));
         drop(completion);
         self.completed.notify_all();
@@ -170,6 +186,19 @@ impl NativeShellExecution {
     #[napi(catch_unwind)]
     pub fn output_closed(&self) -> bool {
         self.state.done()
+    }
+
+    #[napi(catch_unwind)]
+    pub fn output_dropped(&self) -> bool {
+        let process_dropped = if self.state.done() {
+            self.state
+                .process_dropped
+                .load(std::sync::atomic::Ordering::Relaxed)
+        } else {
+            crate::process::process_dropped_bytes(&self.state.process)
+                > self.state.initial_dropped_bytes
+        };
+        lock(&self.state.output).dropped || process_dropped
     }
 
     #[napi(catch_unwind)]

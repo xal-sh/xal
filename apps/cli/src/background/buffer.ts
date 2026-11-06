@@ -36,7 +36,10 @@ export function createJobBuffer(headChars: number, tailChars: number): JobBuffer
       }
     },
     text() {
-      cached ??= omitted > 0 ? `${head}\n... ${omitted} characters omitted ...\n${tail.join("")}` : head + tail.join("")
+      cached ??=
+        omitted > 0
+          ? `${head.replace(/[\uD800-\uDBFF]$/, "")}\n... ${omitted} characters omitted ...\n${tail.join("").replace(/^[\uDC00-\uDFFF]/, "")}`
+          : head + tail.join("")
       return cached
     },
   }

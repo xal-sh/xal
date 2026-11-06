@@ -84,6 +84,40 @@ describe("bash compound permission policy", () => {
     setUserRules({})
   })
 
+  test("enforces explicit segment and normalized denies even in a sandbox or yolo mode", async () => {
+    registerBashCtx()
+    setUserRules({ deny: ["bash(rm *)"], allow: ["bash(*)"] })
+    for (const command of ["echo ok; rm target", "echo ok && /bin/rm target", "echo ok; env FOO=1 rm target"]) {
+      expect(
+        await evaluatePolicy({
+          sessionKey: {},
+          cwd: process.cwd(),
+          tool: "bash",
+          title: command,
+          args: { command, sandbox: "workspace" },
+          subject: command,
+          readOnly: false,
+          sandboxed: true,
+          mode: "yolo",
+        }),
+      ).toBe("deny")
+    }
+    const curl = {
+      sessionKey: {},
+      cwd: process.cwd(),
+      tool: "bash",
+      title: "curl example.com",
+      args: { command: "curl example.com", sandbox: "read" },
+      subject: "curl example.com",
+      readOnly: true,
+      sandboxed: true,
+      mode: "normal",
+    }
+    expect(await evaluatePolicy(curl)).toBe("allow")
+    setUserRules({ ask: ["bash(curl *)"] })
+    expect(await evaluatePolicy(curl)).toBe("ask")
+  })
+
   test("approves matching compound commands after a session approval", async () => {
     const previousHome = process.env[homeEnv]
     const home = await mkdtemp(join(tmpdir(), `${appInfo.name}-bash-permission-test-`))

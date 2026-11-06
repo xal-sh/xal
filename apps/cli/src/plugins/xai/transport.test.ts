@@ -93,6 +93,11 @@ describe("xAI transport", () => {
     })
   })
 
+  test("forwards auxiliary output limits without enabling tools", async () => {
+    await run({ maxOutputTokens: 2000, toolChoice: "none" })
+    expect(sentBody()).toMatchObject({ max_output_tokens: 2000, tool_choice: "none" })
+  })
+
   test("omits reasoning.summary, include, and tool strict mode that xAI rejects", async () => {
     await run()
 

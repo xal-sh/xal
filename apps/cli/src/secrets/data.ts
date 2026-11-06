@@ -68,8 +68,19 @@ export function redactConversationItem(item: ConversationItem): ConversationItem
         ...(replay ? { replay } : {}),
       }
     }
-    case "tool_result":
-      return { ...item, output: redactText(item.output) }
+    case "tool_result": {
+      const output = redactText(item.output)
+      const read = item.read
+      if (
+        read &&
+        (output !== item.output ||
+          redactText(read.path) !== read.path ||
+          redactText(read.contentHash) !== read.contentHash)
+      ) {
+        return { ...item, output, read: undefined }
+      }
+      return { ...item, output }
+    }
   }
 }
 
@@ -96,6 +107,7 @@ export function redactHistoryItem(item: HistoryItem): HistoryItem {
     return {
       ...item,
       summary: redactText(item.summary),
+      ...(item.tail ? { tail: item.tail.map(redactConversationItem) } : {}),
       retained: item.retained.map((retained) => {
         const redacted = redactConversationItem(retained)
         if (redacted.type !== "user_message") throw new Error("invalid retained user message")

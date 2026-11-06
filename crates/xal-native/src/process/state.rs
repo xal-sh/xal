@@ -5,6 +5,7 @@ pub(super) struct OutputQueue {
     bytes: usize,
     pub(super) closed: bool,
     lossy: bool,
+    dropped: u64,
 }
 
 pub(crate) struct ProcessState {
@@ -31,18 +32,22 @@ fn push_output(state: &ProcessState, bytes: Vec<u8>) {
     if bytes.is_empty() {
         return;
     }
+    let mut output = lock(&state.output);
     let bytes = if bytes.len() > OUTPUT_CAPACITY {
+        output.dropped = output
+            .dropped
+            .saturating_add((bytes.len() - OUTPUT_CAPACITY) as u64);
         bytes[bytes.len() - OUTPUT_CAPACITY..].to_vec()
     } else {
         bytes
     };
-    let mut output = lock(&state.output);
     while !output.closed && output.bytes + bytes.len() > OUTPUT_CAPACITY {
         if output.lossy {
             let Some(dropped) = output.chunks.pop_front() else {
                 break;
             };
             output.bytes -= dropped.len();
+            output.dropped = output.dropped.saturating_add(dropped.len() as u64);
             continue;
         }
         let (next, timeout) = state
@@ -249,6 +254,7 @@ pub(crate) fn spawn_process(request: NativeProcessRequest) -> napi::Result<Arc<P
             bytes: 0,
             closed: false,
             lossy: false,
+            dropped: 0,
         }),
         output_changed: Condvar::new(),
         readers: AtomicUsize::new(2),
@@ -277,6 +283,10 @@ pub(crate) fn process_drain(state: &ProcessState) -> Vec<u8> {
     output.lossy = false;
     state.output_changed.notify_all();
     bytes
+}
+
+pub(crate) fn process_dropped_bytes(state: &ProcessState) -> u64 {
+    lock(&state.output).dropped
 }
 
 pub(crate) fn process_output_closed(state: &ProcessState) -> bool {
@@ -321,23 +331,6 @@ pub(super) fn process_timed_out(state: &ProcessState) -> bool {
 
 pub(crate) fn process_signal(state: &ProcessState, force: bool) {
     signal_process_tree(state, force);
-}
-
-pub(crate) fn process_interrupt(state: &ProcessState) -> bool {
-    #[cfg(unix)]
-    {
-        Command::new("kill")
-            .args(["-INT", "--", &format!("-{}", state.pid)])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .is_ok_and(|status| status.success())
-    }
-    #[cfg(windows)]
-    {
-        signal_process_tree(state, false);
-        true
-    }
 }
 
 pub(super) fn wait_process(state: &ProcessState) -> napi::Result<NativeProcessTermination> {

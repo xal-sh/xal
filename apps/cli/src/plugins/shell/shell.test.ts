@@ -1,10 +1,11 @@
-import { afterEach, expect, test } from "bun:test"
+import { afterEach, expect, spyOn, test } from "bun:test"
 import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { appInfo } from "../../app-info"
 import { getJob, reapOwnerJobs, stopJob, suppressDelivery, waitForProcessOutput } from "../../background/jobs"
-import { requestBackground } from "../../background/promotion"
+import { armPromotion, hasPromotion, requestBackground } from "../../background/promotion"
+import * as logs from "../../background/log"
 import { listBackgroundTasks, removeBackgroundTask } from "../../background/registry"
 import { createNativeProcess } from "../../native"
 import { REDACTION_MARKER, replaceSecretValues } from "../../secrets/redactor"
@@ -120,17 +121,16 @@ test("applies native timeout and drains output beyond channel capacity without l
   const sessionId = crypto.randomUUID()
   sessions.add(sessionId)
   await run(sessionId, "export XAL_TIMEOUT_STATE=preserved; trap 'printf original-trap' INT", process.cwd())
-  const originalTrap = await run(sessionId, "trap", process.cwd())
   let timedOutput = ""
   const timed = executeShellCommand(sessionId, "sleep 30; printf missed", process.cwd(), undefined, (text) => {
     timedOutput += text
   })
   timed.setTimeout(50)
-  expect((await timed.done).status).toBe("exited")
+  expect((await timed.done).status).toBe("signaled")
   expect(timed.timedOut()).toBe(true)
   expect(timedOutput).toBe("")
-  expect(await run(sessionId, 'printf "%s" "$XAL_TIMEOUT_STATE"', process.cwd())).toBe("preserved")
-  expect(await run(sessionId, "trap", process.cwd())).toBe(originalTrap)
+  expect(await run(sessionId, 'printf "%s" "${XAL_TIMEOUT_STATE-reset}"', process.cwd())).toBe("reset")
+  expect(await run(sessionId, "trap", process.cwd())).not.toContain("original-trap")
 
   const commandProcess = spawnCommand(["/bin/sh", "-c", "yes x | head -c 1000000"], { ...process.env }, process.cwd())
   let bytes = 0
@@ -139,9 +139,11 @@ test("applies native timeout and drains output beyond channel capacity without l
   })
   expect(await commandProcess.done).toEqual({ status: "exited", exitCode: 0 })
   expect(bytes).toBe(1_000_000)
+  expect(commandProcess.outputDropped()).toBe(false)
 
   const unobserved = spawnCommand(["/bin/sh", "-c", "yes x | head -c 1000000"], { ...process.env }, process.cwd())
   expect(await unobserved.done).toEqual({ status: "exited", exitCode: 0 })
+  expect(unobserved.outputDropped()).toBe(true)
 
   const native = createNativeProcess({
     launch: ["/bin/sh", "-c", "yes x | head -c 1000000"],
@@ -150,7 +152,32 @@ test("applies native timeout and drains output beyond channel capacity without l
     stdin: false,
   })
   expect(await native.wait()).toMatchObject({ status: "exited", exitCode: 0 })
+  expect(native.outputDropped()).toBe(true)
+  native.drain()
+  expect(native.outputDropped()).toBe(true)
 })
+
+test.skipIf(process.platform === "win32")(
+  "escalates a timed-out shell that ignores termination and replaces it",
+  async () => {
+    const sessionId = crypto.randomUUID()
+    const captured = capture(sessionId, "trap '' TERM INT; printf ready; sleep 30", process.cwd())
+    captured.execution.setTimeout(100)
+    const backstop = setTimeout(() => captured.execution.kill(), 5000)
+    try {
+      const started = Date.now()
+      const result = await captured.result
+      expect(result.termination).toEqual({ status: "signaled", signal: "SIGKILL" })
+      expect(Date.now() - started).toBeLessThan(4000)
+      expect(captured.execution.timedOut()).toBe(true)
+      expect(await run(sessionId, "printf recovered", process.cwd())).toBe("recovered")
+    } finally {
+      clearTimeout(backstop)
+      captured.execution.kill()
+    }
+  },
+  6000,
+)
 
 test("redacts cross-drain secrets and generations added while Bash is running", async () => {
   const sessionId = crypto.randomUUID()
@@ -182,6 +209,109 @@ test("redacts cross-drain secrets and generations added while Bash is running", 
     expect(updates).not.toContain("dynamic-secret")
   } finally {
     replaceSecretValues(source, [])
+  }
+})
+
+test.each([false, true])(
+  "spools redacted shell output and preserves the artifact across promotion=%s",
+  async (promote) => {
+    const sessionId = crypto.randomUUID()
+    sessions.add(sessionId)
+    const directory = await mkdtemp(join(tmpdir(), "xal-shell-spool-"))
+    const ready = Promise.withResolvers<void>()
+    replaceSecretValues(sessionId, ["cross-secret"])
+    try {
+      const execution = bashTool.execute(
+        {
+          command:
+            "printf cross-; sleep 0.02; printf secret; yes x | head -c 100000; printf '\\nready\\n'; sleep 0.1; printf end",
+        },
+        {
+          cwd: process.cwd(),
+          sessionId,
+          sessionKind: "primary",
+          directory,
+          signal: new AbortController().signal,
+          update(text) {
+            if (text.includes("ready")) ready.resolve()
+          },
+        },
+      )
+      await ready.promise
+      if (promote) expect(requestBackground(sessionId)).toBe(true)
+      const result = await execution
+      let path: string | undefined
+      if (promote) {
+        const id = /background job ([\w-]+)/.exec(result.output)?.[1]
+        const job = id ? getJob(id) : undefined
+        if (!job || job.kind !== "process") throw new Error("missing promoted job")
+        await job.completion
+        if (job.record?.status !== "saved" || !job.record.complete) throw new Error("missing complete log")
+        path = job.record.path
+        suppressDelivery(job)
+      } else {
+        expect(Buffer.byteLength(result.output)).toBeLessThanOrEqual(20 * 1024)
+        path = /Full output saved to: (.+)/.exec(result.output)?.[1]
+      }
+      if (!path) throw new Error("missing output artifact")
+      expect(await readFile(path, "utf8")).toBe(`${REDACTION_MARKER}${"x\n".repeat(50_000)}\nready\nend`)
+    } finally {
+      replaceSecretValues(sessionId, [])
+      await reapOwnerJobs(sessionId, 2_000)
+      for (const task of listBackgroundTasks().filter((task) => task.ownerId === sessionId))
+        removeBackgroundTask(task.id)
+      await rm(directory, { recursive: true, force: true })
+    }
+  },
+)
+
+test("disarms a finished command before awaiting log closure without blocking another promotion", async () => {
+  const sessionId = crypto.randomUUID()
+  sessions.add(sessionId)
+  const directory = await mkdtemp(join(tmpdir(), "xal-shell-close-"))
+  const closing = Promise.withResolvers<void>()
+  const release = Promise.withResolvers<void>()
+  const create = logs.createJobLog
+  const delayed = spyOn(logs, "createJobLog").mockImplementation((directory, id) => {
+    const log = create(directory, id)
+    return {
+      ...log,
+      async close() {
+        closing.resolve()
+        await release.promise
+        await log.close()
+      },
+    }
+  })
+  const execution = bashTool.execute(
+    { command: "yes x | head -c 50000" },
+    {
+      cwd: process.cwd(),
+      sessionId,
+      sessionKind: "primary",
+      directory,
+      signal: new AbortController().signal,
+      update() {},
+    },
+  )
+  let disarm: (() => void) | undefined
+  try {
+    await closing.promise
+    expect(hasPromotion(sessionId)).toBe(false)
+    let promoted = false
+    disarm = armPromotion(sessionId, () => {
+      promoted = true
+    })
+    expect(requestBackground(sessionId)).toBe(true)
+    expect(promoted).toBe(true)
+    release.resolve()
+    expect((await execution).output).toContain("Full output saved to:")
+  } finally {
+    release.resolve()
+    await execution
+    disarm?.()
+    delayed.mockRestore()
+    await rm(directory, { recursive: true, force: true })
   }
 })
 

@@ -60,6 +60,15 @@ test("redacts secrets from shell and compaction history the session persists", (
       strategy: "user_messages_v1",
       summary: `current ${SECRET}`,
       replaced: 4,
+      tail: [
+        { type: "tool_call", callId: "read", name: "read", args: { file_path: "/file" } },
+        {
+          type: "tool_result",
+          callId: "read",
+          output: SECRET,
+          read: { path: "/file", contentHash: "hash", offset: 1, limit: 1, truncated: false },
+        },
+      ],
       retained: [
         {
           type: "user_message",

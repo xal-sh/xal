@@ -1,4 +1,8 @@
-import { expect, test } from "bun:test"
+import { afterEach, beforeEach, expect, test } from "bun:test"
+import { mkdtemp, readFile, rm } from "node:fs/promises"
+import { join } from "node:path"
+import { tmpdir } from "node:os"
+import { parseRecord } from "../../sessions/records"
 import { promptCacheKey } from "../../providers/cache"
 import { estimateRequestTokens } from "../../providers/request-size"
 import type { ConversationItem, ProviderPrompt, StreamRequest } from "../../providers/types"
@@ -16,11 +20,20 @@ import {
   autoCompact,
   MAX_REPLACEMENT_REQUEST_TOKENS,
   retainAuthoredUsers,
+  retainRecentTools,
   runCompaction,
   summarizeHistory,
 } from "./compaction"
 import { ContextBudget, requestIdentity } from "./context-budget"
 import { StreamBuffer, streamProviderTurn } from "./stream"
+
+let directory: string
+beforeEach(async () => {
+  directory = await mkdtemp(join(tmpdir(), "xal-compaction-"))
+})
+afterEach(async () => {
+  await rm(directory, { recursive: true, force: true })
+})
 
 const prompt: ProviderPrompt = {
   instructions: "Continue the coding session",
@@ -95,6 +108,20 @@ test("rewind and redo preserve both compaction floor variants", () => {
     expect(rewind.redos[0]?.state.items).toEqual(items)
     expect(activeHistory(rewind.active.items)).toEqual(activeHistory([floor]))
   }
+})
+
+test("retains only complete recent tool exchanges within the tail budget", () => {
+  const exchange: ConversationItem[] = [
+    { type: "assistant_message", text: "Checking" },
+    { type: "tool_call", callId: "one", name: "read", args: {} },
+    { type: "tool_call", callId: "two", name: "read", args: {} },
+    { type: "tool_result", callId: "one", output: "first" },
+    { type: "tool_result", callId: "two", output: "second" },
+  ]
+  expect(retainRecentTools(exchange, 1000)).toEqual(exchange)
+  expect(retainRecentTools(exchange, 1)).toEqual([])
+  expect(retainRecentTools(exchange.slice(0, -1), 1000)).toEqual([])
+  expect(retainRecentTools([...exchange, { type: "user_message", text: "New request", images: [] }], 1000)).toEqual([])
 })
 
 test("retains only newest authored image-free users and truncates the oldest boundary safely", () => {
@@ -188,6 +215,35 @@ test("summarizes the active history with the dedicated request contract", async 
   expect(summaryRequest.text).toContain("Focus the summary on: the unfinished migration")
 })
 
+test("reduces the summary allowance to fit the selected model's remaining context", async () => {
+  const provider = new ScriptedProvider(
+    [
+      round([
+        { type: "item_done", item: { type: "assistant_message", text: "Small-window summary" } },
+        { type: "done" },
+      ]),
+    ],
+    2_000,
+  )
+  const summary = await summarizeHistory({
+    provider,
+    profileId: "test-profile",
+    model: "test-model",
+    thinking: undefined,
+    sessionId: "small-window-summary",
+    history: [{ type: "user_message", text: "Prompt", images: [] }],
+    instructions: undefined,
+    imageInput: false,
+    signal: new AbortController().signal,
+  })
+
+  expect(summary).toBe("Small-window summary")
+  const request = provider.requests[0]
+  if (!request) throw new Error("missing summary request")
+  expect(request.maxOutputTokens).toBe(2_000 - estimateRequestTokens(request))
+  expect(request.maxOutputTokens).toBeGreaterThan(0)
+})
+
 test("falls back to streamed summary text and rejects an empty summary", async () => {
   const streamed = new ScriptedProvider([
     round([{ type: "text_delta", text: "  streamed summary  " }, { type: "done" }]),
@@ -231,7 +287,7 @@ test("rebuilds and re-admits after compaction and sends that exact snapshot", as
       ]),
       round([{ type: "item_done", item: { type: "assistant_message", text: "Continued" } }, { type: "done" }]),
     ],
-    1_000,
+    20_000,
     500,
   )
   let history: HistoryItem[] = [{ type: "user_message", text: "h".repeat(3_000), images: [] }]
@@ -259,6 +315,7 @@ test("rebuilds and re-admits after compaction and sends that exact snapshot", as
     sessionId: () => "admitted-session",
     profileId: () => "test-profile",
     history: () => history,
+    outputDirectory: () => directory,
     contextTokens: () => budget.currentTokens,
     buildRequest,
     buildRequestWithHistory: (candidateHistory) => ({
@@ -314,7 +371,7 @@ test("rebuilds and re-admits after compaction and sends that exact snapshot", as
   expect(provider.requests[1]).toBe(admitted)
 })
 
-test("summarizes complete active history and atomically writes a bounded user-only checkpoint", async () => {
+test("summarizes with the parent prefix and atomically keeps users, a recent exchange, and a recoverable transcript", async () => {
   const provider = new ScriptedProvider([
     round([{ type: "item_done", item: { type: "assistant_message", text: "Fresh state" } }, { type: "done" }]),
   ])
@@ -328,7 +385,7 @@ test("summarizes complete active history and atomically writes a bounded user-on
     type: "user_message" as const,
     messageId: "22222222-2222-4222-8222-222222222222",
     text: "Current task",
-    images: [{ mediaType: "image/png" as const, data: "attachment" }],
+    images: [{ mediaType: "image/png" as const, data: "YWJjZA==" }],
   }
   const directShell = {
     type: "direct_shell" as const,
@@ -368,6 +425,7 @@ test("summarizes complete active history and atomically writes a bounded user-on
     sessionId: () => "complete-history",
     profileId: () => "test-profile",
     history: () => history,
+    outputDirectory: () => directory,
     contextTokens: () => 40_000,
     buildRequest: () => buildRequestWithHistory(history),
     buildRequestWithHistory,
@@ -406,16 +464,28 @@ test("summarizes complete active history and atomically writes a bounded user-on
   if (!checkpoint || checkpoint.type !== "compaction" || checkpoint.strategy !== "user_messages_v1") {
     throw new Error("missing new checkpoint")
   }
-  expect(checkpoint.replaced).toBe(6)
+  expect(checkpoint.replaced).toBe(3)
   expect(checkpoint.retained.map((item) => item.messageId)).toEqual([oldUser.messageId, currentUser.messageId])
   expect(checkpoint.retained.every((item) => item.images.length === 0)).toBe(true)
-  expect(activeHistory(history).at(-1)).toEqual(continuationSummaryMessage("Fresh state"))
+  expect(checkpoint.tail).toEqual(activeHistory(original).slice(-3))
+  expect(activeHistory(history).slice(-3)).toEqual(activeHistory(original).slice(-3))
+  expect(request.instructions).toBe(prompt.instructions)
+  expect(request.tools).toEqual(prompt.tools)
+  expect(request.cacheKey).toBe(promptCacheKey("test-model", prompt.instructions, prompt.tools))
+  expect(request.maxOutputTokens).toBe(12_000)
+  expect(request.toolChoice).toBe("none")
+  const transcript = /Original pre-compaction transcript \(JSONL\): (.+)/.exec(checkpoint.summary)?.[1]
+  if (!transcript) throw new Error("missing archive")
+  expect((await readFile(transcript, "utf8")).trimEnd().split("\n").map(parseRecord)).toEqual(
+    original.map((item) => ({ type: "item", item })),
+  )
+  expect(parseRecord(JSON.stringify({ type: "item", item: checkpoint }))).toEqual({ type: "item", item: checkpoint })
   expect(estimateRequestTokens(buildRequestWithHistory(history))).toBeLessThanOrEqual(MAX_REPLACEMENT_REQUEST_TOKENS)
   expect(observed).toMatchObject({
     strategy: "user_messages_v1",
     outcome: "completed",
-    retained: checkpoint.retained,
-    removedTypes: ["compaction", "direct_shell", "assistant_message", "tool_call", "tool_result"],
+    retained: [...checkpoint.retained, ...(checkpoint.tail ?? [])],
+    removedTypes: ["compaction", "direct_shell"],
   })
 })
 
@@ -456,6 +526,7 @@ test("recompacts a new checkpoint once and returns nothing without later history
     sessionId: () => "repeated-checkpoint",
     profileId: () => "test-profile",
     history: () => history,
+    outputDirectory: () => directory,
     contextTokens: () => 40_000,
     buildRequest: () => request(history),
     buildRequestWithHistory: request,
@@ -480,7 +551,7 @@ test("recompacts a new checkpoint once and returns nothing without later history
   if (!checkpoint || checkpoint.type !== "compaction" || checkpoint.strategy !== "user_messages_v1") {
     throw new Error("missing repeated checkpoint")
   }
-  expect(checkpoint.summary).toBe("Refreshed state")
+  expect(checkpoint.summary).toStartWith("Refreshed state\n\nOriginal pre-compaction transcript")
   expect(checkpoint.retained).toEqual([retainedUser])
   expect(checkpoint.retained.every((item) => item.messageId !== undefined)).toBe(true)
 
@@ -516,6 +587,7 @@ test("leaves history unchanged when the static prefix and summary exceed the rep
     sessionId: () => "oversized-replacement",
     profileId: () => "test-profile",
     history: () => history,
+    outputDirectory: () => directory,
     contextTokens: () => 40_000,
     buildRequest: () => request(history),
     buildRequestWithHistory: request,
@@ -543,14 +615,15 @@ test("leaves history unchanged when the static prefix and summary exceed the rep
 test("replaces superseded reads locally when that frees enough context", async () => {
   const provider = new ScriptedProvider([])
   const content = "line of source\n".repeat(2_000)
+  const read = { path: "/workspace/a.ts", contentHash: "version", offset: 1, limit: 2000, truncated: false }
   let history: HistoryItem[] = [
     { type: "user_message", text: "Refactor a.ts", images: [] },
     { type: "tool_call", callId: "first", name: "read", args: { file_path: "a.ts" } },
-    { type: "tool_result", callId: "first", output: content },
+    { type: "tool_result", callId: "first", output: content, read },
     { type: "tool_call", callId: "second", name: "read", args: { file_path: "a.ts" } },
-    { type: "tool_result", callId: "second", output: content },
+    { type: "tool_result", callId: "second", output: content, read },
     { type: "tool_call", callId: "third", name: "read", args: { file_path: "a.ts" } },
-    { type: "tool_result", callId: "third", output: content },
+    { type: "tool_result", callId: "third", output: content, read },
   ]
   const buildRequestWithHistory = (candidateHistory: HistoryItem[]): StreamRequest => ({
     model: "test-model",
@@ -566,6 +639,7 @@ test("replaces superseded reads locally when that frees enough context", async (
     sessionId: () => "stale-reads",
     profileId: () => "test-profile",
     history: () => history,
+    outputDirectory: () => directory,
     contextTokens: () => undefined,
     buildRequest: () => buildRequestWithHistory(history),
     buildRequestWithHistory,
@@ -593,5 +667,5 @@ test("replaces superseded reads locally when that frees enough context", async (
   expect(checkpoint.replaced).toBe(2)
   const active = activeHistory(history)
   expect(active).toHaveLength(7)
-  expect(active.at(-1)).toEqual({ type: "tool_result", callId: "third", output: content })
+  expect(active.at(-1)).toEqual({ type: "tool_result", callId: "third", output: content, read })
 })
