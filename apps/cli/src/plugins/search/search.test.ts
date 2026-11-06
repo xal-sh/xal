@@ -50,7 +50,7 @@ test("grep honors ignores, includes hidden files, and preserves content and file
   })
 })
 
-test("grep handles explicit targets, invalid expressions, binary files, long lines, and interruption", async () => {
+test("grep handles explicit targets, invalid expressions, literal text, binary files, long lines, and interruption", async () => {
   await withWorkspace(async (workspace) => {
     await mkdir(join(workspace, "nested"))
     await writeFile(join(workspace, "nested", "target.txt"), `${"x".repeat(501)}needle\n`)
@@ -59,6 +59,9 @@ test("grep handles explicit targets, invalid expressions, binary files, long lin
     const target = await grepTool.execute({ pattern: "needle", path: "nested" }, context(workspace))
     expect(target.output).toBe("Found 1 matching lines\nnested/target.txt:1:[Omitted long matching line]")
     await expect(grepTool.execute({ pattern: "[" }, context(workspace))).rejects.toThrow("ripgrep error:")
+    await writeFile(join(workspace, "nested", "call.ts"), "run(a.b)\nrunaxb\n")
+    const literal = await grepTool.execute({ pattern: "run(a.b)", literal: true, path: "nested" }, context(workspace))
+    expect(literal.output).toBe("Found 1 matching lines\nnested/call.ts:1:run(a.b)")
 
     const abort = new AbortController()
     abort.abort()

@@ -13,7 +13,8 @@ export const grepTool: Tool = {
     properties: {
       pattern: {
         type: "string",
-        description: 'Regular expression to search for, using Rust regex syntax, e.g. "fn run" or "log.*error"',
+        description:
+          'Regular expression to search for, using Rust regex syntax, e.g. "fn run" or "log.*error", or literal text when literal is true',
       },
       path: {
         type: "string",
@@ -32,6 +33,10 @@ export const grepTool: Tool = {
       case_insensitive: {
         type: "boolean",
         description: "True matches case-insensitively; false or omitted matches exactly",
+      },
+      literal: {
+        type: "boolean",
+        description: "True matches pattern as literal text, so characters such as ( . [ need no escaping",
       },
       context: {
         type: "number",
@@ -64,6 +69,7 @@ export const grepTool: Tool = {
     const glob = asString(args.glob)
     const outputMode = asString(args.output_mode)
     const caseInsensitive = asBoolean(args.case_insensitive)
+    const literal = asBoolean(args.literal)
     const context = countArgument(args.context, "context")
     const offset = countArgument(args.offset, "offset")
     return nativeGrep(
@@ -75,6 +81,7 @@ export const grepTool: Tool = {
         ...(pattern === undefined ? {} : { pattern }),
         ...(outputMode === undefined ? {} : { outputMode }),
         ...(caseInsensitive === undefined ? {} : { caseInsensitive }),
+        ...(literal === undefined ? {} : { literal }),
         ...(context === undefined ? {} : { context }),
         ...(offset === undefined ? {} : { offset }),
       },

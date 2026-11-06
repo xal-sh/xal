@@ -78,7 +78,7 @@ test("edit rejects an ambiguous match without modifying the file", async () => {
     await expect(
       editTool.execute({ file_path: "repeated.txt", old_string: "same", new_string: "changed" }, context(workspace)),
     ).rejects.toThrow(
-      "old_string matches 2 locations in repeated.txt. Add surrounding lines to make it unique, or set replace_all to true.",
+      "old_string matches 2 locations in repeated.txt, starting at lines 1, 3. Add surrounding lines to make it unique, or set replace_all to true.",
     )
     expect(await readFile(path, "utf8")).toBe("same\nmiddle\nsame\n")
   })

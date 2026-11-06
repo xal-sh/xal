@@ -4,6 +4,7 @@ const CR: u16 = b'\r' as u16;
 const LF: u16 = b'\n' as u16;
 const MAX_HINT_LINES: usize = 30;
 const MAX_HINT_LINE_CHARS: usize = 300;
+const MAX_MATCH_LINES: usize = 10;
 
 #[napi(object)]
 pub struct NativeEditRequest {
@@ -226,6 +227,32 @@ fn closest_match(text: &str, old: &str) -> Option<String> {
     Some(hint)
 }
 
+fn match_lines(text: &[u16], positions: &[usize]) -> String {
+    let mut lines: Vec<usize> = Vec::new();
+    let mut line = 1;
+    let mut cursor = 0;
+    for &position in positions {
+        line += text[cursor..position]
+            .iter()
+            .filter(|&&unit| unit == LF)
+            .count();
+        cursor = position;
+        if lines.last() != Some(&line) {
+            lines.push(line);
+        }
+    }
+    let mut listed = lines
+        .iter()
+        .take(MAX_MATCH_LINES)
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(", ");
+    if lines.len() > MAX_MATCH_LINES {
+        listed.push_str(&format!(", and {} more", lines.len() - MAX_MATCH_LINES));
+    }
+    listed
+}
+
 pub struct EditTask {
     path: PathBuf,
     display_path: String,
@@ -286,8 +313,9 @@ impl Task for EditTask {
         }
         if positions.len() > 1 && !self.replace_all {
             return Err(failed(format!(
-                "old_string matches {matches} locations in {}. Add surrounding lines to make it unique, or set replace_all to true.",
-                self.display_path
+                "old_string matches {matches} locations in {}, starting at lines {}. Add surrounding lines to make it unique, or set replace_all to true.",
+                self.display_path,
+                match_lines(&previous, &positions)
             )));
         }
         let next = replace_matches(&previous, &old, &new, &positions, self.replace_all);
@@ -341,8 +369,8 @@ pub fn native_edit_file(request: NativeEditRequest) -> napi::Result<AsyncTask<Ed
 #[cfg(test)]
 mod tests {
     use super::{
-        align_newlines, closest_match, match_positions, read_line_prefix_len, replace_matches,
-        resolve_match, strip_read_prefixes, units,
+        align_newlines, closest_match, match_lines, match_positions, read_line_prefix_len,
+        replace_matches, resolve_match, strip_read_prefixes, units,
     };
 
     #[test]
@@ -377,6 +405,19 @@ mod tests {
             units("next next next")
         );
         assert!(match_positions(&previous, &[]).is_empty());
+    }
+
+    #[test]
+    fn lists_the_lines_where_ambiguous_matches_start() {
+        let text = units("same\nother\nsame same\n");
+        let positions = match_positions(&text, &units("same"));
+        assert_eq!(match_lines(&text, &positions), "1, 3");
+        let many = units(&"x\n".repeat(12));
+        let positions = match_positions(&many, &units("x"));
+        assert_eq!(
+            match_lines(&many, &positions),
+            "1, 2, 3, 4, 5, 6, 7, 8, 9, 10, and 2 more"
+        );
     }
 
     #[test]

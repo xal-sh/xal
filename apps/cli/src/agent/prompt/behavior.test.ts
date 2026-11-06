@@ -22,6 +22,7 @@ test("states behavior for writable modes and withholds change guidance in read-o
   expect(normal).toContain("make the change rather than describing")
   expect(normal).toContain("Fix the cause rather than the symptom")
   expect(normal).toContain("narrowest check that covers the change")
+  expect(normal).toContain("If a fix fails twice")
   expect(normal).toContain("Scale the reply to the size of the change")
   expect(normal).toContain("say in one sentence what you are about to do")
 
@@ -32,4 +33,5 @@ test("states behavior for writable modes and withholds change guidance in read-o
   expect(plan).not.toContain("make the change rather than describing")
   expect(plan).not.toContain("Fix the cause rather than the symptom")
   expect(plan).not.toContain("narrowest check that covers the change")
+  expect(plan).not.toContain("If a fix fails twice")
 })

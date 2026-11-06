@@ -56,6 +56,7 @@ import type { AgentEvent, AgentState, DenialCause, SessionStartedEvent } from ".
 import { activeHistory, type ConversationCheckpoint, type HistoryItem } from "../history"
 import { isMessageId } from "../message-id"
 import { composeSystemPrompt } from "../prompt/registry"
+import { captureWorkspaceContext } from "../prompt/workspace"
 import type { DeliveredAgentQuestion, ParentQuestionResult } from "../task/questions"
 import type { SessionKind } from "../types"
 import { backgroundResultsMessage, SessionAsyncState } from "./async"
@@ -973,6 +974,7 @@ export class AgentSession {
     let summary: TurnSummary | undefined
     const usage: TurnUsage = {}
     void prepare(controller.signal)
+      .then(() => captureWorkspaceContext(this.sessionId, this.cwd, controller.signal))
       .then(() => runTurn(this.turnHost(), controller.signal, provider, model, thinking, usage, resumedCalls))
       .then((result) => {
         summary = result

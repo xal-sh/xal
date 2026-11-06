@@ -8,6 +8,7 @@ pub struct NativeGrepOptions {
     pub pattern: Option<String>,
     pub output_mode: Option<String>,
     pub case_insensitive: Option<bool>,
+    pub literal: Option<bool>,
     pub context: Option<u32>,
     pub offset: Option<u32>,
     pub aborted: Option<bool>,
@@ -189,6 +190,7 @@ impl Task for GrepTask {
         let offset = self.options.offset.unwrap_or(0);
         let mut regex = RegexMatcherBuilder::new();
         regex.case_insensitive(self.options.case_insensitive.unwrap_or(false));
+        regex.fixed_strings(self.options.literal.unwrap_or(false));
         let matcher = match regex.build(pattern) {
             Ok(matcher) => matcher,
             Err(error) => {
