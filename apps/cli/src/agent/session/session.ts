@@ -338,7 +338,7 @@ export class AgentSession {
         this.items = []
         this.saveItem(item)
         this.contextBudget.reset(this.items)
-        disposeToolContext(this.sessionId)
+        if (item.strategy !== "stale_reads_v1") disposeToolContext(this.sessionId)
       },
       setState: (state) => this.setState(state),
       emit: (event) => this.emit(event),

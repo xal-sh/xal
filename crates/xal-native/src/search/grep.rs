@@ -274,7 +274,7 @@ impl Task for GrepTask {
                 deadline,
                 pending: Vec::new(),
                 included: false,
-                broke: true,
+                broke: context > 0,
             };
             let search = searcher.search_reader(
                 &matcher,

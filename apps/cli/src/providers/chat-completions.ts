@@ -259,15 +259,15 @@ export async function* streamChatCompletions(
   }
 
   if (!terminal) throw new ProviderError(`${provider.name} stream ended unexpectedly`, { retryable: true })
-  if (finishReason === "length") {
-    throw new OutputLimitError(`${provider.name} response exceeded its output limit`)
-  }
-  if (finishReason) {
+  if (finishReason && finishReason !== "length") {
     const error = provider.finishReasonError?.(finishReason)
     if (error) throw error
   }
   if (reasoning) yield { type: "item_done", item: chatReasoningItem(provider.id, reasoning) }
   yield { type: "item_done", item: chatAssistantItem(provider.id, request.model, text) }
+  if (finishReason === "length") {
+    throw new OutputLimitError(`${provider.name} response exceeded its output limit`)
+  }
   for (const call of [...calls.entries()].sort(([left], [right]) => left - right).map(([, call]) => call)) {
     if (!call.id || !call.name) {
       throw new ProviderError(`${provider.name} returned an incomplete tool call`, { retryable: false })

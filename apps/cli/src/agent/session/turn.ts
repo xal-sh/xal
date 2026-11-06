@@ -74,6 +74,14 @@ export async function runTurn(
   let interjected = false
   let outputLimited = false
   let verificationBaseline = await host.verificationBaseline(signal)
+  const verificationReturned = async (): Promise<boolean> => {
+    if (verificationBaseline === undefined) return false
+    const correction = await host.verificationCorrection(verificationBaseline, signal)
+    verificationBaseline = undefined
+    if (!correction) return false
+    host.pushItem({ type: "user_message", text: correction, images: [] })
+    return true
+  }
   let resumedCalls = pendingCalls
 
   while (true) {
@@ -137,14 +145,7 @@ export async function runTurn(
         host.pushItem({ type: "user_message", text: correction, images: [] })
         continue
       }
-      if (verificationBaseline !== undefined) {
-        const correction = await host.verificationCorrection(verificationBaseline, signal)
-        verificationBaseline = undefined
-        if (correction) {
-          host.pushItem({ type: "user_message", text: correction, images: [] })
-          continue
-        }
-      }
+      if (await verificationReturned()) continue
       const final = items.findLast((item) => item.type === "assistant_message")
       await endTurn(host, usage, final?.type === "assistant_message" ? final.text : undefined, signal)
       return { usage, usedTools }
@@ -192,6 +193,10 @@ export async function runTurn(
         continue
       }
       if (host.queuedPromptNext() || host.asyncResultsQueued() || host.agentQuestionsQueued()) {
+        contract.reset()
+        continue
+      }
+      if (await verificationReturned()) {
         contract.reset()
         continue
       }

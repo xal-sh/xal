@@ -33,13 +33,23 @@ export function evalReport(mode: string, runsPerCase: number, cases: CaseReport[
   }
 }
 
-function totals(report: EvalReport): { rounds: number; toolCalls: number; toolFailures: number; editFailures: number } {
+function totals(report: EvalReport): {
+  rounds: number
+  toolCalls: number
+  toolFailures: number | undefined
+  editFailures: number | undefined
+} {
   const runs = report.cases.flatMap((entry) => entry.runs)
+  const optional = (count: (run: RunRecord) => number | undefined): number | undefined =>
+    runs.reduce<number | undefined>((total, run) => {
+      const value = count(run)
+      return total === undefined || value === undefined ? undefined : total + value
+    }, 0)
   return {
     rounds: runs.reduce((total, run) => total + run.rounds, 0),
     toolCalls: runs.reduce((total, run) => total + run.toolCalls, 0),
-    toolFailures: runs.reduce((total, run) => total + run.toolFailures, 0),
-    editFailures: runs.reduce((total, run) => total + run.editFailures, 0),
+    toolFailures: optional((run) => run.toolFailures),
+    editFailures: optional((run) => run.editFailures),
   }
 }
 
@@ -47,6 +57,11 @@ function percentChange(before: number, after: number): string {
   if (before === 0) return after === 0 ? "0%" : "n/a"
   const change = ((after - before) / before) * 100
   return `${change >= 0 ? "+" : ""}${change.toFixed(0)}%`
+}
+
+function countLine(label: string, before: number | undefined, after: number | undefined): string[] {
+  if (before === undefined || after === undefined) return []
+  return [`${label} ${before} -> ${after} (${percentChange(before, after)})`]
 }
 
 export function compare(baseline: EvalReport, candidate: EvalReport): string[] {
@@ -64,8 +79,8 @@ export function compare(baseline: EvalReport, candidate: EvalReport): string[] {
     `pass rate ${(baseline.passRate * 100).toFixed(1)}% -> ${(candidate.passRate * 100).toFixed(1)}% (${verdict})`,
     `rounds ${before.rounds} -> ${after.rounds} (${percentChange(before.rounds, after.rounds)})`,
     `tool calls ${before.toolCalls} -> ${after.toolCalls} (${percentChange(before.toolCalls, after.toolCalls)})`,
-    `tool failures ${before.toolFailures} -> ${after.toolFailures} (${percentChange(before.toolFailures, after.toolFailures)})`,
-    `edit failures ${before.editFailures} -> ${after.editFailures} (${percentChange(before.editFailures, after.editFailures)})`,
+    ...countLine("tool failures", before.toolFailures, after.toolFailures),
+    ...countLine("edit failures", before.editFailures, after.editFailures),
     `uncached input tokens ${baseline.totalUncachedInputTokens} -> ${candidate.totalUncachedInputTokens} (${percentChange(baseline.totalUncachedInputTokens, candidate.totalUncachedInputTokens)})`,
   ]
 }
@@ -82,11 +97,15 @@ function parseRun(value: unknown, path: string): RunRecord {
   const failure = asString(value.failure)
   const error = asString(value.error)
   const detail = asString(value.detail)
+  const toolFailures =
+    value.toolFailures === undefined ? undefined : required(asNumber(value.toolFailures), `${path}.toolFailures`)
+  const editFailures =
+    value.editFailures === undefined ? undefined : required(asNumber(value.editFailures), `${path}.editFailures`)
   return {
     rounds: required(asNumber(value.rounds), `${path}.rounds`),
     toolCalls: required(asNumber(value.toolCalls), `${path}.toolCalls`),
-    toolFailures: required(asNumber(value.toolFailures), `${path}.toolFailures`),
-    editFailures: required(asNumber(value.editFailures), `${path}.editFailures`),
+    ...(toolFailures === undefined ? {} : { toolFailures }),
+    ...(editFailures === undefined ? {} : { editFailures }),
     uncachedInputTokens: required(asNumber(value.uncachedInputTokens), `${path}.uncachedInputTokens`),
     outputTokens: required(asNumber(value.outputTokens), `${path}.outputTokens`),
     durationMs: required(asNumber(value.durationMs), `${path}.durationMs`),

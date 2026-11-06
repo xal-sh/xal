@@ -26,6 +26,6 @@ export async function editDiagnostics(
       output: `${input.output}\n\nLanguage server diagnostics unavailable: ${describeError(error)}`,
     }
   }
-  if (!diagnostics.startsWith("Found ")) return undefined
+  if (!diagnostics.startsWith("Found ") && !diagnostics.startsWith("No diagnostics received")) return undefined
   return { type: "replace", output: `${input.output}\n\nLanguage server: ${diagnostics}` }
 }

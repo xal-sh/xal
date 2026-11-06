@@ -12,6 +12,7 @@ pub(super) struct ManagerState {
 #[napi]
 pub struct NativeLspManager {
     state: Arc<Mutex<ManagerState>>,
+    definitions: Vec<ServerDefinition>,
 }
 pub struct QueryTask {
     state: Arc<Mutex<ManagerState>>,
@@ -134,9 +135,10 @@ impl Task for ActionTask {
 impl NativeLspManager {
     #[napi(constructor, catch_unwind)]
     pub fn new(definitions: String, app_name: String, app_version: String) -> napi::Result<Self> {
-        let definitions = serde_json::from_str(&definitions)
+        let definitions: Vec<ServerDefinition> = serde_json::from_str(&definitions)
             .map_err(|error| invalid(format!("invalid native LSP configuration: {error}")))?;
         Ok(Self {
+            definitions: definitions.clone(),
             state: Arc::new(Mutex::new(ManagerState {
                 definitions,
                 clients: HashMap::new(),
@@ -164,19 +166,9 @@ impl NativeLspManager {
 
     #[napi(catch_unwind)]
     pub fn serves_file(&self, file_path: String, cwd: String) -> bool {
-        let manager = lock(&self.state);
-        if manager.closing {
-            return false;
-        }
         let path = absolute_path(&file_path, &cwd);
-        let Ok((config, _, _)) = match_server(&manager.definitions, &path) else {
-            return false;
-        };
-        manager
-            .clients
-            .values()
-            .any(|client| lock(client).id == config.id)
-            || executable(&config, Path::new(&cwd)).is_some()
+        match_server(&self.definitions, &path)
+            .is_ok_and(|(config, _, _)| executable(&config, Path::new(&cwd)).is_some())
     }
 
     #[napi(catch_unwind)]

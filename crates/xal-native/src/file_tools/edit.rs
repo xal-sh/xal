@@ -3,6 +3,7 @@ use super::*;
 const CR: u16 = b'\r' as u16;
 const LF: u16 = b'\n' as u16;
 const MAX_HINT_LINES: usize = 30;
+const MAX_HINT_LINE_CHARS: usize = 300;
 
 #[napi(object)]
 pub struct NativeEditRequest {
@@ -209,6 +210,14 @@ fn closest_match(text: &str, old: &str) -> Option<String> {
         start + width
     );
     for (offset, line) in lines[start..start + shown].iter().enumerate() {
+        let line = if line.chars().count() > MAX_HINT_LINE_CHARS {
+            format!(
+                "{}... [line truncated]",
+                line.chars().take(MAX_HINT_LINE_CHARS).collect::<String>()
+            )
+        } else {
+            (*line).to_owned()
+        };
         hint.push_str(&format!("\n{:>6}: {line}", start + offset + 1));
     }
     if shown < width {
@@ -350,6 +359,10 @@ mod tests {
             )
         );
         assert_eq!(closest_match(text, "unrelated\nlines\n"), None);
+        let long = format!("needle\n{}\n", "x".repeat(1_000));
+        let hint = closest_match(&long, "needle\nmissing").unwrap_or_default();
+        assert!(hint.ends_with("... [line truncated]"));
+        assert!(hint.len() < 500);
         assert_eq!(closest_match(text, "\n\n"), None);
     }
 

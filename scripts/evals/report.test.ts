@@ -51,6 +51,15 @@ test("calls a difference inside the run-to-run spread noise", () => {
   expect(lines.some((line) => line.startsWith("rounds "))).toBe(true)
   expect(lines.some((line) => line.startsWith("uncached input tokens "))).toBe(true)
   expect(lines.some((line) => line.startsWith("edit failures "))).toBe(true)
+
+  const legacy = evalReport("yolo", 2, [
+    caseReport("alpha", [
+      { pass: false, rounds: 1, toolCalls: 1, uncachedInputTokens: 0, outputTokens: 0, durationMs: 1 },
+    ]),
+  ])
+  const legacyLines = compare(parseReport(JSON.parse(JSON.stringify(legacy))), clear)
+  expect(legacyLines.some((line) => line.startsWith("tool failures "))).toBe(false)
+  expect(legacyLines.some((line) => line.startsWith("rounds "))).toBe(true)
 })
 
 test("reads a written report back in the same shape and rejects anything else", () => {
