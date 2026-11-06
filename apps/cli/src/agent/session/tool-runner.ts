@@ -19,7 +19,7 @@ import {
   boundToolOutput,
   parseBoundedToolOutput,
   TOOL_FAILED_PREFIX,
-  TOOL_OUTPUT_UNSAVED_PREFIX,
+  unsavedToolOutput,
   toolFailed,
 } from "../../tools/output"
 import { argumentErrors } from "../../tools/arguments"
@@ -78,6 +78,7 @@ export interface ToolCallOutcome {
   title: string
   readOnly: boolean
   output: string
+  outputSaved?: boolean
   loopOutput?: string
   read?: ReadCoverage
   execution?: ProcessExecution
@@ -292,13 +293,10 @@ export class ToolCallRunner {
       const completed = outcomes.map((outcome) => {
         if (!outcome) throw new Error("tool scheduler did not produce a result")
         return prefetch?.target === outcome
-          ? { ...outcome, output: `${outcome.output}\n\n${prefetch.text}`, read: undefined }
+          ? { ...outcome, output: `${outcome.output}\n\n${prefetch.text}`, read: undefined, outputSaved: undefined }
           : outcome
       })
-      const bounded = await outputBudget.apply(
-        this.host.outputDirectory(),
-        completed.map((outcome) => outcome.output),
-      )
+      const bounded = await outputBudget.apply(this.host.outputDirectory(), completed)
       for (const [index, outcome] of completed.entries()) {
         const output = bounded[index]!
         this.commit(output === outcome.output ? outcome : { ...outcome, output, read: undefined })
@@ -465,6 +463,7 @@ export class ToolCallRunner {
       this.host.emit({ type: "tool_started", callId: call.callId, tool: call.name, title, readOnly })
     }
     let output: string
+    let savedOutput: string | undefined
     let read: ReadCoverage | undefined
     let readOutput: string | undefined
     let failure: string | undefined
@@ -539,6 +538,7 @@ export class ToolCallRunner {
       }
       output = redactText(result.output)
       if (output === result.output) {
+        if (result.outputSaved) savedOutput = output
         read = result.read
         readOutput = output
       }
@@ -585,16 +585,18 @@ export class ToolCallRunner {
     if (scope) output = redactText(`${output}\n\nTool trace: ${scope.directory}`)
     const originalOutput = output
     let bounded = false
+    const outputSaved = savedOutput === output
     try {
-      output = await boundToolOutput(this.host.outputDirectory(), output, maxOutputBytes)
+      output = await boundToolOutput(this.host.outputDirectory(), output, maxOutputBytes, outputSaved)
       bounded = output !== originalOutput
     } catch (error) {
-      output = `${TOOL_OUTPUT_UNSAVED_PREFIX}${describeError(error)}. The operation may have changed state; inspect it before retrying.`
+      output = unsavedToolOutput(originalOutput, error, maxOutputBytes)
     }
     profileToolOutputShape(this.host.sessionId(), this.host.kind, call.name, originalOutput, output, bounded)
     return {
       ...this.outcome(call, title, readOnly, output, undefined, events, execution),
       ...(scope ? { loopOutput } : {}),
+      ...(bounded || (outputSaved && output === originalOutput) ? { outputSaved: true } : {}),
       ...(read && readOutput === output ? { read } : {}),
     }
   }

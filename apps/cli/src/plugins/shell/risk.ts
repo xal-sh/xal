@@ -243,9 +243,9 @@ function groupedShellValueOptions(word: string): number {
   return [...word.slice(1)].filter((option) => option === "O" || option === "o").length
 }
 
-function embeddedCommands(words: Word[]): EmbeddedCommands {
+function embeddedCommands(words: Word[], firstOnly = false): EmbeddedCommands {
   const segments: string[] = []
-  for (let index = 0; index < words.length; index++) {
+  for (let index = 0; index < words.length && (!firstOnly || index === 0); index++) {
     const name = basename(words[index]!.text)
     let script: Word | undefined
     if (name === "eval") {
@@ -255,6 +255,13 @@ function embeddedCommands(words: Word[]): EmbeddedCommands {
     } else if (SUPPORTED_SHELLS.has(name)) {
       for (let option = index + 1; option < words.length; option++) {
         const word = words[option]!
+        if (firstOnly) {
+          if (word.dynamic || word.text === "--" || (!word.text.startsWith("-") && !word.text.startsWith("+"))) break
+          if (!commandStringOption(word.text)) {
+            option += SHELL_VALUE_OPTIONS.has(word.text) ? 1 : groupedShellValueOptions(word.text)
+            continue
+          }
+        }
         if (!commandStringOption(word.text)) continue
         let operand = option + 1
         const groupedValues = groupedShellValueOptions(word.text)
@@ -379,13 +386,93 @@ function wrapperEscapes(words: Word[], cwd: string): boolean {
   return false
 }
 
-export function commandSubjects(segment: string): string[] {
-  const { remaining } = extractRedirects(splitWords(segment))
+function privilegedCommand({ name, args }: CommandInvocation): Word[] | undefined {
+  if (name.dynamic || (name.text !== "sudo" && name.text !== "doas")) return undefined
+  let index = 0
+  while (index < args.length) {
+    const word = args[index]!
+    if (word.dynamic) return undefined
+    if (word.text === "--") return args.slice(index + 1)
+    if (ASSIGNMENT.test(word.text)) {
+      index += 1
+      continue
+    }
+    if (!word.text.startsWith("-")) return args.slice(index)
+    if (word.text.startsWith("--")) {
+      if (name.text !== "sudo") return undefined
+      if (
+        /^--(?:non-interactive|preserve-env|set-home|preserve-groups|stdin|background|reset-timestamp)$/.test(word.text)
+      ) {
+        index += 1
+        continue
+      }
+      if (!/^--(?:user|group|host|prompt|close-from|chdir|chroot|command-timeout|role|type)(?:=|$)/.test(word.text))
+        return undefined
+      if (!word.text.includes("=")) {
+        if (!args[index + 1]) return undefined
+        index += 1
+      }
+      index += 1
+      continue
+    }
+    for (let option = 1; option < word.text.length; option++) {
+      const flag = word.text[option]!
+      if ((name.text === "sudo" ? "ughpCDRTrt" : "u").includes(flag)) {
+        if (option === word.text.length - 1) {
+          if (!args[index + 1]) return undefined
+          index += 1
+        }
+        break
+      }
+      if (!(name.text === "sudo" ? "nEHPSbk" : "n").includes(flag)) return undefined
+    }
+    index += 1
+  }
+  return undefined
+}
+
+function subjectsForWords(words: Word[]): string[] {
+  const { remaining } = extractRedirects(words)
   const direct = commandCandidates(remaining).map((candidate) =>
     [candidate.name.text, ...candidate.args.map((arg) => arg.text)].join(" "),
   )
-  const embedded = embeddedCommands(remaining).segments.flatMap((nested) => [nested, ...commandSubjects(nested)])
+  const embedded = embeddedCommands(remaining).segments.flatMap((nested) => [
+    nested,
+    ...subjectsForWords(splitWords(nested)),
+  ])
   return [...new Set([...direct, ...embedded])]
+}
+
+function privilegedSubjects(words: Word[], unwrapped = false): string[] {
+  const { remaining } = extractRedirects(words)
+  const index = remaining.findIndex((word) => !ASSIGNMENT.test(word.text))
+  const name = remaining[index]
+  if (!name || name.dynamic) return []
+  const invocation = { name: { ...name, text: basename(name.text) }, args: remaining.slice(index + 1) }
+  const direct = unwrapped ? [[invocation.name.text, ...invocation.args.map((arg) => arg.text)].join(" ")] : []
+  const command = privilegedCommand(invocation)
+  if (command) return [...direct, ...privilegedSubjects(command, true)]
+  if (invocation.name.text === "xargs") {
+    const nested = xargsCommand([invocation.name, ...invocation.args])
+    return nested ? [...direct, ...privilegedSubjects([nested.name, ...nested.args], unwrapped)] : direct
+  }
+  if (/^(?:env|command|exec|nohup|nice|time)$/.test(invocation.name.text)) {
+    if (invocation.args[0]?.text.startsWith("-")) return direct
+    return [...direct, ...privilegedSubjects(invocation.args, unwrapped)]
+  }
+  const embedded = embeddedCommands(remaining.slice(index), true).segments.flatMap((nested) =>
+    privilegedSubjects(splitWords(nested), unwrapped),
+  )
+  return [...direct, ...embedded]
+}
+
+export function commandSubjects(segment: string): string[] {
+  return subjectsForWords(splitWords(segment))
+}
+
+export function commandDenySubjects(segment: string): string[] {
+  const words = splitWords(segment)
+  return [...new Set([...subjectsForWords(words), ...privilegedSubjects(words)])]
 }
 
 function invocationEscapes(invocation: CommandInvocation, cwd: string): boolean {

@@ -15,16 +15,18 @@ export interface JobLog {
 
 export function createJobLog(directory: string, jobId: string): JobLog {
   const path = join(directory, `${jobId.replace(/[^a-zA-Z0-9_-]/g, "_")}-${crypto.randomUUID()}.log`)
-  const buffered: string[] = []
+  const buffered: Array<{ text: string; queued: boolean }> = []
   let stream: WriteStream | undefined
   let failure: string | undefined
   let written = 0
   let pending = 0
+  let writes = 0
   let capped = false
   let closing: Promise<void> | undefined
-  const flush = (active: WriteStream, text: string): void => {
+  const flush = (active: WriteStream, text: string, queued: boolean): void => {
     active.write(text, (error) => {
-      pending -= text.length
+      writes -= 1
+      if (queued) pending -= text.length
       if (error) failure ??= describeError(error)
     })
   }
@@ -35,19 +37,21 @@ export function createJobLog(directory: string, jobId: string): JobLog {
       stream.on("error", (error) => {
         failure ??= describeError(error)
       })
-      for (const chunk of buffered.splice(0)) flush(stream, chunk)
+      for (const chunk of buffered.splice(0)) flush(stream, chunk.text, chunk.queued)
     })
     .catch((error: unknown) => {
       failure ??= describeError(error)
     })
   const write = (text: string): void => {
-    if (pending + text.length > MAX_PENDING_CHARS) {
+    const queued = writes > 0
+    if (queued && pending + text.length > MAX_PENDING_CHARS) {
       failure = "output log could not keep up; pending writes exceeded 1 Mi characters and further output was dropped"
       return
     }
-    pending += text.length
-    if (stream) flush(stream, text)
-    else buffered.push(text)
+    writes += 1
+    if (queued) pending += text.length
+    if (stream) flush(stream, text, queued)
+    else buffered.push({ text, queued })
   }
   return {
     path,

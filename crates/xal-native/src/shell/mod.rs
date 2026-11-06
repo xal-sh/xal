@@ -14,7 +14,7 @@ use napi_derive::napi;
 
 use crate::process::{
     NativeEnvironmentVariable, NativeProcessRequest, NativeProcessTermination, ProcessState,
-    process_drain, process_output_closed, process_reader_error, process_signal,
+    process_drain, process_error, process_finalized, process_signal, process_terminate_after,
     process_termination, process_write, spawn_process,
 };
 

@@ -1,6 +1,6 @@
 import { isDenied, matchRules } from "../../permissions/rules"
 import type { PermissionRequest, PolicyDecision } from "../../permissions/types"
-import { commandEscapesWorkspace, commandSubjects } from "./risk"
+import { commandDenySubjects, commandEscapesWorkspace, commandSubjects } from "./risk"
 import { commandSegments } from "./split"
 
 const RISKY_COMMANDS = [
@@ -41,7 +41,7 @@ export function commandPolicy(request: PermissionRequest, command: string): Poli
 }
 
 function commandDenied(request: PermissionRequest, segment: string): boolean {
-  return [segment, ...commandSubjects(segment)].some((subject) => isDenied({ ...request, subject }))
+  return [segment, ...commandDenySubjects(segment)].some((subject) => isDenied({ ...request, subject }))
 }
 
 export function commandSegmentPolicy(request: PermissionRequest, segment: string): PolicyDecision | undefined {

@@ -54,7 +54,7 @@ The parent receives a persisted, expandable question notice in the transcript an
 A finished agent's report is delivered into the parent conversation automatically as a system notice, with no polling needed. If the active turn is blocked on agent work, `wait_agent` subscribes to task-agent activity and returns when a result or question is queued, new user input arrives, or its timeout expires. It does not collect or suppress the automatic report delivery. Alongside the in-conversation result, every agent writes two durable files into the session directory:
 
 - a Markdown task record (`agent-<id>-….md`) with the assignment, workspace, final report, and buffered transcript
-- a transcript log (`agent-<id>-….log`) written incrementally while the agent runs. Logs cap at 64 Mi UTF-16 characters and are marked `(capped)` past that. Pending writes are bounded to 1 Mi characters; overflow or disk failures are reported. Abrupt process death can lose unflushed data, so incremental logging is not a crash-durability guarantee.
+- a transcript log (`agent-<id>-….log`) written incrementally while the agent runs. Logs cap at 64 Mi UTF-16 characters and are marked `(capped)` past that. One write may contain a large event up to the log cap; additional queued writes are bounded to 1 Mi characters. Queue overflow or disk failures are reported. Abrupt process death can lose unflushed data, so incremental logging is not a crash-durability guarantee.
 
 ## Background processes
 

@@ -1,8 +1,8 @@
 import { createJobBuffer } from "../background/buffer"
 import { createJobLog, type JobLog } from "../background/log"
-import { describeError } from "../lib/error"
 import { takeUtf8Prefix, takeUtf8Suffix } from "../lib/text"
-import { TOOL_OUTPUT_UNSAVED_PREFIX } from "./output"
+import { unsavedToolOutput } from "./output"
+import type { ToolResult } from "./types"
 
 export interface TransferredOutput {
   text: string
@@ -46,18 +46,15 @@ export function createStreamingOutput(directory: string, maximumBytes: number) {
       transferred = true
       return { text: bounded(""), log: ensureLog() }
     },
-    async finish(dropped: boolean): Promise<string> {
+    async finish(dropped: boolean): Promise<Pick<ToolResult, "output" | "outputSaved">> {
       if (transferred || finished) throw new Error("output capture is no longer accepting output")
       finished = true
-      if (!log) return dropped ? bounded("[Output incomplete: the process output queue dropped data.]") : initial
+      if (!log)
+        return { output: dropped ? bounded("[Output incomplete: the process output queue dropped data.]") : initial }
       try {
         await log.close()
       } catch (error) {
-        const notice = takeUtf8Prefix(
-          `${TOOL_OUTPUT_UNSAVED_PREFIX}${describeError(error)}\n[Only the in-memory preview is available.]\n`,
-          maximumBytes,
-        )
-        return `${notice}${takeUtf8Suffix(buffer.text(), maximumBytes - Buffer.byteLength(notice))}`
+        return { output: unsavedToolOutput(buffer.text(), error, maximumBytes) }
       }
       const incomplete = [
         dropped ? "process output queue dropped data" : "",
@@ -66,7 +63,7 @@ export function createStreamingOutput(directory: string, maximumBytes: number) {
       const notice = incomplete.length
         ? `[Output incomplete: ${incomplete.join("; ")}.]\nPartial output saved to: ${log.path}`
         : `Full output saved to: ${log.path}`
-      return bounded(notice)
+      return { output: bounded(notice), outputSaved: true }
     },
     async close(): Promise<void> {
       if (!transferred && !finished) await log?.close()

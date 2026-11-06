@@ -182,7 +182,8 @@ export const bashTool: Tool = {
       }
       disarm?.()
       const termination = settled.termination
-      const trimmed = nativeNormalizeProcessOutput(await output.finish(execution.outputDropped())).trimEnd()
+      const captured = await output.finish(execution.outputDropped())
+      const trimmed = nativeNormalizeProcessOutput(captured.output).trimEnd()
       const sandboxed = sandbox ? { sandbox } : {}
       let processExecution: ProcessExecution
       let footer: string
@@ -202,6 +203,7 @@ export const bashTool: Tool = {
       if (verification) await finishVerification(verification, processExecution, ctx)
       return {
         output: trimmed ? `${trimmed}\n${footer}` : footer,
+        ...(captured.outputSaved ? { outputSaved: true } : {}),
         execution: processExecution,
         maxOutputBytes: MAX_RESULT_BYTES,
       }

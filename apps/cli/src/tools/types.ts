@@ -20,6 +20,7 @@ export type ProcessExecution = (
 
 export interface ToolResult {
   output: string
+  outputSaved?: boolean
   read?: ReadCoverage
   execution?: ProcessExecution
   events?: ToolEvent[]
