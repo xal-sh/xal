@@ -250,12 +250,6 @@ export function redactAgentEvent(event: AgentEvent): AgentEvent {
       return { type: "plan_updated", plan: redactPlan(event.plan) }
     case "goal_updated":
       return { type: "goal_updated", goal: redactGoal(event.goal) }
-    case "task_list_updated":
-      return {
-        type: "task_list_updated",
-        tasks: event.tasks.map((task) => ({ ...task, step: redactText(task.step) })),
-        ...(event.explanation === undefined ? {} : { explanation: redactText(event.explanation) }),
-      }
     case "session_started":
       return redactSessionStartedEvent(event)
     case "session_title_changed":

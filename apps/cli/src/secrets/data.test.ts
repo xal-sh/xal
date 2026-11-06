@@ -245,11 +245,6 @@ test("redacts secrets from every agent event that carries content", () => {
     { type: "conversation_rewound", messageId: "m1", prompt: `prompt ${SECRET}`, removedMessages: 1, fileCount: 0 },
     { type: "conversation_redone", messageId: "m1", prompt: `prompt ${SECRET}`, restoredMessages: 1, fileCount: 0 },
     {
-      type: "task_list_updated",
-      tasks: [{ step: `step ${SECRET}`, status: "pending" }],
-      explanation: `because ${SECRET}`,
-    },
-    {
       type: "plan_updated",
       plan: {
         path: `/plans/${SECRET}.md`,

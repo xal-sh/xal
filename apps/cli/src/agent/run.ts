@@ -64,7 +64,6 @@ export function runAgentTurn(
         case "goal_updated":
         case "plan_updated":
         case "verification_recorded":
-        case "task_list_updated":
         case "session_started":
         case "session_replay_finished":
         case "session_title_changed":
@@ -176,7 +175,6 @@ export function runAgentGoal(
         case "shell_finished":
         case "plan_updated":
         case "verification_recorded":
-        case "task_list_updated":
         case "session_started":
         case "session_replay_finished":
         case "session_title_changed":

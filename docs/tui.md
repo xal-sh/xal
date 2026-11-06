@@ -49,7 +49,6 @@ Application shortcuts can be replaced under `pluginConfig.tui.keybindings`. Each
       "keybindings": {
         "composer.external-editor": ["ctrl+e"],
         "display.clear": ["ctrl+l", "ctrl+k"],
-        "display.toggle-todos": [],
         "agents.stop-all": ["ctrl+x ctrl+s"]
       }
     }
@@ -70,7 +69,6 @@ A binding is a key with optional `ctrl`, `alt`, `shift`, or `super` modifiers jo
 | `composer.paste-image`     | `ctrl+v`                             |
 | `display.clear`            | `ctrl+l`                             |
 | `display.toggle-details`   | `ctrl+o`                             |
-| `display.toggle-todos`     | `ctrl+t`                             |
 | `history.open`             | `escape escape`, `ctrl+r`            |
 | `jobs.background`          | `ctrl+b`                             |
 | `session.next-mode`        | `shift+tab`                          |

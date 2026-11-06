@@ -21,15 +21,18 @@ import {
   type Usage,
   type UserMessageItem,
 } from "../providers/types"
-import { parseTaskList } from "../tasks/types"
 import { parseProcessExecution } from "../tools/execution"
 import { parseReadCoverage } from "../tools/read-coverage"
 import { parseVerificationRecord, parseVerificationSummary } from "../verification/types"
 import { normalizeSessionTitle } from "./title"
-import type { SessionMeta, SessionRecord } from "./types"
+import type { RetiredEvent, SessionMeta, SessionRecord } from "./types"
 
 export function isPersistable(event: AgentEvent): boolean {
   return parseEvent(event) !== undefined
+}
+
+export function isRetiredEvent(event: { type?: unknown }): event is RetiredEvent {
+  return event.type === "reasoning_routed" || event.type === "request_measured" || event.type === "task_list_updated"
 }
 
 function parseDenial(value: unknown): DenialCause | undefined {
@@ -187,12 +190,6 @@ function parseEvent(raw: unknown): AgentEvent | undefined {
     case "verification_recorded": {
       const record = parseVerificationRecord(raw.record)
       return record ? { type: "verification_recorded", record } : undefined
-    }
-    case "task_list_updated": {
-      const tasks = parseTaskList(raw.tasks)
-      const explanation = asString(raw.explanation)
-      if (!tasks) return undefined
-      return { type: "task_list_updated", tasks, ...(explanation === undefined ? {} : { explanation }) }
     }
     case "plan_updated": {
       const plan = parseSessionPlan(raw.plan)
@@ -552,8 +549,7 @@ export function parseRecord(line: string): SessionRecord {
     case "event": {
       const event = parseEvent(raw.event)
       if (event) return { type: "event", event }
-      if (isJsonObject(raw.event) && (raw.event.type === "reasoning_routed" || raw.event.type === "request_measured"))
-        return { type: "event", event: { ...raw.event, type: raw.event.type } }
+      if (isJsonObject(raw.event) && isRetiredEvent(raw.event)) return { type: "event", event: raw.event }
       break
     }
   }

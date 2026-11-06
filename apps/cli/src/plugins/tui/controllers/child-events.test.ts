@@ -309,7 +309,6 @@ describe("child event mapping", () => {
             consecutiveNoToolTurns: 0,
           },
         },
-        { type: "task_list_updated", tasks: [] },
       ]),
     ).toEqual([])
   })

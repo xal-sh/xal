@@ -38,7 +38,6 @@ import { protectSecretValue, redactText } from "./secrets/redactor"
 import { registerRedaction } from "./secrets/register"
 import { registerScheduler } from "./scheduler/register"
 import { discoverSkills, registerSkills } from "./skills/register"
-import { registerTasks } from "./tasks/register"
 import { getUi } from "./ui/registry"
 import { registerVerification } from "./verification/commands"
 
@@ -68,7 +67,6 @@ function registerCore(settings: Settings): void {
   registerRedaction(settings)
   registerGoals()
   registerPlans()
-  registerTasks()
   registerVerification()
   registerScheduler()
   registerSkills()

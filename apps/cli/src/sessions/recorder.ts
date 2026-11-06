@@ -5,7 +5,7 @@ import type { HistoryItem } from "../agent/history"
 import { projectSessionsDir } from "../config/paths"
 import { describeError } from "../lib/error"
 import { writeNewSecureText } from "../lib/fs"
-import { isPersistable, parseRecord } from "./records"
+import { isPersistable, isRetiredEvent, parseRecord } from "./records"
 import { loadSession } from "./store"
 import type { SessionMeta, SessionRecord } from "./types"
 
@@ -135,7 +135,7 @@ export class SessionRecorder {
     const sourceEvents = records.flatMap((record) => {
       if (record.type !== "event") return []
       const event = record.event
-      if (event.type === "reasoning_routed" || event.type === "request_measured") return []
+      if (isRetiredEvent(event)) return []
       return [event]
     })
     const corrections = stateCorrections(replayState(first.meta, sourceEvents), target)

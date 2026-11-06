@@ -98,11 +98,12 @@ test("reloads historical task-agent questions without adding provider history", 
   })
 })
 
-test("reads archived reasoning records without replaying them or changing the saved history", async () => {
+test("reads retired event records without replaying them or changing the saved history", async () => {
   await withSessionFile(async (path) => {
     const archived: Extract<SessionRecord, { type: "event" }>["event"][] = [
       { type: "reasoning_routed", thinking: "low", baseline: "high", reason: "routine lookup", escalated: false },
       { type: "request_measured", metrics: { status: "completed", elapsedMs: 100, automatic: true } },
+      { type: "task_list_updated", tasks: [{ step: "Inspect", status: "completed" }] },
     ]
     const text =
       record({ type: "meta", meta: { ...meta, thinking: "high", automaticThinking: true } }) +

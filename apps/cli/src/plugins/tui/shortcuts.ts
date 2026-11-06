@@ -11,7 +11,6 @@ export type ShortcutAction =
   | "composer.paste-image"
   | "display.clear"
   | "display.toggle-details"
-  | "display.toggle-todos"
   | "history.open"
   | "jobs.background"
   | "session.next-mode"
@@ -69,7 +68,6 @@ const definitions: Record<ShortcutAction, ShortcutDefinition> = {
   "composer.paste-image": { defaults: ["ctrl+v"], description: "paste image" },
   "display.clear": { defaults: ["ctrl+l"], description: "clear screen" },
   "display.toggle-details": { defaults: ["ctrl+o"], description: "toggle details" },
-  "display.toggle-todos": { defaults: ["ctrl+t"], description: "toggle todos" },
   "history.open": {
     defaults: ["escape escape", "ctrl+r"],
     description: "jump history",
@@ -93,7 +91,6 @@ function isShortcutAction(value: string): value is ShortcutAction {
     case "composer.paste-image":
     case "display.clear":
     case "display.toggle-details":
-    case "display.toggle-todos":
     case "history.open":
     case "jobs.background":
     case "session.next-mode":

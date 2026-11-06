@@ -100,10 +100,6 @@ export class AgentEventController {
     switch (event.type) {
       case "verification_recorded":
         break
-      case "task_list_updated":
-        this.screen.taskList.set(event.tasks)
-        if (event.explanation?.trim()) scrollback.append({ kind: "info", text: event.explanation })
-        break
       case "goal_updated": {
         if (event.goal.id !== this.goalId) this.goalEvaluatedTurns = 0
         this.goalId = event.goal.id
@@ -156,7 +152,6 @@ export class AgentEventController {
         if (event.state !== "idle") break
         this.screen.dismissApproval()
         this.screen.dismissElicitation()
-        this.screen.taskList.dismissCompleted()
         scrollback.endStream()
         live.clear()
         break

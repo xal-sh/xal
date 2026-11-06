@@ -79,7 +79,7 @@ use job::{
     job_send_finalize, job_send_prepare, job_status, process_output,
 };
 use memory::memory_prepare;
-use plan::{submit_plan_finalize, submit_plan_prepare, submit_plan_review, update_plan};
+use plan::{submit_plan_finalize, submit_plan_prepare, submit_plan_review};
 use scheduler::{scheduler_finalize, scheduler_prepare};
 use task::{task_context, task_finalize, task_items, task_prepare};
 
@@ -156,10 +156,6 @@ impl NativeToolRuntime {
     #[napi(catch_unwind)]
     pub fn scheduler_finalize(&self, request: String) -> napi::Result<String> {
         run(request, scheduler_finalize)
-    }
-    #[napi(catch_unwind)]
-    pub fn update_plan(&self, request: String) -> napi::Result<String> {
-        run(request, update_plan)
     }
     #[napi(catch_unwind)]
     pub fn request_input_prepare(&self, request: String) -> napi::Result<String> {

@@ -18,13 +18,12 @@ export interface SessionMeta {
   startedAt: number
 }
 
+export type RetiredEvent = JsonObject & { type: "reasoning_routed" | "request_measured" | "task_list_updated" }
+
 export type SessionRecord =
   | { type: "meta"; meta: SessionMeta }
   | { type: "item"; item: HistoryItem }
-  | {
-      type: "event"
-      event: AgentEvent | (JsonObject & ({ type: "reasoning_routed" } | { type: "request_measured" }))
-    }
+  | { type: "event"; event: AgentEvent | RetiredEvent }
 
 export interface SessionSummary {
   id: string

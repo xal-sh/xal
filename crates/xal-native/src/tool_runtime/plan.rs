@@ -1,43 +1,5 @@
 use super::*;
 
-pub(super) fn update_plan(value: &Value) -> napi::Result<Value> {
-    let request = object(value)?;
-    if request
-        .keys()
-        .any(|key| !matches!(key.as_str(), "explanation" | "plan"))
-    {
-        return Err(invalid("failed to parse function arguments"));
-    }
-    let explanation = match request.get("explanation") {
-        Some(Value::String(explanation)) => Some(explanation.clone()),
-        Some(Value::Null) | None => None,
-        Some(_) => return Err(invalid("failed to parse function arguments")),
-    };
-    let values = request
-        .get("plan")
-        .and_then(Value::as_array)
-        .ok_or_else(|| invalid("failed to parse function arguments"))?;
-    let mut plan = Vec::with_capacity(values.len());
-    for value in values {
-        let item = object(value)?;
-        if item
-            .keys()
-            .any(|key| !matches!(key.as_str(), "step" | "status"))
-        {
-            return Err(invalid("failed to parse function arguments"));
-        }
-        let step =
-            string(item, "step").ok_or_else(|| invalid("failed to parse function arguments"))?;
-        let status =
-            string(item, "status").ok_or_else(|| invalid("failed to parse function arguments"))?;
-        if !matches!(status, "pending" | "in_progress" | "completed") {
-            return Err(invalid("failed to parse function arguments"));
-        }
-        plan.push(json!({ "step": step, "status": status }));
-    }
-    Ok(json!({ "explanation": explanation, "plan": plan, "output": "Plan updated" }))
-}
-
 pub(super) fn submit_plan_prepare(value: &Value) -> napi::Result<Value> {
     let request = object(value)?;
     let markdown = required_string(request, "plan")?;
@@ -146,22 +108,4 @@ pub(super) fn submit_plan_finalize(value: &Value) -> napi::Result<Value> {
         "plan": plan,
         "restart": restart
     }))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{run, update_plan};
-
-    #[test]
-    fn validates_task_plans() {
-        let plan = run(
-            r#"{"explanation":"Starting work","plan":[{"step":"work","status":"in_progress"}]}"#
-                .to_owned(),
-            update_plan,
-        )
-        .unwrap();
-        assert!(plan.contains("Plan updated"));
-        assert!(plan.contains("Starting work"));
-        assert!(run(r#"{"plan":[],"tasks":[]}"#.to_owned(), update_plan,).is_err());
-    }
 }

@@ -15,7 +15,6 @@ import { registerTool, unregisterTool } from "../../tools/registry"
 import type { Tool } from "../../tools/types"
 import { ProviderError } from "../../providers/errors"
 import type { ToolCallItem, ToolResultItem, Usage } from "../../providers/types"
-import { updatePlanTool } from "../../tasks/tool"
 import type { AgentEvent } from "../events"
 import { registerPrompt } from "../prompt/registry"
 import { waitAgentTool } from "../task/wait"
@@ -322,47 +321,6 @@ describe("AgentSession", () => {
       ])
     } finally {
       unregisterTool(tool)
-    }
-  })
-
-  test("continues after a completed plan update to deliver the final response", async () => {
-    const progress = "The review is complete and two blockers were found."
-    const tasks = [
-      { step: "Review the diff", status: "completed" },
-      { step: "Validate findings", status: "completed" },
-    ]
-    const provider = new ScriptedProvider([
-      round([
-        { type: "text_delta", text: progress },
-        { type: "item_done", item: { type: "assistant_message", text: progress } },
-        {
-          type: "item_done",
-          item: { type: "tool_call", callId: "complete-tasks", name: updatePlanTool.name, args: { plan: tasks } },
-        },
-        { type: "done" },
-      ]),
-      completedRound("Full review report"),
-    ])
-    const session = harness.createSession(provider)
-
-    registerTool(updatePlanTool)
-    try {
-      const outcome = await runSettledTurn(session, { text: "Review these changes", images: [] })
-
-      expect(outcome).toEqual({
-        status: "completed",
-        response: "Full review report",
-        usage: undefined,
-        context: undefined,
-      })
-      expect(provider.requests).toHaveLength(2)
-      expect(provider.requests[1]?.input.slice(-3)).toEqual([
-        { type: "assistant_message", text: progress },
-        { type: "tool_call", callId: "complete-tasks", name: updatePlanTool.name, args: { plan: tasks } },
-        { type: "tool_result", callId: "complete-tasks", output: "Plan updated" },
-      ])
-    } finally {
-      unregisterTool(updatePlanTool)
     }
   })
 
