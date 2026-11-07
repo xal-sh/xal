@@ -7,6 +7,7 @@ import type { AgentEvent } from "../agent/events"
 import type { HistoryItem } from "../agent/history"
 import { parseRecord } from "./records"
 import { SessionRecorder } from "./recorder"
+import { SessionWriter } from "./ownership"
 import { loadSession } from "./store"
 import type { SessionMeta, SessionRecord } from "./types"
 
@@ -171,11 +172,12 @@ test("replays records written through the serialized recorder queue", async () =
     const errors: string[] = []
     const recorder = new SessionRecorder((error) => errors.push(error))
     await writeFile(path, record({ type: "meta", meta }))
-    recorder.attach(path)
+    recorder.attach(SessionWriter.acquire(path))
 
     recorder.event(userEvent)
     recorder.item(userItem)
     await recorder.eventAndWait({ type: "turn_ended" })
+    await recorder.close()
 
     const loaded = await loadSession(path)
     expect(errors).toEqual([])
@@ -204,11 +206,18 @@ test("truncates an incomplete trailing record after loading complete data", asyn
       record({ type: "event", event: assistantEvent })
     await writeFile(path, `${complete}{"type":"item","item":`)
 
-    const loaded = await loadSession(path)
-
-    expect(loaded?.meta).toEqual(meta)
-    expect(loaded?.events).toEqual([modeEvent, assistantEvent])
-    expect(await readFile(path, "utf8")).toBe(complete)
+    const readonly = await loadSession(path)
+    expect(readonly?.meta).toEqual(meta)
+    expect(await readFile(path, "utf8")).toBe(`${complete}{"type":"item","item":`)
+    const writer = SessionWriter.acquire(path)
+    try {
+      const loaded = await loadSession(path, writer)
+      expect(loaded?.meta).toEqual(meta)
+      expect(loaded?.events).toEqual([modeEvent, assistantEvent])
+      expect(await readFile(path, "utf8")).toBe(complete)
+    } finally {
+      writer.close()
+    }
   })
 })
 

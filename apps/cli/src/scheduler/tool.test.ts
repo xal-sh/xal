@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test"
 import { interjectionMessage, interjectionResumeMessage } from "../agent/session/queue"
 import { getJob } from "../background/jobs"
-import { listBackgroundTasks, removeBackgroundTask } from "../background/registry"
+import { listBackgroundTasks, removeBackgroundTask, subscribeBackgroundTasks } from "../background/registry"
 import {
   completedRound,
   runSettledTurn,
@@ -69,30 +69,33 @@ describe("scheduler", () => {
     let scheduleId: string | undefined
     let stopping: Promise<void> | undefined
 
-    const outcome = await runSettledTurn(session, { text: "Wait until later", images: [] }, (event) => {
-      if (event.type !== "tool_started" || event.tool !== schedulerTool.name) return
-      queueMicrotask(() => {
-        const task = listBackgroundTasks().find(
-          (candidate) => candidate.kind === "schedule" && candidate.state().running,
-        )
-        if (!task) return
-        scheduleId = task.id
-        stopping = task.stop()
-      })
+    const unsubscribe = subscribeBackgroundTasks(() => {
+      if (scheduleId) return
+      const task = listBackgroundTasks().find(
+        (candidate) => candidate.ownerId === session.id && candidate.kind === "schedule" && candidate.state().running,
+      )
+      if (!task) return
+      scheduleId = task.id
+      stopping = task.stop()
     })
-    await stopping
+    try {
+      const outcome = await runSettledTurn(session, { text: "Wait until later", images: [] })
+      await stopping
 
-    expect(outcome.status).toBe("completed")
-    expect(scheduleId).toMatch(/^schedule-\d+$/)
-    const job = scheduleId ? getJob(scheduleId) : undefined
-    expect(job?.kind).toBe("schedule")
-    expect(job?.done).toBe(true)
-    expect(job?.stoppedByUser).toBe(true)
-    expect(provider.requests[1]?.input.at(-1)).toEqual({
-      type: "tool_result",
-      callId: "schedule-call",
-      output: expect.stringMatching(/Wait canceled\.$/),
-    })
+      expect(outcome.status).toBe("completed")
+      expect(scheduleId).toMatch(/^schedule-\d+$/)
+      const job = scheduleId ? getJob(scheduleId) : undefined
+      expect(job?.kind).toBe("schedule")
+      expect(job?.done).toBe(true)
+      expect(job?.stoppedByUser).toBe(true)
+      expect(provider.requests[1]?.input.at(-1)).toEqual({
+        type: "tool_result",
+        callId: "schedule-call",
+        output: expect.stringMatching(/Wait canceled\.$/),
+      })
+    } finally {
+      unsubscribe()
+    }
   })
 
   test("ends early when new session activity arrives", async () => {

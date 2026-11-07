@@ -14,6 +14,7 @@ import type { JsonObject } from "../lib/json"
 import { projectSessionsDir, sessionsDir } from "../config/paths"
 import { isRetiredEvent, parseRecord } from "./records"
 import { titleFromEvents, titleFromInput } from "./title"
+import type { SessionWriter } from "./ownership"
 import type { LoadedSession, SessionMeta, SessionSummary } from "./types"
 
 interface SummaryRedo {
@@ -164,7 +165,8 @@ function updateToolCall(items: HistoryItem[], event: Extract<AgentEvent, { type:
   return false
 }
 
-export async function loadSession(path: string): Promise<LoadedSession | undefined> {
+export async function loadSession(path: string, writer?: SessionWriter): Promise<LoadedSession | undefined> {
+  writer?.assert(path)
   let text: string
   try {
     text = await Bun.file(path).text()
@@ -296,12 +298,9 @@ export async function loadSession(path: string): Promise<LoadedSession | undefin
   }
 
   if (!meta) return undefined
-  if (hasIncompleteTail) {
-    try {
-      await truncate(path, Buffer.byteLength(complete))
-    } catch {
-      return undefined
-    }
+  if (hasIncompleteTail && writer) {
+    writer.assert(path)
+    await truncate(writer.path, Buffer.byteLength(complete))
   }
   return {
     meta,

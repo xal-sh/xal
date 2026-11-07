@@ -1,9 +1,11 @@
 import type { PermissionMode } from "../permissions/types"
 import type { SessionSummary } from "../sessions/types"
+import type { SessionWriter } from "../sessions/ownership"
 
 export interface UiOptions {
   mode?: PermissionMode
   resume?: SessionSummary
+  writer?: SessionWriter
   continueWork?: boolean
   retryPendingTools?: boolean
 }

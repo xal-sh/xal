@@ -1,6 +1,7 @@
 import type { PermissionMode } from "../../permissions/types"
 import type { ModelInputModality, Provider, ThinkingEffort, Usage, UserInput } from "../../providers/types"
 import type { LoadedSession } from "../../sessions/types"
+import type { SessionWriter } from "../../sessions/ownership"
 import type { CodeRedo, WorkspaceUndo } from "../../tools/undo"
 import type { AgentState } from "../events"
 import type { ConversationState } from "../history"
@@ -29,6 +30,7 @@ export interface AgentSessionDeps {
 export interface ResumeTarget {
   session: LoadedSession
   path: string
+  writer?: SessionWriter
   cwd: string
   provider: Provider
   profileId?: string

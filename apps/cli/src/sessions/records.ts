@@ -280,6 +280,14 @@ function parseEvent(raw: unknown): AgentEvent | undefined {
       if (text === undefined) return undefined
       return { type: "reasoning_summary", text }
     }
+    case "tool_started": {
+      const callId = asString(raw.callId)
+      const tool = asString(raw.tool)
+      const title = asString(raw.title)
+      const readOnly = asBoolean(raw.readOnly)
+      if (!callId || !tool || title === undefined || readOnly === undefined) return undefined
+      return { type: "tool_started", callId, tool, title, readOnly }
+    }
     case "tool_finished": {
       const callId = asString(raw.callId)
       const tool = asString(raw.tool)

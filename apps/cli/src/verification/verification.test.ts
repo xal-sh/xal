@@ -62,7 +62,7 @@ afterEach(async () => {
   for (const session of sessions.splice(0)) {
     disposeShellSession(session.id)
     session.disposeAsyncDelivery()
-    await session.flushPersistence()
+    await session.closePersistence()
   }
   settings().verification = originalVerification
   await rm(cwd, { recursive: true, force: true })
@@ -229,7 +229,7 @@ test("persists receipts through fork and resume, recomputes freshness, and clear
   await writeFile(join(cwd, "source.txt"), "edited after exit")
   const resumed = session(provider)
   expect(
-    resumed.resume({
+    await resumed.resume({
       session: loaded,
       path,
       cwd,
@@ -241,7 +241,7 @@ test("persists receipts through fork and resume, recomputes freshness, and clear
     }),
   ).toBe(true)
   expect(await resumed.verificationStatus()).toMatchObject([{ status: "stale" }])
-  expect(resumed.reset()).toBe(true)
+  expect(await resumed.reset()).toBe(true)
   expect(await resumed.verificationStatus()).toMatchObject([{ status: "not_run" }])
 })
 

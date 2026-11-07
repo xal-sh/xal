@@ -198,10 +198,13 @@ class WorkerDriver {
     let terminal = status
     let terminalDetail = detail
     try {
-      await settleAsyncWork(this.session)
-      this.session.disposeAsyncDelivery()
-      this.session.disposeToolResources()
-      await this.session.flushPersistence()
+      try {
+        await settleAsyncWork(this.session)
+      } finally {
+        this.session.disposeAsyncDelivery()
+        this.session.disposeToolResources()
+        await this.session.closePersistence()
+      }
     } catch (error) {
       terminal = "failed"
       terminalDetail = describeError(error)
@@ -254,5 +257,6 @@ export async function runBackgroundWorker(
     await driver.done
   } finally {
     unsubscribe()
+    await session.close()
   }
 }

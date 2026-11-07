@@ -54,6 +54,14 @@ After startup, type `/` in the TUI to see discovered commands in the command pal
 
 `/checks` refreshes the status of configured checks without running them. `/checks <name>` runs one named check through the regular direct-shell permission and hook flow. Both commands require an idle session. Receipts distinguish current passes and failures from missing or stale evidence; they do not gate completion. See [Verification checks](/docs/configs#verification-checks) for configuration, persistence, and freshness limits.
 
+## Saved sessions
+
+A saved transcript has one writer at a time, whether it is open in the TUI or a background worker. Opening it elsewhere fails before replay or incomplete-tail repair. `/new`, `/fork`, switching sessions, and shutdown drain pending writes before releasing the old transcript. Listing sessions and reading saved history do not repair or truncate files.
+
+Ownership is an OS-held lock on a private `.jsonl.lock` sidecar beside the transcript. The OS releases ownership if the process exits or crashes; the empty sidecar remains and must not be deleted while a client may be using it. No stale-PID cleanup or timeout can evict a live owner. Use a local filesystem that supports file locking, and do not open the same session with older clients that do not participate in locking.
+
+Persisted sessions acknowledge tool intent before execution, tool results before further work, and the terminal record before reporting successful completion. A transcript write failure reports its original cause, cancels active work cooperatively, and blocks new prompts and automatic continuations. Fix the storage problem, close the affected session, and reopen its saved history to recover. Inspect the workspace before retrying a tool whose result could not be saved. Already-running parallel tools, external processes, and remote effects cannot be rolled back by a failed write. These barriers are not exactly-once execution or power-loss durability guarantees, and sessions intentionally running without persistence do not use them.
+
 ## Context compaction
 
 The behavior below describes the default summary strategy. Connected TypeSafe users can opt into [Jev pruning through `/config`](/docs/configs#jev-compaction) for both `/compact` and automatic compaction, with visible fallback to the default strategy when necessary.

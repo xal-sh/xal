@@ -82,11 +82,16 @@ const attachCli: Cli = {
     const ui = getUi(uiId)
     if (!ui) throw new Error(`unknown ui: ${uiId}`)
     const takeover = await takeOverBackgroundSession(id)
-    await ui.start({
-      resume: takeover.summary,
-      continueWork: takeover.continueWork,
-      retryPendingTools: takeover.retryPendingTools,
-    })
+    try {
+      await ui.start({
+        resume: takeover.summary,
+        writer: takeover.writer,
+        continueWork: takeover.continueWork,
+        retryPendingTools: takeover.retryPendingTools,
+      })
+    } finally {
+      takeover.writer.close()
+    }
   },
 }
 
