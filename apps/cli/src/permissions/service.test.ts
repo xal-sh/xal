@@ -194,7 +194,7 @@ test("an AgentSession approval stays scoped to its session and workspace", async
         otherSession.approve()
       })
 
-      expect(session.reset()).toBe(true)
+      expect(await session.reset()).toBe(true)
       await runSettledTurn(session, { text: "Change after reset", images: [] }, (event) => {
         if (event.type !== "approval_requested") return
         approvals.push(`reset:${session.currentWorkingDirectory}`)

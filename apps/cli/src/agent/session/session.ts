@@ -149,6 +149,8 @@ export class AgentSession {
   private thinking: ThinkingEffort | undefined
   private state: AgentState = "idle"
   private movingHistory = false
+  private historyMoveWaiters: Array<() => void> = []
+  private closing = false
   private mode: PermissionMode = defaultPermissionMode
   private modeBeforePlan: PermissionMode | undefined
   private plan: SessionPlan | undefined
@@ -192,7 +194,14 @@ export class AgentSession {
       : undefined
     this.outputDirectory = toolOutputDirectory(projectSessionsDir(this.cwd), this.sessionId)
     if (deps.persist) {
-      this.recorder = new SessionRecorder((message) => this.emit({ type: "error", message }))
+      this.recorder = new SessionRecorder((message) => {
+        this.abortController?.abort(this.recorder?.error)
+        this.suppressAsyncDeliveries()
+        this.emit({ type: "error", message })
+        void this.cancelAndReapAsyncWork().catch((error: unknown) =>
+          this.emit({ type: "error", message: `failed to stop background work: ${describeError(error)}` }),
+        )
+      })
       this.recorder.start(this.meta(), this.cwd)
     }
     this.asyncState = new SessionAsyncState({
@@ -246,6 +255,7 @@ export class AgentSession {
       outputContract: () => this.outputContract,
       availableTool: (name) => this.availableTool(name),
       activeItems: () => activeHistory(this.items),
+      flushPersistence: () => this.flushPersistence(),
       hookContext: (signal) => this.hookContext(signal),
       emit: (event) => this.emit(event),
       setState: (state) => this.setState(state),
@@ -287,6 +297,12 @@ export class AgentSession {
       toolRunner: this.toolRunner,
       hookReporter: this.hookReporter,
       history: () => this.items,
+      flushPersistence: () => this.flushPersistence(),
+      complete: async (event) => {
+        const recorded = await this.recordEvent(event)
+        this.planHandoffActive = false
+        this.notifyRedacted(recorded)
+      },
       outputContract: () => this.outputContract,
       verificationStatus: (signal) => this.verificationStatus(signal),
       verificationBaseline: (signal) => verificationBaseline(this.cwd, signal),
@@ -427,7 +443,7 @@ export class AgentSession {
   }
 
   async setGoal(condition: string): Promise<boolean> {
-    if (this.kind !== "primary") return false
+    if (this.kind !== "primary" || this.unavailable) return false
     const validation = goalConditionError(condition)
     if (validation) throw new Error(validation)
     const target = await resolveGoalEvaluatorTarget(this.provider, this.selectedProfileId(), this.model)
@@ -463,6 +479,36 @@ export class AgentSession {
 
   async flushPersistence(): Promise<void> {
     await this.recorder?.flush()
+  }
+
+  async closePersistence(): Promise<void> {
+    await this.recorder?.close()
+  }
+
+  async close(): Promise<void> {
+    this.closing = true
+    this.paused = true
+    this.suppressAsyncDeliveries()
+    if (this.movingHistory) await new Promise<void>((resolve) => this.historyMoveWaiters.push(resolve))
+    const idle =
+      this.state === "idle"
+        ? Promise.resolve()
+        : new Promise<void>((resolve) => {
+            const unsubscribe = this.subscribe((event) => {
+              if (event.type !== "state_changed" || event.state !== "idle") return
+              unsubscribe()
+              resolve()
+            })
+          })
+    this.interrupt()
+    await idle
+    try {
+      await this.cancelAndReapAsyncWork()
+    } finally {
+      this.disposeAsyncDelivery()
+      this.disposeToolResources()
+      await this.closePersistence()
+    }
   }
 
   suppressAsyncDeliveries(): void {
@@ -526,42 +572,50 @@ export class AgentSession {
     }
   }
 
-  reset(): boolean {
+  async reset(): Promise<boolean> {
+    if (this.closing) return false
     if (this.currentState !== "idle" || this.asyncState.hasPendingAsyncWork()) return false
-    this.disposeToolResources()
-    this.asyncState.advanceEpoch()
-    forgetOwner(this.sessionId)
-    this.sessionId = crypto.randomUUID()
-    this.parentId = undefined
-    this.sessionPermissionKey = {}
-    this.title = undefined
-    this.outputDirectory = toolOutputDirectory(projectSessionsDir(this.cwd), this.sessionId)
-    this.startedAt = Date.now()
-    this.items = []
-    this.promptStates.clear()
-    this.events = []
-    this.checkpoints = []
-    this.redoStack.reset()
-    this.workspaceUndo = new WorkspaceUndo(this.cwd)
-    this.contextBudget.reset()
-    this.verificationRecords.clear()
-    this.plan = undefined
-    this.planHandoffActive = false
-    this.pendingRestart = undefined
-    this.queuedAgentQuestions = []
-    this.presentedAgentQuestions = []
-    this.transientQuestionInput = undefined
-    this.goals.reset()
-    this.buffer.reset()
-    this.acceptingQueuedInput = false
-    this.paused = false
-    this.asyncState.register()
-    this.recorder?.start(this.meta(), this.cwd)
-    this.emit(this.startEvent())
-    return true
+    this.movingHistory = true
+    try {
+      await this.recorder?.close()
+      this.disposeToolResources()
+      this.asyncState.advanceEpoch()
+      forgetOwner(this.sessionId)
+      this.sessionId = crypto.randomUUID()
+      this.parentId = undefined
+      this.sessionPermissionKey = {}
+      this.title = undefined
+      this.outputDirectory = toolOutputDirectory(projectSessionsDir(this.cwd), this.sessionId)
+      this.startedAt = Date.now()
+      this.items = []
+      this.promptStates.clear()
+      this.events = []
+      this.checkpoints = []
+      this.redoStack.reset()
+      this.workspaceUndo = new WorkspaceUndo(this.cwd)
+      this.contextBudget.reset()
+      this.verificationRecords.clear()
+      this.plan = undefined
+      this.planHandoffActive = false
+      this.pendingRestart = undefined
+      this.queuedAgentQuestions = []
+      this.presentedAgentQuestions = []
+      this.transientQuestionInput = undefined
+      this.goals.reset()
+      this.buffer.reset()
+      this.acceptingQueuedInput = false
+      this.paused = false
+      this.asyncState.register()
+      this.recorder?.start(this.meta(), this.cwd)
+      this.emit(this.startEvent())
+      return true
+    } finally {
+      this.finishHistoryMove()
+    }
   }
 
   async fork(): Promise<ForkOutcome> {
+    if (this.closing) return { status: "busy" }
     if (this.currentState !== "idle" || this.asyncState.hasPendingAsyncWork()) return { status: "busy" }
     if (this.items.length === 0) return { status: "empty" }
     if (!this.recorder) return { status: "unavailable" }
@@ -601,11 +655,12 @@ export class AgentSession {
       profileSessionCreated(id, this.kind, this.provider.id, this.model, this.thinking)
       return { status: "forked", id }
     } finally {
-      this.movingHistory = false
+      this.finishHistoryMove()
     }
   }
 
-  resume(target: ResumeTarget): boolean {
+  async resume(target: ResumeTarget): Promise<boolean> {
+    if (this.closing) return false
     const { meta } = target.session
     if (
       this.currentState !== "idle" ||
@@ -614,84 +669,92 @@ export class AgentSession {
     ) {
       return false
     }
-    this.disposeToolResources()
-    this.asyncState.advanceEpoch()
-    forgetOwner(this.sessionId)
-    this.sessionId = meta.id
-    this.parentId = meta.parentId
-    this.sessionPermissionKey = {}
-    this.title = target.session.title ? redactText(target.session.title) : undefined
-    this.outputDirectory = toolOutputDirectory(dirname(target.path), this.sessionId)
-    this.cwd = resolve(target.cwd)
-    this.startedAt = meta.startedAt
-    this.items = target.session.items.map(redactHistoryItem)
-    this.promptStates = new Map(
-      Object.entries(target.session.promptStates ?? {}).map(([id, state]) => [id, redactJsonObject(state)]),
-    )
-    this.events = target.session.events.map(redactAgentEvent)
-    this.checkpoints = target.session.checkpoints.map((checkpoint) => ({
-      messageId: checkpoint.messageId,
-      input: redactUserInput(checkpoint.input),
-      before: checkpoint.before.map(redactHistoryItem),
-    }))
-    this.redoStack.reset()
-    this.workspaceUndo = new WorkspaceUndo(this.cwd)
-    this.workspaceUndo.seed(
-      this.checkpoints.map((checkpoint) => ({ messageId: checkpoint.messageId, prompt: checkpoint.input.text })),
-    )
-    this.contextBudget.restoreDisplayed(recordedContext(target.session.events))
-    this.verificationRecords.clear()
-    this.modeBeforePlan = meta.mode === "plan" ? meta.modeBeforePlan : undefined
-    this.plan = undefined
-    this.planHandoffActive = false
-    this.queuedAgentQuestions = []
-    this.presentedAgentQuestions = []
-    this.transientQuestionInput = undefined
-    this.goals.reset()
-    let recordedCwd = meta.cwd
-    let recordedMode = meta.mode
-    for (const event of target.session.events) {
-      if (event.type === "goal_updated") this.goals.restore(event.goal)
-      if (event.type === "verification_recorded") this.verificationRecords.set(event.record.name, event.record)
-      if (event.type === "plan_updated") {
-        this.plan = event.plan
-        this.planHandoffActive = event.plan.status === "approved"
-      }
-      if (event.type === "mode_changed") {
-        if (event.mode === "plan" && recordedMode !== "plan") this.modeBeforePlan = recordedMode
-        if (event.mode !== "plan" && recordedMode === "plan") this.modeBeforePlan = undefined
-        recordedMode = event.mode
-        if (event.mode === "plan") this.planHandoffActive = false
-      }
-      if (event.type === "turn_ended") this.planHandoffActive = false
-      if (event.type === "workspace_changed") recordedCwd = event.cwd
-    }
-    this.buffer.reset()
-    this.acceptingQueuedInput = false
-    this.paused = false
-    this.provider = target.provider
-    this.profileId = target.profileId
-    this.model = target.model
-    this.modelInputModalities = target.modelInputModalities
-    this.thinking = target.thinking
-    this.mode = target.mode
-    this.asyncState.register()
-    this.recorder?.attach(target.path)
+    if (this.recorder && !target.writer) throw new Error("persisted resume requires session writer ownership")
+    target.writer?.assert(target.path)
+    this.movingHistory = true
     try {
-      this.emit(this.startEvent(true))
-      for (const event of target.session.events) this.notify(event)
-    } finally {
-      this.notify({ type: "session_replay_finished" })
-    }
-    if (resolve(recordedCwd) !== this.cwd) {
-      this.notify({ type: "workspace_changed", cwd: this.cwd, previous: recordedCwd })
-    }
-    const resumedGoal = this.goals.resume()
-    if (resumedGoal && target.continueGoal)
-      queueMicrotask(() =>
-        this.startGoalContinuation(resumedGoal.id, "Resume the goal from the current session context."),
+      await this.recorder?.close()
+      if (this.recorder && target.writer) this.recorder.attach(target.writer)
+      this.disposeToolResources()
+      this.asyncState.advanceEpoch()
+      forgetOwner(this.sessionId)
+      this.sessionId = meta.id
+      this.parentId = meta.parentId
+      this.sessionPermissionKey = {}
+      this.title = target.session.title ? redactText(target.session.title) : undefined
+      this.outputDirectory = toolOutputDirectory(dirname(target.path), this.sessionId)
+      this.cwd = resolve(target.cwd)
+      this.startedAt = meta.startedAt
+      this.items = target.session.items.map(redactHistoryItem)
+      this.promptStates = new Map(
+        Object.entries(target.session.promptStates ?? {}).map(([id, state]) => [id, redactJsonObject(state)]),
       )
-    return true
+      this.events = target.session.events.map(redactAgentEvent)
+      this.checkpoints = target.session.checkpoints.map((checkpoint) => ({
+        messageId: checkpoint.messageId,
+        input: redactUserInput(checkpoint.input),
+        before: checkpoint.before.map(redactHistoryItem),
+      }))
+      this.redoStack.reset()
+      this.workspaceUndo = new WorkspaceUndo(this.cwd)
+      this.workspaceUndo.seed(
+        this.checkpoints.map((checkpoint) => ({ messageId: checkpoint.messageId, prompt: checkpoint.input.text })),
+      )
+      this.contextBudget.restoreDisplayed(recordedContext(target.session.events))
+      this.verificationRecords.clear()
+      this.modeBeforePlan = meta.mode === "plan" ? meta.modeBeforePlan : undefined
+      this.plan = undefined
+      this.planHandoffActive = false
+      this.queuedAgentQuestions = []
+      this.presentedAgentQuestions = []
+      this.transientQuestionInput = undefined
+      this.goals.reset()
+      let recordedCwd = meta.cwd
+      let recordedMode = meta.mode
+      for (const event of target.session.events) {
+        if (event.type === "goal_updated") this.goals.restore(event.goal)
+        if (event.type === "verification_recorded") this.verificationRecords.set(event.record.name, event.record)
+        if (event.type === "plan_updated") {
+          this.plan = event.plan
+          this.planHandoffActive = event.plan.status === "approved"
+        }
+        if (event.type === "mode_changed") {
+          if (event.mode === "plan" && recordedMode !== "plan") this.modeBeforePlan = recordedMode
+          if (event.mode !== "plan" && recordedMode === "plan") this.modeBeforePlan = undefined
+          recordedMode = event.mode
+          if (event.mode === "plan") this.planHandoffActive = false
+        }
+        if (event.type === "turn_ended") this.planHandoffActive = false
+        if (event.type === "workspace_changed") recordedCwd = event.cwd
+      }
+      this.buffer.reset()
+      this.acceptingQueuedInput = false
+      this.paused = false
+      this.provider = target.provider
+      this.profileId = target.profileId
+      this.model = target.model
+      this.modelInputModalities = target.modelInputModalities
+      this.thinking = target.thinking
+      this.mode = target.mode
+      this.asyncState.register()
+      try {
+        this.emit(this.startEvent(true))
+        for (const event of target.session.events) this.notify(event)
+      } finally {
+        this.notify({ type: "session_replay_finished" })
+      }
+      if (resolve(recordedCwd) !== this.cwd) {
+        this.notify({ type: "workspace_changed", cwd: this.cwd, previous: recordedCwd })
+      }
+      const resumedGoal = this.goals.resume()
+      if (resumedGoal && target.continueGoal)
+        queueMicrotask(() =>
+          this.startGoalContinuation(resumedGoal.id, "Resume the goal from the current session context."),
+        )
+      return true
+    } finally {
+      this.finishHistoryMove()
+    }
   }
 
   setModel(
@@ -847,6 +910,7 @@ export class AgentSession {
   private startAgentQuestionTurn(): boolean {
     if (
       this.paused ||
+      this.unavailable ||
       this.queuedAgentQuestions.length === 0 ||
       this.movingHistory ||
       this.turnActive ||
@@ -917,6 +981,7 @@ export class AgentSession {
   }
 
   send(input: UserInput): boolean {
+    if (this.unavailable) return false
     const redacted = redactUserInput(input)
     if (redacted.images.length > 0 && !this.supportsImageInput) {
       this.emit({ type: "error", message: `${this.model} does not support image input` })
@@ -955,7 +1020,14 @@ export class AgentSession {
   }
 
   private startBackgroundResultTurn(): boolean {
-    if (this.paused || !this.asyncState.hasQueued() || this.movingHistory || this.turnActive || this.state !== "idle") {
+    if (
+      this.paused ||
+      this.unavailable ||
+      !this.asyncState.hasQueued() ||
+      this.movingHistory ||
+      this.turnActive ||
+      this.state !== "idle"
+    ) {
       return false
     }
     this.startPreparedTurn(() => Promise.resolve())
@@ -964,6 +1036,11 @@ export class AgentSession {
 
   private settleBackgroundAgents(): boolean {
     return this.startBackgroundResultTurn()
+  }
+
+  private finishHistoryMove(): void {
+    this.movingHistory = false
+    for (const waiter of this.historyMoveWaiters.splice(0)) waiter()
   }
 
   private startPreparedTurn(prepare: (signal: AbortSignal) => Promise<void>, resumedCalls: ToolCallItem[] = []): void {
@@ -981,29 +1058,31 @@ export class AgentSession {
     let failure: string | undefined
     let summary: TurnSummary | undefined
     const usage: TurnUsage = {}
-    void prepare(controller.signal)
+    void this.flushPersistence()
+      .then(() => prepare(controller.signal))
       .then(() => captureWorkspaceContext(this.sessionId, this.cwd, controller.signal))
       .then(() => this.preparePrompt(controller.signal))
       .then(() => runTurn(this.turnHost(), controller.signal, provider, model, thinking, usage, resumedCalls))
-      .then((result) => {
+      .then(async (result) => {
+        if (!result) await this.flushPersistence()
         summary = result
       })
       .catch((error) => {
-        if (isAbortError(error) || controller.signal.aborted) {
+        if (!this.recorder?.error && (isAbortError(error) || controller.signal.aborted)) {
           if (!isSteeringInterrupt(controller.signal)) this.emit({ type: "turn_interrupted" })
           return
         }
-        failure = describeError(error)
+        failure = describeError(this.recorder?.error ?? error)
         this.emit({ type: "turn_failed", message: failure, usage: usage.turn, context: usage.context })
       })
       .finally(() => this.finishPreparedTurn(controller, summary, failure))
   }
 
-  private finishPreparedTurn(
+  private async finishPreparedTurn(
     controller: AbortController,
     summary: TurnSummary | undefined,
     failure: string | undefined,
-  ): void {
+  ): Promise<void> {
     this.turnActive = false
     this.acceptingQueuedInput = false
     this.abortController = undefined
@@ -1011,6 +1090,14 @@ export class AgentSession {
     this.pendingRestart = undefined
 
     if (this.settlePause()) return
+    if (this.unavailable) {
+      this.failAgentQuestions("the parent transcript could not be saved")
+      const active = this.goals.active()
+      if (active) this.goals.suspend(active.id, "turn_failure", failure ?? "session persistence is unavailable")
+      this.queue.flush()
+      this.setState("idle")
+      return
+    }
 
     if (controller.signal.aborted) {
       const steered = isSteeringInterrupt(controller.signal)
@@ -1043,7 +1130,7 @@ export class AgentSession {
       return
     }
 
-    if (restart !== undefined && this.startRestartedTurn(restart)) return
+    if (restart !== undefined && (await this.startRestartedTurn(restart))) return
 
     if (this.queuedAgentQuestions.length > 0) {
       this.setState("idle")
@@ -1070,9 +1157,9 @@ export class AgentSession {
     this.queue.flush()
   }
 
-  private startRestartedTurn(prompt: string): boolean {
+  private async startRestartedTurn(prompt: string): Promise<boolean> {
     this.setState("idle")
-    if (!this.reset()) {
+    if (!(await this.reset())) {
       this.emit({
         type: "error",
         message: "could not start a new session for the approved plan because background work is still settling",
@@ -1161,7 +1248,7 @@ export class AgentSession {
   }
 
   private startGoalContinuation(goalId: string, reason: string): boolean {
-    if (this.paused) return false
+    if (this.paused || this.unavailable) return false
     const active = this.goals.active(goalId)
     if (!active || this.kind !== "primary" || this.movingHistory || this.turnActive) return false
     if (this.asyncState.hasPendingAsyncWork()) {
@@ -1191,14 +1278,16 @@ export class AgentSession {
     this.promoteOnAbort = false
     this.setState("running_tool")
     let errored = false
-    void runDirectShell(this.turnHost(), input, controller.signal)
+    void this.flushPersistence()
+      .then(() => runDirectShell(this.turnHost(), input, controller.signal))
+      .then(() => this.flushPersistence())
       .catch((error) => {
-        if (isAbortError(error) || controller.signal.aborted) {
+        if (!this.recorder?.error && (isAbortError(error) || controller.signal.aborted)) {
           this.emit({ type: "turn_interrupted" })
           return
         }
         errored = true
-        this.emit({ type: "turn_failed", message: describeError(error) })
+        this.emit({ type: "turn_failed", message: describeError(this.recorder?.error ?? error) })
       })
       .finally(() => {
         this.turnActive = false
@@ -1206,6 +1295,11 @@ export class AgentSession {
         this.abortController = undefined
         this.setState("idle")
         if (this.settlePause()) return
+        if (this.unavailable) {
+          this.failAgentQuestions("the parent transcript could not be saved")
+          this.queue.flush()
+          return
+        }
         if (errored) this.failAgentQuestions("the parent turn failed")
         else if (controller.signal.aborted) this.failAgentQuestions("the parent turn was interrupted")
         if (this.startAgentQuestionTurn()) return
@@ -1342,9 +1436,10 @@ export class AgentSession {
     this.goals.suspendForHistoryMovement()
     this.movingHistory = true
     try {
+      await this.flushPersistence()
       return await performUndo(this.historyMoveHost(), checkpoint)
     } finally {
-      this.movingHistory = false
+      this.finishHistoryMove()
       this.startBackgroundResultTurn()
     }
   }
@@ -1365,9 +1460,10 @@ export class AgentSession {
     this.goals.suspendForHistoryMovement()
     this.movingHistory = true
     try {
+      await this.flushPersistence()
       return await performRedo(this.historyMoveHost(), entry)
     } finally {
-      this.movingHistory = false
+      this.finishHistoryMove()
       this.startBackgroundResultTurn()
     }
   }
@@ -1378,6 +1474,7 @@ export class AgentSession {
     this.abortController = controller
     this.setState("compacting")
     try {
+      await this.flushPersistence()
       await this.preparePrompt(controller.signal)
       const compacted = await runCompaction(
         this.compactionHost(),
@@ -1387,8 +1484,10 @@ export class AgentSession {
         "manual",
         instructions,
       )
+      await this.flushPersistence()
       return compacted ? "compacted" : "nothing"
     } catch (error) {
+      if (this.recorder?.error) throw this.recorder.error
       if (!isAbortError(error) && !controller.signal.aborted) throw error
       return "interrupted"
     } finally {
@@ -1426,6 +1525,14 @@ export class AgentSession {
     return this.recorder !== undefined
   }
 
+  get persistenceError(): Error | undefined {
+    return this.recorder?.error
+  }
+
+  private get unavailable(): boolean {
+    return this.closing || this.recorder?.unavailable === true
+  }
+
   recordSystemNotice(text: string): void {
     this.pushItem({ type: "user_message", text: `<system-notice>\n${text}\n</system-notice>`, images: [] })
   }
@@ -1452,13 +1559,13 @@ export class AgentSession {
   }
 
   continueTurn(): boolean {
-    if (this.movingHistory || this.turnActive || this.state !== "idle") return false
+    if (this.unavailable || this.movingHistory || this.turnActive || this.state !== "idle") return false
     this.startPreparedTurn(() => Promise.resolve())
     return true
   }
 
   retryPendingTools(): boolean {
-    if (this.movingHistory || this.turnActive || this.state !== "idle") return false
+    if (this.unavailable || this.movingHistory || this.turnActive || this.state !== "idle") return false
     const calls = pendingToolCalls(activeHistory(this.items), { provider: this.provider.id, model: this.model })
     if (calls.length === 0) return false
     this.startPreparedTurn(() => Promise.resolve(), calls)
@@ -1522,6 +1629,7 @@ export class AgentSession {
   }
 
   private emit(event: AgentEvent): void {
+    if (event.type === "turn_interrupted" && this.recorder?.error) return
     const redacted = redactAgentEvent(event)
     profileAgentEvent(this.sessionId, this.kind, redacted)
     this.rememberEvent(redacted)

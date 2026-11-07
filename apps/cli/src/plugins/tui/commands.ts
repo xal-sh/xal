@@ -158,10 +158,15 @@ async function attachHere(ctx: CommandContext, view: BgView): Promise<void> {
   ctx.busy("Attaching session")
   try {
     const takeover = await takeOverBackgroundSession(view.state.sessionId)
-    for (const notice of await resumeSession(ctx.session, takeover.summary, {
-      deferGoalResume: takeover.retryPendingTools,
-    }))
-      ctx.print(notice)
+    try {
+      for (const notice of await resumeSession(ctx.session, takeover.summary, {
+        deferGoalResume: takeover.retryPendingTools,
+        writer: takeover.writer,
+      }))
+        ctx.print(notice)
+    } finally {
+      takeover.writer.close()
+    }
     if (takeover.retryPendingTools && !ctx.session.retryPendingTools()) {
       throw new Error("the pending background request could not be restored")
     }

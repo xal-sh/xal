@@ -569,7 +569,7 @@ describe("AgentSession", () => {
 
     try {
       expect(
-        session.resume({
+        await session.resume({
           session: {
             meta: {
               version: 2,
@@ -620,7 +620,7 @@ describe("AgentSession", () => {
     const path = join(tmpdir(), `xal-resume-context-${crypto.randomUUID()}.jsonl`)
 
     expect(
-      session.resume({
+      await session.resume({
         session: {
           meta: {
             version: 2,
@@ -695,7 +695,7 @@ describe("AgentSession", () => {
     registerTool(barrier)
     try {
       expect(
-        session.resume({
+        await session.resume({
           session: {
             meta,
             items: [
@@ -772,7 +772,7 @@ describe("AgentSession", () => {
 
       try {
         expect(
-          session.resume({
+          await session.resume({
             session: {
               meta: {
                 version: 2,
@@ -827,7 +827,7 @@ describe("AgentSession", () => {
 
     try {
       expect(
-        session.resume({
+        await session.resume({
           session: {
             meta: {
               version: 2,

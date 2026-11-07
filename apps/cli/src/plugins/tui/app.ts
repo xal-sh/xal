@@ -213,6 +213,7 @@ export async function startTui(events: EventService, config: TuiConfig, options:
     try {
       for (const notice of await resumeSession(session, options.resume, {
         deferGoalResume: options.retryPendingTools,
+        writer: options.writer,
       })) {
         screen.scrollback.appendHeader({ kind: "info", text: notice })
       }
@@ -294,6 +295,7 @@ export async function startTui(events: EventService, config: TuiConfig, options:
 
   screen.composer.focus()
   await destroyed
+  await session.close()
   resetCommands()
   clearTimeout(replayTimer)
   for (const note of exitNotes) console.log(redactText(note))

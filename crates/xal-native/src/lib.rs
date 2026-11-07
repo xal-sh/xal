@@ -9,6 +9,7 @@ mod output_contract;
 mod process;
 mod redactor;
 mod search;
+mod session_lock;
 mod shell;
 mod skill;
 mod tool_contracts;
@@ -23,7 +24,7 @@ use redactor::SecretMatcher;
 
 #[napi(js_name = "apiVersion", catch_unwind)]
 pub fn api_version() -> u32 {
-    14
+    15
 }
 
 #[napi]

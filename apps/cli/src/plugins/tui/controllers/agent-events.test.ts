@@ -58,8 +58,19 @@ test("foreground bash stays in the execution flow above the composer", async () 
   )
   setup.renderer.root.add(screen.view)
   const controller = new AgentEventController(screen, session)
+  const catalog = spyOn(controller, "trackContextWindow").mockImplementation(() => {})
 
   try {
+    controller.handle(session.startEvent(true))
+    controller.handle({
+      type: "tool_started",
+      callId: "historical",
+      tool: "bash",
+      title: "interrupted earlier",
+      readOnly: true,
+    })
+    controller.handle({ type: "session_replay_finished" })
+    expect(screen.live.height).toBe(0)
     controller.handle({ type: "assistant_message", text: "Checking the workspace." })
     controller.handle({
       type: "tool_started",
@@ -91,6 +102,7 @@ test("foreground bash stays in the execution flow above the composer", async () 
     expect(screen.scrollback.endsWithTool).toBe(true)
     expect(screen.tasks.count).toBe(0)
   } finally {
+    catalog.mockRestore()
     screen.live.clear()
     session.disposeAsyncDelivery()
     session.disposeToolResources()

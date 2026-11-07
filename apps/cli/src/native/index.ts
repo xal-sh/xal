@@ -94,11 +94,16 @@ export type {
   NativeWriteRequest,
 } from "./contracts"
 
+export interface NativeSessionLock {
+  close(): void
+}
+
 export interface NativeSecretMatcher {
   redact(text: string): string
 }
 
 interface NativeBinding {
+  createSessionLock(path: string): NativeSessionLock
   createSecretMatcher(values: string[], marker: string): NativeSecretMatcher
   createGitRepository(cwd: string): NativeGitRepository
   createLspManager(definitions: unknown, appName: string, appVersion: string): NativeLspManager
@@ -195,6 +200,8 @@ function createBinding(value: unknown): NativeBinding {
   if (typeof LspManager !== "function") throw new Error("native addon NativeLspManager export is invalid")
   const McpManager = value.NativeMcpManager
   if (typeof McpManager !== "function") throw new Error("native addon NativeMcpManager export is invalid")
+  const SessionLock = value.NativeSessionLock
+  if (typeof SessionLock !== "function") throw new Error("native addon NativeSessionLock export is invalid")
   const MemoryStore = value.NativeMemoryStore
   if (typeof MemoryStore !== "function") throw new Error("native addon NativeMemoryStore export is invalid")
   const ToolRuntime = value.NativeToolRuntime
@@ -277,6 +284,16 @@ function createBinding(value: unknown): NativeBinding {
   const nativeUnifiedDiff = requiredFunction(value, "nativeUnifiedDiff")
 
   return {
+    createSessionLock(path) {
+      const instance: unknown = Reflect.construct(SessionLock, [path])
+      if (!isRecord(instance) || typeof instance.close !== "function") throw new Error("native session lock is invalid")
+      const close = instance.close
+      return {
+        close() {
+          Reflect.apply(close, instance, [])
+        },
+      }
+    },
     createSecretMatcher(values, marker) {
       const instance: unknown = Reflect.construct(Matcher, [values, marker])
       if (!isRecord(instance)) throw new Error("native addon matcher instance is invalid")
@@ -439,6 +456,10 @@ export function createNativeMcpManager(configs: unknown, appName: string, appVer
   return nativeBinding().createMcpManager(configs, appName, appVersion)
 }
 
+export function createNativeSessionLock(path: string): NativeSessionLock {
+  return nativeBinding().createSessionLock(path)
+}
+
 export function createNativeMemoryStore(path: string): NativeMemoryStore {
   return nativeBinding().createMemoryStore(path)
 }
@@ -575,6 +596,9 @@ export async function selfCheck(): Promise<void> {
   }
   const directory = await mkdtemp(join(tmpdir(), "xal-native-self-check-"))
   try {
+    const lock = createNativeSessionLock(join(directory, "session.lock"))
+    lock.close()
+    createNativeSessionLock(join(directory, "session.lock")).close()
     await writeFile(join(directory, "workspace-check.txt"), "native")
     const index = await createNativeWorkspaceIndex(directory, [], "[REDACTED]")
     const result = await index.search("workspace-check")

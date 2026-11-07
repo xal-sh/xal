@@ -28,6 +28,8 @@ export interface TurnHost {
   readonly toolRunner: ToolCallRunner
   readonly hookReporter: HookReporter
   history(): HistoryItem[]
+  flushPersistence(): Promise<void>
+  complete(event: Extract<AgentEvent, { type: "turn_ended" }>): Promise<void>
   outputContract(): OutputContract | undefined
   verificationStatus(signal: AbortSignal): Promise<VerificationCheckStatus[] | undefined>
   verificationBaseline(signal: AbortSignal): Promise<string | undefined>
@@ -96,6 +98,7 @@ export async function runTurn(
   let outputLimited = false
   let continuationCount = 0
   const completionBlocked = async (output: string | JsonObject | undefined): Promise<boolean> => {
+    await host.flushPersistence()
     const outcome = await runBeforeCompleteHooks(
       {
         ...(output === undefined ? {} : { output }),
@@ -131,6 +134,7 @@ export async function runTurn(
   const frozenOutputs = pendingCalls.length ? frozenToolOutputs(activeHistory(host.history()), pendingCalls) : []
 
   while (true) {
+    await host.flushPersistence()
     if (host.paused()) return
     if (host.drainBackgroundResults()) toolLoops.reset()
     if (host.drainAgentQuestions()) toolLoops.reset()
@@ -149,6 +153,7 @@ export async function runTurn(
     resumedCalls = []
     if (toolCalls.length === 0) {
       const request = await host.autoCompact(signal, provider, model, thinking)
+      await host.flushPersistence()
       host.setState("streaming")
       const round = host.streamRound(usage)
       let streamed: ProviderOutputItem[] | undefined
@@ -259,6 +264,7 @@ export async function runTurn(
         outputBudget,
       )
     }
+    await host.flushPersistence()
     if (loopError) throw loopError
     const contract = host.outputContract()
     if (contract?.output) {
@@ -369,6 +375,7 @@ async function endTurn(
   signal: AbortSignal,
 ): Promise<void> {
   host.stopAcceptingInput()
+  await host.flushPersistence()
   await runTurnEndHooks(
     {
       ...(output === undefined ? {} : { output }),
@@ -380,7 +387,7 @@ async function endTurn(
   )
   const verification = await host.verificationStatus(signal)
   signal.throwIfAborted()
-  host.emit({
+  await host.complete({
     type: "turn_ended",
     usage: usage.turn,
     context: usage.context,

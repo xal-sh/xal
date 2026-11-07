@@ -123,6 +123,7 @@ export interface ToolRunnerHost {
   outputContract(): OutputContract | undefined
   availableTool(name: string): RegisteredTool | undefined
   activeItems(): ConversationItem[]
+  flushPersistence(): Promise<void>
   hookContext(signal: AbortSignal): HookContext
   emit(event: AgentEvent): void
   setState(state: AgentState): void
@@ -148,6 +149,7 @@ export class ToolCallRunner {
   constructor(private readonly host: ToolRunnerHost) {}
 
   async applyBeforeToolHook(original: ToolCallItem, signal: AbortSignal, recordUpdate = true): Promise<ToolCallEntry> {
+    await this.host.flushPersistence()
     const outcome = await runBeforeToolHooks(
       { callId: original.callId, tool: original.name, args: original.args },
       this.host.hookContext(signal),
@@ -318,6 +320,7 @@ export class ToolCallRunner {
           toolLoops.record(outcome.call, outcome.loopOutput ?? outcome.output, outcome.denial ? "denial" : "result")
         }
       }
+      await this.host.flushPersistence()
       profileToolBatchFinished(profile, loopError ? "failed" : signal.aborted ? "interrupted" : "completed")
       return loopError
     } catch (error) {
@@ -327,6 +330,7 @@ export class ToolCallRunner {
   }
 
   async prepare(call: ToolCallItem, signal: AbortSignal, parentCallId?: string): Promise<ToolCallPreparation> {
+    await this.host.flushPersistence()
     const tool = this.host.availableTool(call.name)
     const known = tool ?? getTool(call.name)
     const title = known?.title(call.args, { cwd: this.host.cwd() }) ?? JSON.stringify(call.args)
@@ -478,6 +482,8 @@ export class ToolCallRunner {
     } else {
       this.host.emit({ type: "tool_started", callId: call.callId, tool: call.name, title, readOnly })
     }
+    await this.host.flushPersistence()
+    if (signal.aborted) return this.outcome(call, title, readOnly, "Interrupted by user before execution.")
     let output: string
     let savedOutput: string | undefined
     let read: ReadCoverage | undefined
@@ -575,6 +581,7 @@ export class ToolCallRunner {
       const tail = updates.end()
       if (tail && !parentCallId) this.host.emit({ type: "tool_updated", callId: call.callId, text: tail })
     }
+    await this.host.flushPersistence()
     try {
       const after = (): Promise<string> =>
         runAfterToolHooks(
@@ -718,6 +725,8 @@ export class ToolCallRunner {
       inheritedDenyMode: this.host.inheritedDenyMode,
     })
     if (decision !== "allow") return undefined
+    await this.host.flushPersistence()
+    signal.throwIfAborted()
     try {
       const result = await tool.execute(
         args,

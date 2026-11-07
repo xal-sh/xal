@@ -6,6 +6,7 @@ import { backgroundSessionDir } from "../config/paths"
 import { asString, isRecord } from "../lib/json"
 import { pendingToolCalls } from "../providers/conversation"
 import { SessionRecorder } from "../sessions/recorder"
+import { SessionWriter } from "../sessions/ownership"
 import { findSession, loadSession } from "../sessions/store"
 import type { SessionSummary } from "../sessions/types"
 import {
@@ -28,6 +29,7 @@ const STOP_GRACE_MS = 15_000
 
 export interface TakeoverOutcome {
   summary: SessionSummary
+  writer: SessionWriter
   continueWork: boolean
   retryPendingTools: boolean
 }
@@ -94,48 +96,50 @@ async function requestWorker(state: BgState, action: BgControlAction, timeoutMs:
 export type StopOutcome = "stopped" | "timeout" | "not_running"
 
 async function denyPendingRequest(state: BgState): Promise<void> {
-  const loaded = await loadSession(state.sessionPath)
-  if (!loaded) throw new Error(`the session file for ${state.sessionId.slice(0, 8)} is missing`)
-  const calls = pendingToolCalls(activeHistory(loaded.items), {
-    provider: loaded.meta.provider,
-    model: loaded.meta.model,
-  })
-  if (calls.length === 0) throw new Error(`session ${state.sessionId.slice(0, 8)} has no pending request to deny`)
-
-  let recorderError: string | undefined
-  const recorder = new SessionRecorder((message) => {
-    recorderError = message
-  })
-  recorder.attach(state.sessionPath)
-  for (const call of calls) {
-    const approval = loaded.events.findLast(
-      (event) => event.type === "approval_requested" && event.callId === call.callId,
-    )
-    if (loaded.events.some((event) => event.type === "elicitation_requested" && event.callId === call.callId)) {
-      recorder.event({ type: "elicitation_resolved", callId: call.callId })
-    }
-    const output = "User stopped the background session before answering the pending request."
-    recorder.item({ type: "tool_result", callId: call.callId, output })
-    recorder.event({
-      type: "tool_finished",
-      callId: call.callId,
-      tool: call.name,
-      title: approval?.type === "approval_requested" ? approval.title : JSON.stringify(call.args),
-      readOnly: approval?.type === "approval_requested" ? approval.readOnly : false,
-      output,
-      denial: "user",
+  const writer = SessionWriter.acquire(state.sessionPath)
+  const recorder = new SessionRecorder(() => {})
+  try {
+    const loaded = await loadSession(state.sessionPath, writer)
+    if (!loaded) throw new Error(`the session file for ${state.sessionId.slice(0, 8)} is missing`)
+    const calls = pendingToolCalls(activeHistory(loaded.items), {
+      provider: loaded.meta.provider,
+      model: loaded.meta.model,
     })
-  }
-  await recorder.flush()
-  if (recorderError) throw new Error(recorderError)
+    if (calls.length === 0) throw new Error(`session ${state.sessionId.slice(0, 8)} has no pending request to deny`)
 
-  const verified = await loadSession(state.sessionPath)
-  if (!verified) throw new Error(`the session file for ${state.sessionId.slice(0, 8)} became unreadable`)
-  const remaining = pendingToolCalls(activeHistory(verified.items), {
-    provider: verified.meta.provider,
-    model: verified.meta.model,
-  })
-  if (remaining.length > 0) throw new Error(`the pending request for ${state.sessionId.slice(0, 8)} was not denied`)
+    recorder.attach(writer)
+    for (const call of calls) {
+      const approval = loaded.events.findLast(
+        (event) => event.type === "approval_requested" && event.callId === call.callId,
+      )
+      if (loaded.events.some((event) => event.type === "elicitation_requested" && event.callId === call.callId)) {
+        recorder.event({ type: "elicitation_resolved", callId: call.callId })
+      }
+      const output = "User stopped the background session before answering the pending request."
+      recorder.item({ type: "tool_result", callId: call.callId, output })
+      recorder.event({
+        type: "tool_finished",
+        callId: call.callId,
+        tool: call.name,
+        title: approval?.type === "approval_requested" ? approval.title : JSON.stringify(call.args),
+        readOnly: approval?.type === "approval_requested" ? approval.readOnly : false,
+        output,
+        denial: "user",
+      })
+    }
+    await recorder.flush()
+
+    const verified = await loadSession(state.sessionPath)
+    if (!verified) throw new Error(`the session file for ${state.sessionId.slice(0, 8)} became unreadable`)
+    const remaining = pendingToolCalls(activeHistory(verified.items), {
+      provider: verified.meta.provider,
+      model: verified.meta.model,
+    })
+    if (remaining.length > 0) throw new Error(`the pending request for ${state.sessionId.slice(0, 8)} was not denied`)
+  } finally {
+    writer.close()
+    await recorder.close()
+  }
 }
 
 async function stopWaitingSession(state: BgState): Promise<void> {
@@ -181,19 +185,24 @@ export async function takeOverBackgroundSession(id: string): Promise<TakeoverOut
   if (!found) throw new Error(`no background session matches ${id}`)
   const sessionId = found.state.sessionId
   await claimAttach(sessionId)
+  let writer: SessionWriter | undefined
   try {
     const final = found.effective === "running" ? await handoffFromWorker(found.state) : found.state
     const effective = effectiveStatus(final, isProcessAlive(final.pid))
     const summary = await findSession(sessionId)
     if (!summary) throw new Error(`the session file for ${sessionId.slice(0, 8)} is missing`)
+    writer = SessionWriter.acquire(summary.path)
     await removeBackgroundSession(sessionId)
     return {
       summary,
+      writer: writer.transfer(),
       continueWork: continueAfter(effective),
       retryPendingTools: effective === "needs_input",
     }
   } catch (error) {
     await releaseAttach(sessionId)
     throw error
+  } finally {
+    writer?.close()
   }
 }

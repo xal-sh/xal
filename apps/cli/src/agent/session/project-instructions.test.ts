@@ -9,6 +9,7 @@ import { codeModeTool } from "../../plugins/code-mode/tool"
 import { readTool } from "../../plugins/files/read"
 import { registerProjectInstructions } from "../../plugins/project-instructions/plugin"
 import { SessionRecorder } from "../../sessions/recorder"
+import { SessionWriter } from "../../sessions/ownership"
 import { parseRecord } from "../../sessions/records"
 import { loadSession } from "../../sessions/store"
 import { registerTool, unregisterTool } from "../../tools/registry"
@@ -59,7 +60,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   for (const session of sessions.splice(0)) {
-    await session.flushPersistence()
+    await session.closePersistence()
     disposeToolSession(session.id)
     session.disposeAsyncDelivery()
   }
@@ -213,13 +214,15 @@ test("persists discovery through compaction, fork and resume, reloads contents, 
   expect(loaded.promptStates?.project_instructions).toEqual({ cwd, root: cwd, paths: [join("src", "AGENTS.md")] })
   disposeToolSession(session.id)
   session.disposeAsyncDelivery()
+  await session.closePersistence()
   await writeFile(join(cwd, "src", "AGENTS.md"), "Updated nested rules")
   const resumedProvider = new ScriptedProvider([completedRound("resumed"), completedRound("new")])
   const resumed = create(resumedProvider, "worktree", true)
   expect(
-    resumed.resume({
+    await resumed.resume({
       session: loaded,
       path,
+      writer: SessionWriter.acquire(path),
       cwd,
       provider: resumedProvider,
       profileId: "test-profile",
@@ -232,7 +235,7 @@ test("persists discovery through compaction, fork and resume, reloads contents, 
   expect(resumedProvider.requests[0]?.instructions).toContain("checkout root rules")
   expect(resumedProvider.requests[0]?.instructions).toContain("Updated nested rules")
   expect(resumedProvider.requests[0]?.instructions).not.toContain("worktree root rules")
-  expect(resumed.reset()).toBe(true)
+  expect(await resumed.reset()).toBe(true)
   expect((await runSettledTurn(resumed, { text: "Start over", images: [] })).status).toBe("completed")
   expect(resumedProvider.requests[1]?.instructions).toContain("checkout root rules")
   expect(resumedProvider.requests[1]?.instructions).not.toContain("Updated nested rules")
@@ -247,7 +250,8 @@ test("does not request a model response when prompt state cannot be persisted", 
   const result = await runSettledTurn(session, { text: "Inspect", images: [] })
   expect(result.status).toBe("failed")
   expect(provider.requests).toHaveLength(0)
-  await expect(session.flushPersistence()).rejects.toThrow("session recorder is unavailable")
+  await expect(session.flushPersistence()).rejects.toThrow("session not saved:")
+  await expect(session.closePersistence()).rejects.toThrow("session not saved:")
   sessions.splice(sessions.indexOf(session), 1)
   disposeToolSession(session.id)
   session.disposeAsyncDelivery()

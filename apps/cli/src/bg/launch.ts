@@ -1,5 +1,7 @@
 import { mkdir, open, readFile } from "node:fs/promises"
 import type { AgentSession } from "../agent/session/session"
+import { resumeSession } from "../agent/session/compose"
+import { findSession } from "../sessions/store"
 import { unsettledJobs, type BackgroundJob } from "../background/jobs"
 import { backgroundSessionDir } from "../config/paths"
 import { describeError, isMissingPathError } from "../lib/error"
@@ -53,18 +55,21 @@ async function workerLogTail(sessionId: string): Promise<string> {
   return `\nworker log (${backgroundLogPath(sessionId)}):\n${lines.join("\n")}`
 }
 
-async function spawnWorker(sessionId: string, cwd: string): Promise<void> {
+async function spawnWorker(session: AgentSession): Promise<void> {
+  const sessionId = session.id
+  const cwd = session.currentWorkingDirectory
   if (await readBgState(sessionId)) throw new Error(`session ${sessionId.slice(0, 8)} already has a background entry`)
   await mkdir(backgroundSessionDir(sessionId), { recursive: true, mode: 0o700 })
   const workerId = crypto.randomUUID()
   let claimed = false
+  let child: ReturnType<typeof Bun.spawn> | undefined
   try {
     await claimBgLease(sessionId, workerId)
     claimed = true
     await removeBgControl(sessionId)
     const log = await open(backgroundLogPath(sessionId), "w", 0o600)
-    let child: ReturnType<typeof Bun.spawn>
     try {
+      await session.closePersistence()
       child = Bun.spawn({
         cmd: selfCommand(["bg", "worker", sessionId, workerId]),
         cwd,
@@ -93,6 +98,10 @@ async function spawnWorker(sessionId: string, cwd: string): Promise<void> {
     }
     child.unref()
   } catch (error) {
+    if (child) {
+      child.kill()
+      await child.exited
+    }
     if (claimed) await removeBackgroundSession(sessionId)
     throw error
   }
@@ -112,10 +121,20 @@ export async function detachSession(session: AgentSession): Promise<DetachOutcom
     await settleAsyncWork(session)
     await session.flushPersistence()
     session.disposeToolResources()
-    await spawnWorker(session.id, session.currentWorkingDirectory)
+    await spawnWorker(session)
   } catch (error) {
     const reason = describeError(error)
-    session.continueTurn()
+    if (session.persistenceError) return { status: "failed", reason }
+    try {
+      if (!session.continueTurn()) {
+        const summary = await findSession(session.id)
+        if (!summary) throw new Error("the saved session could not be found after the handoff failed", { cause: error })
+        await resumeSession(session, summary, { deferGoalResume: true })
+        session.continueTurn()
+      }
+    } catch (recoveryError) {
+      return { status: "failed", reason: `${reason}\nforeground recovery failed: ${describeError(recoveryError)}` }
+    }
     return { status: "failed", reason }
   }
   session.disposeAsyncDelivery()

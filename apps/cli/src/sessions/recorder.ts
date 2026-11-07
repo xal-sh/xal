@@ -1,5 +1,6 @@
-import { appendFile, mkdir, readFile, unlink } from "node:fs/promises"
-import { dirname, join } from "node:path"
+import { constants } from "node:fs"
+import { appendFile, readFile, unlink } from "node:fs/promises"
+import { join } from "node:path"
 import type { AgentEvent } from "../agent/events"
 import type { HistoryItem } from "../agent/history"
 import { projectSessionsDir } from "../config/paths"
@@ -8,6 +9,7 @@ import type { JsonObject } from "../lib/json"
 import { writeNewSecureText } from "../lib/fs"
 import { isPersistable, isRetiredEvent, parseRecord } from "./records"
 import { loadSession } from "./store"
+import { SessionWriter } from "./ownership"
 import type { SessionMeta, SessionRecord } from "./types"
 
 function line(record: SessionRecord): string {
@@ -94,28 +96,64 @@ export class SessionRecorder {
   private path: string | undefined
   private pending: { meta: SessionMeta; cwd: string } | undefined
   private queue: Promise<void> = Promise.resolve()
-  private generation = 0
-  private failed = false
+  private writer: SessionWriter | undefined
+  private closed = false
+  private closing: Promise<void> | undefined
+  private failure: Error | undefined
 
   constructor(private readonly onError: (message: string) => void) {}
 
-  start(meta: SessionMeta, cwd: string): void {
-    this.generation += 1
-    this.path = undefined
-    this.pending = { meta, cwd }
-    this.failed = false
+  get error(): Error | undefined {
+    return this.failure
   }
 
-  attach(path: string): void {
-    this.generation += 1
-    this.path = path
-    this.pending = undefined
-    this.failed = false
+  get unavailable(): boolean {
+    return this.closed || this.failure !== undefined
+  }
+
+  start(meta: SessionMeta, cwd: string): void {
+    if (this.path || this.pending || this.closing)
+      throw new Error("close the current session recorder before starting another")
+    this.pending = { meta, cwd }
+    this.closed = false
+    this.failure = undefined
+  }
+
+  attach(writer: SessionWriter): void {
+    if (this.path || this.pending || this.closing)
+      throw new Error("close the current session recorder before attaching another")
+    this.writer = writer.transfer()
+    this.path = this.writer.path
+    this.closed = false
+    this.failure = undefined
   }
 
   async flush(): Promise<void> {
-    await this.queue
-    if (this.failed) throw new Error("session recorder is unavailable")
+    let pending
+    do {
+      pending = this.queue
+      await pending
+    } while (pending !== this.queue)
+    if (this.failure) throw this.failure
+    if (this.closed) throw new Error("session recorder is closed")
+  }
+
+  async close(): Promise<void> {
+    if (this.closing) return this.closing
+    if (this.closed) return
+    this.closed = true
+    this.closing = this.queue
+      .then(() => {
+        if (this.failure) throw this.failure
+      })
+      .finally(() => {
+        this.writer?.close()
+        this.writer = undefined
+        this.path = undefined
+        this.pending = undefined
+        this.closing = undefined
+      })
+    return this.closing
   }
 
   async fork(target: ForkTarget, cwd: string): Promise<{ path: string; corrections: AgentEvent[] }> {
@@ -149,20 +187,28 @@ export class SessionRecorder {
     const firstNewline = source.indexOf("\n")
     const path = join(projectSessionsDir(cwd), `${target.id}.jsonl`)
     const correctionLines = corrections.map((event) => line({ type: "event", event })).join("")
-    await writeNewSecureText(path, line({ type: "meta", meta }) + source.slice(firstNewline + 1) + correctionLines)
-    const loaded = await loadSession(path)
-    if (
-      !loaded ||
-      loaded.meta.id !== target.id ||
-      loaded.meta.parentId !== target.parentId ||
-      !sameState(replayState(loaded.meta, loaded.events), target)
-    ) {
-      await unlink(path)
-      throw new Error("forked session did not pass validation")
+    const writer = SessionWriter.acquire(path)
+    try {
+      await writeNewSecureText(path, line({ type: "meta", meta }) + source.slice(firstNewline + 1) + correctionLines)
+      const loaded = await loadSession(path, writer)
+      if (
+        !loaded ||
+        loaded.meta.id !== target.id ||
+        loaded.meta.parentId !== target.parentId ||
+        !sameState(replayState(loaded.meta, loaded.events), target)
+      ) {
+        await unlink(path)
+        throw new Error("forked session did not pass validation")
+      }
+      await this.flush()
+      this.writer?.close()
+      this.writer = writer.transfer()
+      this.path = this.writer.path
+      this.pending = undefined
+      return { path: this.path, corrections }
+    } finally {
+      writer.close()
     }
-    this.path = path
-    this.pending = undefined
-    return { path, corrections }
   }
 
   promptState(id: string, state: JsonObject): Promise<void> {
@@ -184,37 +230,42 @@ export class SessionRecorder {
   }
 
   private append(record: SessionRecord): void {
-    if (this.failed) return
+    if (this.unavailable) return
     void this.appendAndWait(record)
   }
 
   private appendAndWait(record: SessionRecord): Promise<void> {
-    if (this.failed) return Promise.reject(new Error("session recorder is unavailable"))
-    const generation = this.generation
+    if (this.failure) return Promise.reject(this.failure)
+    if (this.closed) return Promise.reject(new Error("session recorder is closed"))
     const pending = this.pending
     if (pending) {
       this.path = join(projectSessionsDir(pending.cwd), `${pending.meta.id}.jsonl`)
       this.pending = undefined
     }
     const path = this.path
-    if (!path) return Promise.resolve()
+    if (!path) return Promise.reject(new Error("session recorder has not been started"))
     const writing = this.queue.then(() => {
-      if (this.failed) throw new Error("session recorder is unavailable")
+      if (this.failure) throw this.failure
       return this.write(path, record, pending?.meta)
     })
-    this.queue = writing.catch((error: unknown) => this.fail(error, generation))
+    this.queue = writing.catch((error: unknown) => this.fail(error))
     return writing
   }
 
   private async write(path: string, record: SessionRecord, meta: SessionMeta | undefined): Promise<void> {
-    if (meta) await mkdir(dirname(path), { recursive: true })
-    const payload = meta ? line({ type: "meta", meta }) + line(record) : line(record)
-    await appendFile(path, payload, { mode: 0o600 })
+    if (meta) {
+      this.writer = SessionWriter.acquire(path)
+      await writeNewSecureText(this.writer.path, line({ type: "meta", meta }) + line(record))
+      return
+    }
+    if (!this.writer) throw new Error("session recorder does not own the transcript")
+    this.writer.assert(path)
+    await appendFile(this.writer.path, line(record), { flag: constants.O_WRONLY | constants.O_APPEND })
   }
 
-  private fail(error: unknown, generation: number): void {
-    if (generation !== this.generation || this.failed) return
-    this.failed = true
-    this.onError(`session not saved: ${describeError(error)}`)
+  private fail(error: unknown): void {
+    if (this.failure) return
+    this.failure = new Error(`session not saved: ${describeError(error)}`, { cause: error })
+    this.onError(this.failure.message)
   }
 }

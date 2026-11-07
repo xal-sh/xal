@@ -9,6 +9,7 @@ import { findModel } from "../../providers/catalog"
 import { getProvider, getTextProvider, listTextProviders } from "../../providers/registry"
 import type { Provider, ThinkingEffort } from "../../providers/types"
 import { loadSession } from "../../sessions/store"
+import { SessionWriter } from "../../sessions/ownership"
 import type { LoadedSession, SessionSummary } from "../../sessions/types"
 import { AgentSession } from "./session"
 import type { OutputSchema } from "./output-contract"
@@ -189,8 +190,20 @@ function lastState(loaded: LoadedSession): {
 }
 
 export interface ResumeOptions {
+  writer?: SessionWriter
   backgroundWorkerId?: string
   deferGoalResume?: boolean
+}
+
+async function assertResumeLease(sessionId: string, backgroundWorkerId?: string): Promise<void> {
+  const lease = await readBgLease(sessionId)
+  if (backgroundWorkerId && lease?.workerId !== backgroundWorkerId) {
+    throw new Error("background worker no longer owns the session lease")
+  }
+  if (lease && lease.workerId !== backgroundWorkerId) {
+    const short = sessionId.slice(0, 8)
+    throw new Error(`session ${short} is running in the background; use "${appInfo.name} bg attach ${short}"`)
+  }
 }
 
 export async function resumeSession(
@@ -198,51 +211,56 @@ export async function resumeSession(
   summary: SessionSummary,
   options: ResumeOptions = {},
 ): Promise<string[]> {
-  const lease = await readBgLease(summary.id)
-  if (lease && lease.workerId !== options.backgroundWorkerId) {
-    const short = summary.id.slice(0, 8)
-    throw new Error(`session ${short} is running in the background; use "${appInfo.name} bg attach ${short}"`)
-  }
-  await session.flushPersistence()
-  const loaded = await loadSession(summary.path)
-  if (!loaded) throw new Error(`session is unreadable: ${summary.path}`)
-
-  const notices: string[] = []
-  const last = lastState(loaded)
-  if (!last.profile) throw new Error("session has no provider profile")
-  const profile = await getProfile(last.profile)
-  if (!profile) throw new Error(`provider profile ${last.profile} used by this session no longer exists`)
-  if (profile.provider !== last.provider) throw new Error("session provider profile does not match its provider")
-  const provider = getTextProvider(last.provider)
-  if (!provider) throw new Error(`provider ${last.provider} used by this session is not available`)
-  const model = last.model
-  const thinking = await resolveThinking(provider, profile.id, model, last.thinking)
-  const modelInfo = await findModel(provider, profile.id, model)
-  let cwd = last.cwd
-  if (!(await pathExists(cwd))) {
-    const fallback = (await pathExists(loaded.meta.cwd)) ? loaded.meta.cwd : process.cwd()
-    notices.push(`recorded workspace ${cwd} is unavailable — continuing in ${fallback}`)
-    cwd = fallback
-  }
-  if (cwd !== process.cwd()) {
-    notices.push(`this session was working in ${cwd} — paths may not match ${process.cwd()}`)
-  }
-
-  if (
-    !session.resume({
-      session: loaded,
-      path: summary.path,
-      cwd,
-      provider,
-      profileId: profile.id,
-      model,
-      modelInputModalities: modelInfo?.inputModalities,
-      thinking,
-      mode: last.mode,
-      continueGoal: !options.deferGoalResume,
-    })
-  ) {
+  if (session.currentState !== "idle" || session.hasPendingAsyncWork()) {
     throw new Error("cannot resume while a turn or background job is unsettled")
   }
-  return notices
+  if (!options.writer && !options.backgroundWorkerId) await assertResumeLease(summary.id)
+  const writer = options.writer?.transfer() ?? SessionWriter.acquire(summary.path)
+  try {
+    await assertResumeLease(summary.id, options.backgroundWorkerId)
+    const loaded = await loadSession(summary.path, writer)
+    if (!loaded || loaded.meta.id !== summary.id) throw new Error(`session is unreadable: ${summary.path}`)
+
+    const notices: string[] = []
+    const last = lastState(loaded)
+    if (!last.profile) throw new Error("session has no provider profile")
+    const profile = await getProfile(last.profile)
+    if (!profile) throw new Error(`provider profile ${last.profile} used by this session no longer exists`)
+    if (profile.provider !== last.provider) throw new Error("session provider profile does not match its provider")
+    const provider = getTextProvider(last.provider)
+    if (!provider) throw new Error(`provider ${last.provider} used by this session is not available`)
+    const model = last.model
+    const thinking = await resolveThinking(provider, profile.id, model, last.thinking)
+    const modelInfo = await findModel(provider, profile.id, model)
+    let cwd = last.cwd
+    if (!(await pathExists(cwd))) {
+      const fallback = (await pathExists(loaded.meta.cwd)) ? loaded.meta.cwd : process.cwd()
+      notices.push(`recorded workspace ${cwd} is unavailable — continuing in ${fallback}`)
+      cwd = fallback
+    }
+    if (cwd !== process.cwd()) {
+      notices.push(`this session was working in ${cwd} — paths may not match ${process.cwd()}`)
+    }
+
+    if (
+      !(await session.resume({
+        session: loaded,
+        path: summary.path,
+        writer,
+        cwd,
+        provider,
+        profileId: profile.id,
+        model,
+        modelInputModalities: modelInfo?.inputModalities,
+        thinking,
+        mode: last.mode,
+        continueGoal: !options.deferGoalResume,
+      }))
+    ) {
+      throw new Error("cannot resume while a turn or background job is unsettled")
+    }
+    return notices
+  } finally {
+    writer.close()
+  }
 }

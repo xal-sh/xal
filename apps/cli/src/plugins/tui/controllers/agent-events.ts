@@ -261,6 +261,7 @@ export class AgentEventController {
         live.resume(event.callId)
         break
       case "tool_started":
+        if (this.replaying) break
         this.screen.dismissApproval()
         scrollback.endStream()
         live.start(event.callId, event.tool, event.title, event.readOnly)
