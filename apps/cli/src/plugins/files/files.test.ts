@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { chmod, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises"
+import { chmod, lstat, mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { appInfo } from "../../app-info"
@@ -66,6 +66,37 @@ test("write reports unchanged and update outcomes while preserving permissions",
       "Updated existing.txt",
     )
     expect((await stat(path)).mode & 0o777).toBe(0o744)
+  })
+})
+
+test.skipIf(process.platform === "win32")("write and edit preserve symlink targets and file modes", async () => {
+  await withWorkspace(async (workspace) => {
+    const target = join(workspace, "target.txt")
+    const alias = join(workspace, "alias.txt")
+    await writeFile(target, "original\n")
+    await chmod(target, 0o751)
+    await symlink("target.txt", alias)
+    const ctx = context(workspace)
+    await readForSession({ file_path: "alias.txt" }, ctx)
+    await writeTool.execute({ file_path: "alias.txt", content: "written\n" }, ctx)
+    await editTool.execute({ file_path: "alias.txt", old_string: "written", new_string: "edited" }, ctx)
+    expect(await readFile(target, "utf8")).toBe("edited\n")
+    expect((await lstat(alias)).isSymbolicLink()).toBe(true)
+    expect((await stat(target)).mode & 0o777).toBe(0o751)
+    expect(await knownFileState(ctx.sessionId, alias)).toBe(await knownFileState(ctx.sessionId, target))
+    expect((await readdir(workspace)).sort()).toEqual(["alias.txt", "target.txt"])
+  })
+})
+
+test.skipIf(process.platform === "win32")("write refuses dangling symlinks without replacing them", async () => {
+  await withWorkspace(async (workspace) => {
+    const alias = join(workspace, "alias.txt")
+    await symlink("missing.txt", alias)
+    await expect(
+      writeTool.execute({ file_path: "alias.txt", content: "replacement" }, context(workspace)),
+    ).rejects.toThrow()
+    expect((await lstat(alias)).isSymbolicLink()).toBe(true)
+    expect(await readdir(workspace)).toEqual(["alias.txt"])
   })
 })
 

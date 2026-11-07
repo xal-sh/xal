@@ -19,12 +19,22 @@ impl Task for WriteTask {
     type JsValue = NativeFileToolOutput;
 
     fn compute(&mut self) -> napi::Result<Self::Output> {
-        let metadata = fs::metadata(&self.path).ok();
+        let metadata = match fs::metadata(&self.path) {
+            Ok(metadata) => Some(metadata),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => return Err(io_error(error)),
+        };
         if metadata.as_ref().is_some_and(fs::Metadata::is_dir) {
             return Err(failed(format!(
                 "Path is a directory, not a file: {}",
                 self.display_path
             )));
+        }
+        if metadata
+            .as_ref()
+            .is_some_and(|metadata| !metadata.is_file())
+        {
+            return Err(failed(format!("Not a regular file: {}", self.display_path)));
         }
         if metadata.is_some() && self.expected.is_none() {
             return Err(failed(format!(
@@ -66,7 +76,8 @@ impl Task for WriteTask {
             fs::create_dir_all(parent).map_err(io_error)?;
         }
         let bytes = utf16_lossy(&self.content);
-        fs::write(&self.path, bytes.as_bytes()).map_err(io_error)?;
+        replace::replace_file(&self.path, bytes.as_bytes(), previous.is_some())
+            .map_err(io_error)?;
         let header = if previous.is_some() {
             format!(
                 "Updated {} (+{} -{})",

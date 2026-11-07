@@ -19,6 +19,8 @@ const MAX_SUGGESTIONS: usize = 5;
 
 mod edit;
 mod read;
+mod replace;
+mod replace_metadata;
 mod write;
 
 #[napi(object)]
