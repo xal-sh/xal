@@ -2,6 +2,8 @@ import { describeError } from "../lib/error"
 import { asString, isJsonObject, isRecord, type JsonObject } from "../lib/json"
 import type {
   AfterToolHookInput,
+  BeforeCompleteHookInput,
+  BeforeCompleteHookResult,
   BeforeToolHookInput,
   HookAction,
   HookContext,
@@ -19,6 +21,7 @@ interface RegisteredHook {
   prompt?: RegisteredHandler
   beforeTool?: RegisteredHandler
   afterTool?: RegisteredHandler
+  beforeComplete?: RegisteredHandler
   turnEnd?: RegisteredHandler
 }
 
@@ -44,6 +47,8 @@ export interface HookDescription {
 }
 
 export type PromptHooksOutcome = { type: "continue"; text: string } | { type: "blocked"; hook: string; reason: string }
+
+export type BeforeCompleteHooksOutcome = { type: "continue" } | { type: "blocked"; hook: string; reason: string }
 
 export type BeforeToolHooksOutcome =
   | { type: "continue"; args: JsonObject; modified: boolean }
@@ -93,9 +98,10 @@ export function registerHook(plugin: string, pluginOrder: number, hookOrder: num
     prompt: registeredHandler(value, "prompt"),
     beforeTool: registeredHandler(value, "beforeTool"),
     afterTool: registeredHandler(value, "afterTool"),
+    beforeComplete: registeredHandler(value, "beforeComplete"),
     turnEnd: registeredHandler(value, "turnEnd"),
   }
-  if (!hook.prompt && !hook.beforeTool && !hook.afterTool && !hook.turnEnd) {
+  if (!hook.prompt && !hook.beforeTool && !hook.afterTool && !hook.beforeComplete && !hook.turnEnd) {
     throw new Error(`hook ${hook.id} must register at least one handler`)
   }
   if (ids.has(hook.id)) throw new Error(`hook already registered: ${hook.id}`)
@@ -110,6 +116,7 @@ function eventsOf(hook: RegisteredHook): HookEvent[] {
   if (hook.prompt) events.push("prompt")
   if (hook.beforeTool) events.push("before_tool")
   if (hook.afterTool) events.push("after_tool")
+  if (hook.beforeComplete) events.push("before_complete")
   if (hook.turnEnd) events.push("turn_end")
   return events
 }
@@ -165,6 +172,17 @@ function parseAfterToolResult(value: unknown): ParsedResult<AfterToolStep> {
   const output = asString(value.output)
   if (output === undefined) throw new Error("afterTool replacement output must be a string")
   return { value: { type: "replace", output }, action: "modified" }
+}
+
+function parseBeforeCompleteResult(value: unknown): ParsedResult<BeforeCompleteHookResult> {
+  if (value === undefined) return { value: undefined, action: "continued" }
+  if (!isRecord(value) || asString(value.type) !== "block") {
+    throw new Error('beforeComplete must return undefined or { type: "block", reason }')
+  }
+  const reason = asString(value.reason)?.trim()
+  if (!reason) throw new Error("beforeComplete block reason must be a non-empty string")
+  if (Array.from(reason).length > 4_000) throw new Error("beforeComplete block reason must be at most 4,000 characters")
+  return { value: { type: "block", reason }, action: "blocked" }
 }
 
 function parseTurnEndResult(value: unknown): ParsedResult<void> {
@@ -286,6 +304,27 @@ export async function runAfterToolHooks(
     }
   }
   return output
+}
+
+export async function runBeforeCompleteHooks(
+  input: BeforeCompleteHookInput,
+  ctx: HookContext,
+  reporter: HookReporter,
+): Promise<BeforeCompleteHooksOutcome> {
+  for (const hook of hooks) {
+    if (!hook.beforeComplete) continue
+    const step = await invoke(
+      hook,
+      "before_complete",
+      hook.beforeComplete,
+      structuredClone(input),
+      ctx,
+      reporter,
+      parseBeforeCompleteResult,
+    )
+    if (step) return { type: "blocked", hook: hook.id, reason: step.reason }
+  }
+  return { type: "continue" }
 }
 
 export async function runTurnEndHooks(

@@ -8,6 +8,14 @@ function itemRecord(item: unknown): string {
   return JSON.stringify({ type: "item", item })
 }
 
+test("round-trips completion hook lifecycle records", () => {
+  const record = {
+    type: "event",
+    event: { type: "hook_finished", hook: "plugin/gate", event: "before_complete", action: "blocked", elapsedMs: 12 },
+  } satisfies SessionRecord
+  expect(parseRecord(JSON.stringify(record))).toEqual(record)
+})
+
 test("round-trips prompt state and rejects malformed records", () => {
   const record = {
     type: "prompt_state",

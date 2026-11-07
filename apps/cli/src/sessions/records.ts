@@ -72,7 +72,15 @@ function parseDirectShell(raw: Record<string, unknown>): DirectShellResult | und
 
 function parseHookEvent(value: unknown): HookEvent | undefined {
   const event = asString(value)
-  if (event === "prompt" || event === "before_tool" || event === "after_tool" || event === "turn_end") return event
+  if (
+    event === "prompt" ||
+    event === "before_tool" ||
+    event === "after_tool" ||
+    event === "before_complete" ||
+    event === "turn_end"
+  ) {
+    return event
+  }
   return undefined
 }
 

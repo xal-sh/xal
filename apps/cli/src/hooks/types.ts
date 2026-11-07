@@ -3,7 +3,7 @@ import type { JsonObject } from "../lib/json"
 import type { PermissionMode } from "../permissions/types"
 import type { Usage } from "../providers/types"
 
-export type HookEvent = "prompt" | "before_tool" | "after_tool" | "turn_end"
+export type HookEvent = "prompt" | "before_tool" | "after_tool" | "before_complete" | "turn_end"
 
 export type HookAction = "continued" | "modified" | "blocked" | "failed" | "interrupted"
 
@@ -51,6 +51,12 @@ export interface TurnEndHookInput {
   context?: Usage
 }
 
+export interface BeforeCompleteHookInput extends TurnEndHookInput {
+  continuationCount: number
+}
+
+export type BeforeCompleteHookResult = { type: "block"; reason: string } | undefined
+
 type HookResult<T> = T | Promise<T>
 
 export interface Hook {
@@ -58,5 +64,6 @@ export interface Hook {
   prompt?(input: PromptHookInput, ctx: HookContext): HookResult<PromptHookResult>
   beforeTool?(input: BeforeToolHookInput, ctx: HookContext): HookResult<BeforeToolHookResult>
   afterTool?(input: AfterToolHookInput, ctx: HookContext): HookResult<AfterToolHookResult>
+  beforeComplete?(input: BeforeCompleteHookInput, ctx: HookContext): HookResult<BeforeCompleteHookResult>
   turnEnd?(input: TurnEndHookInput, ctx: HookContext): HookResult<void>
 }
