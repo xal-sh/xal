@@ -151,6 +151,42 @@ test("cleans timers on success, provider failure, and early consumer exit", asyn
   expect(jest.getTimerCount()).toBe(0)
 })
 
+test("reports pending iteration cleanup failures without replacing timeout or cancellation", async () => {
+  for (const scenario of ["timeout", "cancellation"] as const) {
+    const waiting = Promise.withResolvers<void>()
+    const reported = Promise.withResolvers<void>()
+    const error = spyOn(console, "error").mockImplementation(() => reported.resolve())
+    try {
+      const provider = new ScriptedProvider([
+        async function* (input) {
+          try {
+            await new Promise<void>((_resolve, reject) => {
+              input.signal?.addEventListener("abort", () => reject(input.signal?.reason), { once: true })
+              waiting.resolve()
+            })
+            yield { type: "done" }
+          } finally {
+            await Promise.reject(new Error("cleanup failed"))
+          }
+        },
+      ])
+      const controller = new AbortController()
+      const stream = streamWithWatchdog(provider, "profile", request(controller.signal))
+      const pending = stream.next().catch((failure: unknown) => failure)
+      await waiting.promise
+      if (scenario === "timeout") jest.advanceTimersByTime(settings().providerTimeouts.firstEventMs)
+      else controller.abort()
+      expect(await pending).toMatchObject({ name: scenario === "timeout" ? "ProviderError" : "AbortError" })
+      await reported.promise
+      expect(error).toHaveBeenCalledWith("Scripted provider stream cleanup failed: cleanup failed")
+      expect(error).toHaveBeenCalledTimes(1)
+      expect(jest.getTimerCount()).toBe(0)
+    } finally {
+      error.mockRestore()
+    }
+  }
+})
+
 test("reports iterator cleanup failures instead of hiding them", async () => {
   const reported = Promise.withResolvers<void>()
   const error = spyOn(console, "error").mockImplementation(() => reported.resolve())

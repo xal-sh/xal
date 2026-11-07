@@ -15,6 +15,9 @@ export async function* streamWithWatchdog(
   const signal = request.signal ? AbortSignal.any([request.signal, controller.signal]) : controller.signal
   signal.throwIfAborted()
   const iterator = provider.stream(profileId, { ...request, signal })[Symbol.asyncIterator]()
+  const reportCleanupFailure = (error: unknown): void => {
+    console.error(redactText(`${provider.name} stream cleanup failed: ${describeError(error)}`))
+  }
   let timer: ReturnType<typeof setTimeout> | undefined
   let received = false
   let completed = false
@@ -29,7 +32,16 @@ export async function* streamWithWatchdog(
           ),
         )
       }, timeoutMs)
-      const result = await withAbortSignal(signal, () => iterator.next())
+      const result = await withAbortSignal(signal, async () => {
+        try {
+          return await iterator.next()
+        } catch (error) {
+          if (signal.aborted && error !== signal.reason && !(error instanceof Error && error.name === "AbortError")) {
+            reportCleanupFailure(error)
+          }
+          throw error
+        }
+      })
       clearTimeout(timer)
       signal.throwIfAborted()
       if (result.done) {
@@ -45,9 +57,7 @@ export async function* streamWithWatchdog(
     if (!completed && iterator.return) {
       void Promise.resolve()
         .then(() => iterator.return?.())
-        .catch((error: unknown) => {
-          console.error(redactText(`${provider.name} stream cleanup failed: ${describeError(error)}`))
-        })
+        .catch(reportCleanupFailure)
     }
   }
 }
