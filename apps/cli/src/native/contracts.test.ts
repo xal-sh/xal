@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import {
   parseDiff,
+  parseEditOutput,
   parseGitCommandOutput,
   parseGitRepository,
   parseManagedWorktree,
@@ -42,6 +43,22 @@ describe("native contract parsing", () => {
       { kind: "unknown", total: 0, lines: [] },
     ]) {
       expect(() => parseSearchOutcome(value)).toThrow("native search returned an invalid value")
+    }
+  })
+
+  test("requires the pre-edit hash in native edit results", () => {
+    const result = { output: "Updated file", contentHash: "after", previousContentHash: "before" }
+    expect(parseEditOutput(result)).toEqual(result)
+    for (const value of [
+      null,
+      { output: "Updated file", contentHash: "after" },
+      { ...result, previousContentHash: null },
+      { ...result, previousContentHash: 1 },
+      { ...result, previousContentHash: "" },
+      { ...result, contentHash: undefined },
+      { ...result, output: undefined },
+    ]) {
+      expect(() => parseEditOutput(value)).toThrow("native edit returned an invalid value")
     }
   })
 

@@ -18,6 +18,7 @@ import {
   parsePathRanker,
   parseSearchOutcome,
   parseFileToolOutput,
+  parseEditOutput,
   parseReadOutput,
   parseToolOutput,
   parseWorkspaceIndex,
@@ -40,6 +41,7 @@ import {
   type NativeSearchOutcome,
   type NativeSkillRequest,
   type NativeFileToolOutput,
+  type NativeEditOutput,
   type NativeReadOutput,
   type NativeToolOutput,
   type NativeWebFetchRequest,
@@ -82,6 +84,7 @@ export type {
   NativeSearchOutcome,
   NativeSkillRequest,
   NativeFileToolOutput,
+  NativeEditOutput,
   NativeReadOutput,
   NativeToolOutput,
   NativeWebFetchRequest,
@@ -133,7 +136,7 @@ interface NativeBinding {
     worktree: NativeManagedWorktree
   }): NativeToolOutput
   readFile(request: NativeReadRequest): Promise<NativeReadOutput>
-  editFile(request: NativeEditRequest): Promise<NativeFileToolOutput>
+  editFile(request: NativeEditRequest): Promise<NativeEditOutput>
   writeFile(request: NativeWriteRequest): Promise<NativeFileToolOutput>
   skill(request: NativeSkillRequest): Promise<NativeToolOutput>
   webFetch(request: NativeWebFetchRequest, signal?: AbortSignal): Promise<NativeToolOutput>
@@ -368,10 +371,7 @@ function createBinding(value: unknown): NativeBinding {
       return parseReadOutput(await Promise.resolve(Reflect.apply(nativeReadFile, value, [request])))
     },
     async editFile(request) {
-      return parseFileToolOutput(
-        await Promise.resolve(Reflect.apply(nativeEditFile, value, [request])),
-        "native edit returned an invalid value",
-      )
+      return parseEditOutput(await Promise.resolve(Reflect.apply(nativeEditFile, value, [request])))
     },
     async writeFile(request) {
       return parseFileToolOutput(
@@ -530,7 +530,7 @@ export function nativeReadFile(request: NativeReadRequest): Promise<NativeReadOu
   return nativeBinding().readFile(request)
 }
 
-export function nativeEditFile(request: NativeEditRequest): Promise<NativeFileToolOutput> {
+export function nativeEditFile(request: NativeEditRequest): Promise<NativeEditOutput> {
   return nativeBinding().editFile(request)
 }
 

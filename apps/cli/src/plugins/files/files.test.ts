@@ -380,6 +380,73 @@ test("write recreates a file that was deleted after it was read", async () => {
   })
 })
 
+test("an unread targeted edit does not authorize whole-file writes or replace_all", async () => {
+  await withWorkspace(async (workspace) => {
+    const path = join(workspace, "unread.txt")
+    await writeFile(path, "target\nunseen\n")
+    const ctx = context(workspace)
+
+    await editTool.execute({ file_path: "unread.txt", old_string: "target", new_string: "edited" }, ctx)
+    await expect(writeTool.execute({ file_path: "unread.txt", content: "edited\n" }, ctx)).rejects.toThrow(
+      "has not been read in this session",
+    )
+    await expect(
+      editTool.execute({ file_path: "unread.txt", old_string: "unseen", new_string: "lost", replace_all: true }, ctx),
+    ).rejects.toThrow("has not been read in this session")
+    expect(await readFile(path, "utf8")).toBe("edited\nunseen\n")
+  })
+})
+
+test("a targeted edit cannot refresh authorization after an unseen external change", async () => {
+  await withWorkspace(async (workspace) => {
+    const path = join(workspace, "shared.txt")
+    await writeFile(path, "target\noriginal\n")
+    const ctx = context(workspace)
+    await readTool.execute({ file_path: "shared.txt" }, ctx)
+    await writeFile(path, "target\nexternal change\n")
+
+    await editTool.execute({ file_path: "shared.txt", old_string: "target", new_string: "edited" }, ctx)
+    await editTool.execute({ file_path: "shared.txt", old_string: "edited", new_string: "done" }, ctx)
+    await expect(writeTool.execute({ file_path: "shared.txt", content: "done\noriginal\n" }, ctx)).rejects.toThrow()
+    await expect(
+      editTool.execute({ file_path: "shared.txt", old_string: "done", new_string: "lost", replace_all: true }, ctx),
+    ).rejects.toThrow()
+    expect(await readFile(path, "utf8")).toBe("done\nexternal change\n")
+
+    await readTool.execute({ file_path: "shared.txt" }, ctx)
+    await editTool.execute(
+      { file_path: "shared.txt", old_string: "done", new_string: "reread", replace_all: true },
+      ctx,
+    )
+    await writeTool.execute({ file_path: "shared.txt", content: "reread\nexternal change\nkept\n" }, ctx)
+    expect(await readFile(path, "utf8")).toBe("reread\nexternal change\nkept\n")
+  })
+})
+
+test("targeted edits preserve authorization when their original file version was known", async () => {
+  await withWorkspace(async (workspace) => {
+    const path = join(workspace, "known.txt")
+    await writeFile(path, "alpha\nbeta\nkeep\n")
+    const ctx = context(workspace)
+    await readTool.execute({ file_path: "known.txt" }, ctx)
+
+    await editTool.execute(
+      {
+        file_path: "known.txt",
+        edits: [
+          { old_string: "alpha", new_string: "one" },
+          { old_string: "beta", new_string: "two" },
+        ],
+      },
+      ctx,
+    )
+    await editTool.execute({ file_path: "known.txt", old_string: "one", new_string: "three" }, ctx)
+    await editTool.execute({ file_path: "known.txt", old_string: "two", new_string: "four", replace_all: true }, ctx)
+    await writeTool.execute({ file_path: "known.txt", content: "three\nfour\nkeep\nlast\n" }, ctx)
+    expect(await readFile(path, "utf8")).toBe("three\nfour\nkeep\nlast\n")
+  })
+})
+
 test("edit needs no prior read but replace_all requires an unchanged read", async () => {
   await withWorkspace(async (workspace) => {
     const path = join(workspace, "targets.txt")
