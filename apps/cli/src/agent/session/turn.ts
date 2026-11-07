@@ -53,6 +53,7 @@ export interface TurnHost {
     model: string,
     thinking: ThinkingEffort | undefined,
   ): Promise<StreamRequest>
+  compact(signal: AbortSignal, provider: Provider, model: string): Promise<boolean>
   beginCheckpoint(messageId: string, input: UserInput): Promise<void>
   stopAcceptingInput(): void
 }
@@ -128,7 +129,12 @@ export async function runTurn(
       const round = host.streamRound(usage)
       let streamed: ProviderOutputItem[] | undefined
       try {
-        streamed = await streamProviderTurn(round, signal, provider, request)
+        streamed = await streamProviderTurn(round, signal, provider, request, async () => {
+          if (!(await host.compact(signal, provider, model))) return undefined
+          const rebuilt = await host.autoCompact(signal, provider, model, thinking)
+          host.setState("streaming")
+          return rebuilt
+        })
       } catch (error) {
         if (!(error instanceof OutputLimitError) || outputLimited) throw error
         outputLimited = true

@@ -44,5 +44,5 @@ export async function kimiFetch(
   )
   if (response.ok) return response
   const text = await response.text()
-  throw httpError(name, response, errorDetail(text) ?? text.slice(0, 500))
+  throw httpError(name, response, errorDetail(text))
 }

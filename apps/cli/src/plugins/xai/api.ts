@@ -22,13 +22,13 @@ export function clientIdentity(): ClientIdentity {
 
 export async function raiseForStatus(response: Response): Promise<never> {
   const text = await response.text().catch(() => "")
-  const detail = errorDetail(text) ?? text.slice(0, 500)
+  const detail = errorDetail(text)
   if (response.status === 401) {
     throw new ProviderError("xAI authentication failed — reconnect the provider", { retryable: false })
   }
   if (response.status === 403) {
     throw new ProviderError(
-      detail || "xAI denied the request — confirm this account has an active Grok subscription or API access",
+      detail.message || "xAI denied the request — confirm this account has an active Grok subscription or API access",
       { retryable: false },
     )
   }

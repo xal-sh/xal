@@ -1,6 +1,7 @@
 import { afterAll, afterEach, expect, spyOn, test } from "bun:test"
 import { decisions } from "../../providers/decisions"
 import type { DecisionQuestion } from "../../providers/decision-types"
+import { ContextOverflowError } from "../../providers/errors"
 import type { PluginRuntime } from "../types"
 import { typesafeProvider } from "./provider"
 import { parseDecisionResponse } from "./wire"
@@ -112,6 +113,21 @@ test("evaluates all primitives through System One with profile credentials and b
   expect(result.answers.quality?.type).toBe("score")
   expect(result.usage).toEqual({ totalInputTokens: 100, outputTokens: 5 })
   expect(attempts).toBe(2)
+})
+
+test("retains structured HTTP error codes without adding raw error bodies to messages", async () => {
+  mockFetch(async () =>
+    Response.json({ error: { code: "context_length_exceeded", message: "request rejected" } }, { status: 400 }),
+  )
+  await expect(typesafeProvider(runtime).listModels("decision-profile", true)).rejects.toBeInstanceOf(
+    ContextOverflowError,
+  )
+
+  mockFetch(async () => new Response("raw error body", { status: 400 }))
+  await expect(typesafeProvider(runtime).listModels("decision-profile", true)).rejects.toMatchObject({
+    message: "TypeSafe request failed (400)",
+    retryable: false,
+  })
 })
 
 test("rejects malformed, missing, mismatched and out-of-range decisions", () => {

@@ -11,7 +11,7 @@ import { redactText } from "../secrets/redactor"
 import type { Provider, StreamRequest, Usage } from "./types"
 import { findModel } from "./catalog"
 import { estimateRequestTokens } from "./request-size"
-import { OutputLimitError } from "./errors"
+import { ContextOverflowError, OutputLimitError } from "./errors"
 
 export interface StreamedTextRequest {
   provider: Provider
@@ -69,7 +69,7 @@ export async function collectStreamedText(input: StreamedTextRequest): Promise<S
     const model = await findModel(input.provider, input.profileId, request.model)
     const tokens = estimateRequestTokens(request) + (maximum ?? 0)
     if (model?.contextWindow !== undefined && tokens > model.contextWindow) {
-      throw new Error(
+      throw new ContextOverflowError(
         `auxiliary request requires approximately ${tokens} tokens including output, exceeding ${request.model}'s ${model.contextWindow}-token context window`,
       )
     }

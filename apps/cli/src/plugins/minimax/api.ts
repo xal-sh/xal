@@ -31,7 +31,7 @@ async function raiseForStatus(providerId: MiniMaxProviderId, response: Response)
     throw new ProviderError(`${name} denied access to this model or feature`, { retryable: false })
   }
   const text = await response.text().catch(() => "")
-  throw httpError(name, response, errorDetail(text) ?? text.slice(0, 500))
+  throw httpError(name, response, errorDetail(text))
 }
 
 export async function miniMaxFetch(

@@ -18,7 +18,7 @@ async function request(path: string, key: string, init: RequestInit = {}): Promi
       }),
     signal,
   )
-  if (!response.ok) throw httpError("TypeSafe", response, errorDetail(await response.text()) ?? "")
+  if (!response.ok) throw httpError("TypeSafe", response, errorDetail(await response.text(), ""))
   return response
 }
 

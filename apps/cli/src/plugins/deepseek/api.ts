@@ -19,7 +19,7 @@ async function raiseForStatus(response: Response): Promise<never> {
     throw new ProviderError("DeepSeek balance is insufficient", { retryable: false })
   }
   const text = await response.text().catch(() => "")
-  throw httpError("DeepSeek", response, errorDetail(text) ?? text.slice(0, 500))
+  throw httpError("DeepSeek", response, errorDetail(text))
 }
 
 export async function deepSeekFetch(path: string, key: string, init: RequestInit = {}): Promise<Response> {

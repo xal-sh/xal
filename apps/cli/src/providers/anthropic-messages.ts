@@ -1,6 +1,6 @@
 import { asNumber, asString, isJsonObject, isRecord, type JsonObject } from "../lib/json"
 import { replayMatches, type ConversationTarget } from "./conversation"
-import { OutputLimitError, ProviderError } from "./errors"
+import { ContextOverflowError, isContextOverflow, OutputLimitError, ProviderError } from "./errors"
 import { parseToolArgs, sseEvents, streamError } from "./transport"
 import type {
   ConversationItem,
@@ -23,11 +23,13 @@ export type WireEvent =
   | { type: "terminal"; stopReason?: string; outputTokens?: number }
   | { type: "message_stop" }
   | { type: "failure"; message: string; retryable: boolean }
+  | { type: "context_overflow"; message: string }
 
 const TRANSIENT_FAILURE = /overloaded|rate.?limit|api_error|timeout|try again/i
 const CACHE_CONTROL = { type: "ephemeral" } as const
 
 function failure(providerName: string, message: string, kind?: string): WireEvent {
+  if (isContextOverflow(message, kind)) return { type: "context_overflow", message }
   return {
     type: "failure",
     message,
@@ -352,6 +354,9 @@ export async function* streamAnthropicMessages(
           break
         case "failure":
           throw new ProviderError(event.message, { retryable: event.retryable })
+        case "context_overflow":
+          if (open.size > 0) throw new ProviderError(event.message, { retryable: false })
+          throw new ContextOverflowError(event.message)
       }
       if (terminal) break
     }

@@ -20,7 +20,7 @@ async function raiseForStatus(response: Response): Promise<never> {
     throw new ProviderError(`${PROVIDER_NAME} usage limits are exhausted for this key`, { retryable: false })
   }
   const text = await response.text().catch(() => "")
-  throw httpError(PROVIDER_NAME, response, errorDetail(text) ?? text.slice(0, 500))
+  throw httpError(PROVIDER_NAME, response, errorDetail(text))
 }
 
 export async function goFetch(path: string, key: string, init: RequestInit = {}): Promise<Response> {

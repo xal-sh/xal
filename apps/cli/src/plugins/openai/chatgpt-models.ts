@@ -162,7 +162,7 @@ async function discoverModels(profileId: string): Promise<ChatGptModel[]> {
   })
   if (!response.ok) {
     const text = await response.text().catch(() => "")
-    throw httpError(`${PROVIDER_NAME} models`, response, errorDetail(text) ?? text.slice(0, 500))
+    throw httpError(`${PROVIDER_NAME} models`, response, errorDetail(text))
   }
   const raw: unknown = await response.json()
   if (!isRecord(raw) || !Array.isArray(raw.models)) throw new Error(`${PROVIDER_NAME} models response was invalid`)

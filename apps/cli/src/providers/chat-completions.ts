@@ -1,6 +1,6 @@
 import { asNumber, asString, isRecord, type JsonObject } from "../lib/json"
 import { omitUserMessageImages } from "./conversation"
-import { OutputLimitError, ProviderError } from "./errors"
+import { ContextOverflowError, isContextOverflow, OutputLimitError, ProviderError } from "./errors"
 import { parseToolArgs, sseEvents, streamError } from "./transport"
 import type {
   AssistantMessageItem,
@@ -126,7 +126,10 @@ function parseUsage(raw: unknown): Usage | undefined {
 export function parseChatChunk(name: string, raw: unknown): ChatCompletionChunk | undefined {
   if (!isRecord(raw)) return undefined
   if (isRecord(raw.error)) {
-    throw new ProviderError(asString(raw.error.message) ?? `${name} stream failed`, { retryable: true })
+    const message = asString(raw.error.message) ?? `${name} stream failed`
+    const code = asString(raw.error.code) ?? asString(raw.error.type) ?? asString(raw.error.status)
+    if (isContextOverflow(message, code)) throw new ContextOverflowError(message)
+    throw new ProviderError(message, { retryable: true })
   }
   const usage = parseUsage(raw.usage)
   if (!Array.isArray(raw.choices) || raw.choices.length === 0) {
@@ -256,6 +259,9 @@ export async function* streamChatCompletions(
       }
     }
   } catch (error) {
+    if (calls.size > 0 && error instanceof ContextOverflowError) {
+      throw new ProviderError(error.message, { retryable: false })
+    }
     streamError(provider.name, error, request.signal)
   }
 

@@ -17,8 +17,8 @@ export async function raiseForStatus(response: Response): Promise<never> {
     throw new ProviderError(`${PROVIDER_NAME} authentication failed — the API key was rejected`, { retryable: false })
   }
   const text = await response.text().catch(() => "")
-  const detail = errorDetail(text) ?? text.slice(0, 500)
-  if (response.status === 400 && /API key not valid/i.test(detail)) {
+  const detail = errorDetail(text)
+  if (response.status === 400 && /API key not valid/i.test(detail.message)) {
     throw new ProviderError(`${PROVIDER_NAME} API key is not valid`, { retryable: false })
   }
   throw httpError(PROVIDER_NAME, response, detail)

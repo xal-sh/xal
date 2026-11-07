@@ -1,6 +1,6 @@
 import { describeError } from "../lib/error"
 import { asString, isJsonObject, isRecord, type JsonObject } from "../lib/json"
-import { ProviderError } from "./errors"
+import { ContextOverflowError, isContextOverflow, ProviderError } from "./errors"
 
 export type SseEvent = { done: true } | { done: false; data: unknown }
 
@@ -50,19 +50,27 @@ export function retryAfterMs(value: string | null): number | undefined {
   return Math.max(0, date - Date.now())
 }
 
-export function errorDetail(text: string): string | undefined {
+interface HttpErrorDetail {
+  message: string
+  code?: string
+}
+
+export function errorDetail(text: string, fallback = text.slice(0, 500)): HttpErrorDetail {
   let parsed: unknown
   try {
     parsed = JSON.parse(text)
   } catch {
-    return undefined
+    return { message: fallback }
   }
-  if (!isRecord(parsed)) return undefined
-  const nested = isRecord(parsed.error) ? asString(parsed.error.message) : undefined
-  return nested ?? asString(parsed.message) ?? asString(parsed.detail)
+  if (!isRecord(parsed)) return { message: fallback }
+  const error = isRecord(parsed.error) ? parsed.error : parsed
+  return {
+    message: asString(error.message) ?? asString(parsed.message) ?? asString(parsed.detail) ?? fallback,
+    code: asString(error.code) ?? asString(error.type) ?? asString(error.status),
+  }
 }
 
-export function httpError(name: string, response: Response, detail: string): ProviderError {
+export function httpError(name: string, response: Response, detail: HttpErrorDetail): ProviderError {
   const delayMs = retryAfterMs(response.headers.get("retry-after"))
   if (response.status === 429) {
     return new ProviderError(
@@ -70,7 +78,11 @@ export function httpError(name: string, response: Response, detail: string): Pro
       { retryable: true, retryAfterMs: delayMs },
     )
   }
-  return new ProviderError(`${name} request failed (${response.status})${detail ? `: ${detail}` : ""}`, {
+  const message = `${name} request failed (${response.status})${detail.message ? `: ${detail.message}` : ""}`
+  if ([400, 413, 422].includes(response.status) && isContextOverflow(detail.message, detail.code)) {
+    return new ContextOverflowError(message)
+  }
+  return new ProviderError(message, {
     retryable: response.status === 408 || response.status >= 500,
     retryAfterMs: delayMs,
   })
