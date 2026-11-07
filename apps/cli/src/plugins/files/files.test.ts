@@ -268,6 +268,46 @@ test("read handles empty, missing, directory, and binary files", async () => {
   })
 })
 
+function png(width: number, height: number): Buffer {
+  const header = Buffer.alloc(24)
+  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(header)
+  header.writeUInt32BE(13, 8)
+  header.write("IHDR", 12, "latin1")
+  header.writeUInt32BE(width, 16)
+  header.writeUInt32BE(height, 20)
+  return header
+}
+
+test("read returns PNG and JPEG files as images and refuses ones a provider would reject", async () => {
+  await withWorkspace(async (workspace) => {
+    const screenshot = png(1440, 900)
+    await writeFile(join(workspace, "shot.png"), screenshot)
+    const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xc0, 0x00, 0x11, 0x08, 0x00, 0x20, 0x00, 0x40, 0x03, 0x00])
+    await writeFile(join(workspace, "photo.JPG"), jpeg)
+    await writeFile(join(workspace, "tall.png"), png(1000, 9000))
+    await writeFile(join(workspace, "fake.png"), "not\u0000an image")
+    await writeFile(join(workspace, "large.jpg"), `${"x".repeat(4_000_000)}\u0000`)
+
+    const shot = await readTool.execute({ file_path: "shot.png" }, context(workspace))
+    expect(shot.output).toBe("Image shot.png: image/png, 1440×900 pixels, 1 KB")
+    expect(shot.images).toEqual([{ mediaType: "image/png", data: screenshot.toString("base64") }])
+    const photo = await readTool.execute({ file_path: "photo.JPG" }, context(workspace))
+    expect(photo.output).toBe("Image photo.JPG: image/jpeg, 64×32 pixels, 1 KB")
+    await expect(readTool.execute({ file_path: "tall.png" }, context(workspace))).rejects.toThrow(
+      "tall.png is 1000×9000 pixels; images wider or taller than 8000 pixels cannot be attached",
+    )
+    await expect(readTool.execute({ file_path: "fake.png" }, context(workspace))).rejects.toThrow(
+      "Cannot read binary file: fake.png",
+    )
+    await expect(readTool.execute({ file_path: "large.jpg" }, context(workspace))).rejects.toThrow(
+      "Cannot read binary file: large.jpg",
+    )
+    await expect(readTool.execute({ file_path: "gone.png" }, context(workspace))).rejects.toThrow(
+      "File not found: gone.png",
+    )
+  })
+})
+
 test("read preserves Unicode, line truncation, and continuation wording", async () => {
   await withWorkspace(async (workspace) => {
     await writeFile(join(workspace, "unicode.txt"), `first\n猫 🔐\n${"x".repeat(2001)}\nlast\n`)

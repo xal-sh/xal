@@ -2,7 +2,14 @@ import type { DeliveredAgentQuestion, ParentQuestionResult } from "../agent/task
 import type { SessionKind } from "../agent/types"
 import type { PermissionMode } from "../permissions/types"
 import type { PlanUpdatedEvent } from "../plans/types"
-import type { ContextUsage, ModelInputModality, Provider, ThinkingEffort, ToolDefinition } from "../providers/types"
+import type {
+  ContextUsage,
+  ImageInput,
+  ModelInputModality,
+  Provider,
+  ThinkingEffort,
+  ToolDefinition,
+} from "../providers/types"
 import type { VerificationRecord } from "../verification/types"
 import type { WorkspaceUndo } from "./undo"
 import type { ToolInvoker } from "./programmatic"
@@ -21,6 +28,7 @@ export interface ToolResult {
   output: string
   outputSaved?: boolean
   read?: ReadCoverage
+  images?: ImageInput[]
   execution?: ProcessExecution
   events?: ToolEvent[]
   maxOutputBytes?: number

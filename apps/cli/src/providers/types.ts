@@ -50,6 +50,7 @@ export interface ToolResultItem {
   callId: string
   output: string
   read?: ReadCoverage
+  images?: ImageInput[]
 }
 
 export type ProviderOutputItem = AssistantMessageItem | ReasoningItem | ToolCallItem

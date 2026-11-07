@@ -463,8 +463,15 @@ function parseConversationItem(raw: unknown): ConversationItem | undefined {
       const callId = asString(raw.callId)
       const output = asString(raw.output)
       const read = parseReadCoverage(raw.read)
-      if (!callId || output === undefined || (raw.read !== undefined && !read)) return undefined
-      return { type: "tool_result", callId, output, ...(read ? { read } : {}) }
+      const images = parseImages(raw.images)
+      if (!callId || output === undefined || (raw.read !== undefined && !read) || !images) return undefined
+      return {
+        type: "tool_result",
+        callId,
+        output,
+        ...(read ? { read } : {}),
+        ...(images.length > 0 ? { images } : {}),
+      }
     }
     default:
       return undefined

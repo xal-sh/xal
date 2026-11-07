@@ -25,7 +25,7 @@ export function estimateConversationItemTokens(item: ConversationItem): number {
         estimateReplayTokens(item.replay),
       )
     case "tool_result":
-      return estimateTextTokens(item.output)
+      return estimateTextTokens(item.output) + (item.images?.length ?? 0) * APPROXIMATE_IMAGE_TOKENS
   }
 }
 
