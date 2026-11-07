@@ -48,7 +48,7 @@ function editsOf(args: Record<string, unknown>): NativeEditOperation[] {
 export const editTool: Tool = {
   name: "edit",
   description:
-    "Replace exact text in an existing file and return a diff of the change. Pass old_string and new_string for one replacement, or edits for several in the same file: every old_string is matched against the file as it was before the call, edits must not overlap, and the file is only written when every edit applies. old_string must match the file text exactly, including whitespace and indentation, and must occur exactly once unless replace_all is true; the call fails with a corrective hint otherwise. replace_all additionally requires that the file was read in this session and has not changed since. A targeted edit does not count as reading the file for write or replace_all. Paths are absolute or relative to the working directory.",
+    "Replace exact text in an existing file and return a diff of the change. Pass old_string and new_string for one replacement, or edits for several in the same file: every old_string is matched against the file as it was before the call, edits must not overlap, and the file is only written when every edit applies. old_string must match the file text exactly, including whitespace and indentation, and must occur exactly once unless replace_all is true; the call fails with a corrective hint otherwise. replace_all additionally requires that the entire file was read through direct read calls without truncated lines in this session and has not changed since. A targeted edit does not count as reading the file for write or replace_all. Paths are absolute or relative to the working directory.",
   parameters: {
     type: "object",
     properties: {
@@ -89,14 +89,14 @@ export const editTool: Tool = {
     const edits = editsOf(args)
     const resolved = path ? resolveFilePath(path, ctx.cwd) : undefined
     const replaceAll = edits.some((edit) => edit.replaceAll === true)
-    const expected = replaceAll && resolved ? knownFileState(ctx.sessionId, resolved) : undefined
+    const expected = replaceAll && resolved ? await knownFileState(ctx.sessionId, resolved) : undefined
     const result = await nativeEditFile({
       ...(resolved ? { path: resolved } : {}),
       displayPath: displayPath(path ?? "", ctx.cwd),
       edits,
       ...(expected === undefined ? {} : { expected }),
     })
-    if (resolved) advanceFileState(ctx.sessionId, resolved, result.previousContentHash, result.contentHash)
+    if (resolved) await advanceFileState(ctx.sessionId, resolved, result.previousContentHash, result.contentHash)
     return { output: result.output }
   },
 }

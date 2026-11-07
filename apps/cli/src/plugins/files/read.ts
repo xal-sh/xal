@@ -1,7 +1,6 @@
 import { asNumber, asString } from "../../lib/json"
 import { displayPath, resolveFilePath } from "../../lib/path"
 import { nativeReadFile } from "../../native"
-import { recordFileState } from "../../tools/file-state"
 import type { Tool } from "../../tools/types"
 import { MAX_IMAGE_BYTES, readImage } from "./image"
 import { pathPermission } from "./permission"
@@ -59,7 +58,6 @@ export const readTool: Tool = {
       ...(offset === undefined ? {} : { offset }),
       ...(limit === undefined ? {} : { limit }),
     })
-    if (resolved && result.contentHash && !ctx.speculative) recordFileState(ctx.sessionId, resolved, result.contentHash)
     return {
       output: result.output,
       ...(result.coverage && result.contentHash

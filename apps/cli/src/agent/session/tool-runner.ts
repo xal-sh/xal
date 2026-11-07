@@ -24,6 +24,7 @@ import {
   toolFailed,
 } from "../../tools/output"
 import { argumentErrors } from "../../tools/arguments"
+import { recordFileRead } from "../../tools/file-state"
 import { ToolOutputBudget } from "../../tools/output-budget"
 import { getTool } from "../../tools/registry"
 import type { ReadCoverage } from "../../tools/read-coverage"
@@ -720,6 +721,8 @@ export class ToolCallRunner {
 
   commit(outcome: ToolCallOutcome): void {
     this.host.addToolOutput(outcome.call, outcome.output, outcome.read, outcome.images)
+    if (outcome.read && !outcome.denial && !outcome.failure && !toolFailed(outcome.output))
+      recordFileRead(this.host.sessionId(), outcome.read)
     this.host.emit({
       type: "tool_finished",
       callId: outcome.call.callId,

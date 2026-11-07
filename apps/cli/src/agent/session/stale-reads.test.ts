@@ -40,6 +40,16 @@ test("prunes only visible covering reads of the same canonical file version", ()
   expect(pruneStaleReads([result("old", {}), result("truncated", { truncated: true })]).pruned).toBe(0)
 })
 
+test("legacy coverage round-trips while invalid total-line metadata is rejected", () => {
+  const item = result("legacy", {})
+  expect(parseRecord(JSON.stringify({ type: "item", item }))).toEqual({ type: "item", item })
+  for (const totalLines of [-1, "50", 49, null]) {
+    expect(() =>
+      parseRecord(JSON.stringify({ type: "item", item: { ...item, read: { ...item.read, totalLines } } })),
+    ).toThrow("malformed session record")
+  }
+})
+
 test("a default native read cannot supersede the file tail, including after persistence", async () => {
   const directory = await mkdtemp(join(tmpdir(), "xal-read-coverage-"))
   const path = join(directory, "large.txt")
@@ -60,7 +70,7 @@ test("a default native read cannot supersede the file tail, including after pers
     )
     const tail = await readTool.execute({ file_path: path, offset: 3000, limit: 50 }, context)
     const head = await readTool.execute({ file_path: "large.txt" }, context)
-    expect(tail.read).toMatchObject({ offset: 3000, limit: 50, truncated: false })
+    expect(tail.read).toMatchObject({ offset: 3000, limit: 50, truncated: false, totalLines: 3100 })
     expect(head.read).toMatchObject({ offset: 1, limit: 2000, contentHash: tail.read?.contentHash })
     const items: ToolResultItem[] = [
       { type: "tool_result", callId: "tail", ...tail },

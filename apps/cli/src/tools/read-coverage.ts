@@ -6,6 +6,7 @@ export interface ReadCoverage {
   offset: number
   limit: number
   truncated: boolean
+  totalLines?: number
 }
 
 export function parseReadCoverage(value: unknown): ReadCoverage | undefined {
@@ -29,5 +30,16 @@ export function parseReadCoverage(value: unknown): ReadCoverage | undefined {
   ) {
     return undefined
   }
-  return { path, contentHash, offset, limit, truncated }
+  const totalLines = asNumber(value.totalLines)
+  if (
+    value.totalLines !== undefined &&
+    (totalLines === undefined ||
+      !Number.isSafeInteger(totalLines) ||
+      totalLines < 0 ||
+      !Number.isSafeInteger(totalLines + 1) ||
+      offset + limit > totalLines + 1)
+  ) {
+    return undefined
+  }
+  return { path, contentHash, offset, limit, truncated, ...(totalLines === undefined ? {} : { totalLines }) }
 }

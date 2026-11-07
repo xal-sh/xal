@@ -1,11 +1,12 @@
 import { expect, test } from "bun:test"
-import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises"
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { appInfo } from "../../app-info"
 import { nativeEditFile, nativeUnifiedDiff } from "../../native"
-import { knownFileState } from "../../tools/file-state"
-import type { ToolExecutionContext } from "../../tools/types"
+import { knownFileState, recordFileRead } from "../../tools/file-state"
+import type { JsonObject } from "../../lib/json"
+import type { ToolExecutionContext, ToolResult } from "../../tools/types"
 import { editTool } from "./edit"
 import { readTool } from "./read"
 import { writeTool } from "./write"
@@ -30,6 +31,12 @@ function context(cwd: string): ToolExecutionContext {
   }
 }
 
+async function readForSession(args: JsonObject, ctx: ToolExecutionContext): Promise<ToolResult> {
+  const result = await readTool.execute(args, ctx)
+  if (result.read && !ctx.speculative) recordFileRead(ctx.sessionId, result.read)
+  return result
+}
+
 test("write creates missing parent directories and reports the exact new-file diff", async () => {
   await withWorkspace(async (workspace) => {
     const result = await writeTool.execute(
@@ -48,7 +55,7 @@ test("write reports unchanged and update outcomes while preserving permissions",
     await writeFile(path, "before\n")
     await chmod(path, 0o744)
     const ctx = context(workspace)
-    await readTool.execute({ file_path: "existing.txt" }, ctx)
+    await readForSession({ file_path: "existing.txt" }, ctx)
 
     expect((await writeTool.execute({ file_path: "existing.txt", content: "before\n" }, ctx)).output).toBe(
       "Unchanged existing.txt",
@@ -90,7 +97,7 @@ test("edit replaces every requested occurrence and reports accurate line counts"
     const path = join(workspace, "repeated.txt")
     await writeFile(path, "red\nkeep\nred\n")
     const ctx = context(workspace)
-    await readTool.execute({ file_path: "repeated.txt" }, ctx)
+    await readForSession({ file_path: "repeated.txt" }, ctx)
 
     const result = await editTool.execute(
       { file_path: "repeated.txt", old_string: "red", new_string: "blue", replace_all: true },
@@ -205,7 +212,7 @@ test("edit matches text copied from read output and CRLF files", async () => {
     const crlf = join(workspace, "crlf.txt")
     await writeFile(crlf, "red\r\nkeep\r\nred\r\n")
     const crlfContext = context(workspace)
-    await readTool.execute({ file_path: "crlf.txt" }, crlfContext)
+    await readForSession({ file_path: "crlf.txt" }, crlfContext)
     const crlfResult = await editTool.execute(
       { file_path: "crlf.txt", old_string: "red\n", new_string: "blue\n", replace_all: true },
       crlfContext,
@@ -250,7 +257,7 @@ test("read handles empty, missing, directory, and binary files", async () => {
     await mkdir(join(workspace, "directory", "nested"), { recursive: true })
     await writeFile(join(workspace, "directory", "entry.ts"), "")
 
-    expect((await readTool.execute({ file_path: "empty.txt" }, context(workspace))).output).toBe("(empty file)")
+    expect((await readForSession({ file_path: "empty.txt" }, context(workspace))).output).toBe("(empty file)")
     await expect(readTool.execute({ file_path: "missing.txt" }, context(workspace))).rejects.toThrow(
       "File not found: missing.txt",
     )
@@ -258,10 +265,10 @@ test("read handles empty, missing, directory, and binary files", async () => {
       "File not found: directory/entry.js. Similarly named files in the same directory: directory/entry.ts",
     )
     const listing = context(workspace)
-    expect((await readTool.execute({ file_path: "directory" }, listing)).output).toBe(
+    expect((await readForSession({ file_path: "directory" }, listing)).output).toBe(
       "directory is a directory. Its entries:\nentry.ts\nnested/\n(End of directory - 2 entries)",
     )
-    expect(knownFileState(listing.sessionId, join(workspace, "directory"))).toBeUndefined()
+    expect(await knownFileState(listing.sessionId, join(workspace, "directory"))).toBeUndefined()
     await expect(readTool.execute({ file_path: "binary.dat" }, context(workspace))).rejects.toThrow(
       "Cannot read binary file: binary.dat",
     )
@@ -288,10 +295,10 @@ test("read returns PNG and JPEG files as images and refuses ones a provider woul
     await writeFile(join(workspace, "fake.png"), "not\u0000an image")
     await writeFile(join(workspace, "large.jpg"), `${"x".repeat(4_000_000)}\u0000`)
 
-    const shot = await readTool.execute({ file_path: "shot.png" }, context(workspace))
+    const shot = await readForSession({ file_path: "shot.png" }, context(workspace))
     expect(shot.output).toBe("Image shot.png: image/png, 1440×900 pixels, 1 KB")
     expect(shot.images).toEqual([{ mediaType: "image/png", data: screenshot.toString("base64") }])
-    const photo = await readTool.execute({ file_path: "photo.JPG" }, context(workspace))
+    const photo = await readForSession({ file_path: "photo.JPG" }, context(workspace))
     expect(photo.output).toBe("Image photo.JPG: image/jpeg, 64×32 pixels, 1 KB")
     await expect(readTool.execute({ file_path: "tall.png" }, context(workspace))).rejects.toThrow(
       "tall.png is 1000×9000 pixels; images wider or taller than 8000 pixels cannot be attached",
@@ -311,11 +318,11 @@ test("read returns PNG and JPEG files as images and refuses ones a provider woul
 test("read preserves Unicode, line truncation, and continuation wording", async () => {
   await withWorkspace(async (workspace) => {
     await writeFile(join(workspace, "unicode.txt"), `first\n猫 🔐\n${"x".repeat(2001)}\nlast\n`)
-    const first = await readTool.execute({ file_path: "unicode.txt", offset: 2, limit: 2 }, context(workspace))
+    const first = await readForSession({ file_path: "unicode.txt", offset: 2, limit: 2 }, context(workspace))
     expect(first.output).toBe(
       `     2: 猫 🔐\n     3: ${"x".repeat(2000)}… (line truncated)\n(Showing lines 2-3 of 4. Use offset=4 to continue.)`,
     )
-    expect((await readTool.execute({ file_path: "unicode.txt", offset: 4 }, context(workspace))).output).toBe(
+    expect((await readForSession({ file_path: "unicode.txt", offset: 4 }, context(workspace))).output).toBe(
       "     4: last\n(End of file - 4 lines)",
     )
     await expect(readTool.execute({ file_path: "unicode.txt", offset: 5 }, context(workspace))).rejects.toThrow(
@@ -343,7 +350,7 @@ test("write refuses an existing file that was never read in this session", async
 
     await expect(
       writeTool.execute({ file_path: "unread.txt", content: "replaced\n" }, context(workspace)),
-    ).rejects.toThrow("has not been read in this session")
+    ).rejects.toThrow("has not been read completely in this session")
     expect(await readFile(join(workspace, "unread.txt"), "utf8")).toBe("original\n")
   })
 })
@@ -353,7 +360,7 @@ test("write refuses a file that changed after it was read", async () => {
     const path = join(workspace, "raced.txt")
     await writeFile(path, "original\n")
     const ctx = context(workspace)
-    await readTool.execute({ file_path: "raced.txt" }, ctx)
+    await readForSession({ file_path: "raced.txt" }, ctx)
     await writeFile(path, "changed by someone else\n")
 
     await expect(writeTool.execute({ file_path: "raced.txt", content: "replaced\n" }, ctx)).rejects.toThrow(
@@ -368,7 +375,7 @@ test("write recreates a file that was deleted after it was read", async () => {
     const path = join(workspace, "recreated.txt")
     await writeFile(path, "original\n")
     const ctx = context(workspace)
-    await readTool.execute({ file_path: "recreated.txt" }, ctx)
+    await readForSession({ file_path: "recreated.txt" }, ctx)
     await rm(path)
 
     expect((await writeTool.execute({ file_path: "recreated.txt", content: "again\n" }, ctx)).output).toContain(
@@ -388,11 +395,11 @@ test("an unread targeted edit does not authorize whole-file writes or replace_al
 
     await editTool.execute({ file_path: "unread.txt", old_string: "target", new_string: "edited" }, ctx)
     await expect(writeTool.execute({ file_path: "unread.txt", content: "edited\n" }, ctx)).rejects.toThrow(
-      "has not been read in this session",
+      "has not been read completely in this session",
     )
     await expect(
       editTool.execute({ file_path: "unread.txt", old_string: "unseen", new_string: "lost", replace_all: true }, ctx),
-    ).rejects.toThrow("has not been read in this session")
+    ).rejects.toThrow("has not been read completely in this session")
     expect(await readFile(path, "utf8")).toBe("edited\nunseen\n")
   })
 })
@@ -402,7 +409,7 @@ test("a targeted edit cannot refresh authorization after an unseen external chan
     const path = join(workspace, "shared.txt")
     await writeFile(path, "target\noriginal\n")
     const ctx = context(workspace)
-    await readTool.execute({ file_path: "shared.txt" }, ctx)
+    await readForSession({ file_path: "shared.txt" }, ctx)
     await writeFile(path, "target\nexternal change\n")
 
     await editTool.execute({ file_path: "shared.txt", old_string: "target", new_string: "edited" }, ctx)
@@ -413,7 +420,7 @@ test("a targeted edit cannot refresh authorization after an unseen external chan
     ).rejects.toThrow()
     expect(await readFile(path, "utf8")).toBe("done\nexternal change\n")
 
-    await readTool.execute({ file_path: "shared.txt" }, ctx)
+    await readForSession({ file_path: "shared.txt" }, ctx)
     await editTool.execute(
       { file_path: "shared.txt", old_string: "done", new_string: "reread", replace_all: true },
       ctx,
@@ -428,7 +435,7 @@ test("targeted edits preserve authorization when their original file version was
     const path = join(workspace, "known.txt")
     await writeFile(path, "alpha\nbeta\nkeep\n")
     const ctx = context(workspace)
-    await readTool.execute({ file_path: "known.txt" }, ctx)
+    await readForSession({ file_path: "known.txt" }, ctx)
 
     await editTool.execute(
       {
@@ -447,6 +454,70 @@ test("targeted edits preserve authorization when their original file version was
   })
 })
 
+test("broad mutations require every line, merging overlapping pages through canonical aliases", async () => {
+  await withWorkspace(async (workspace) => {
+    const path = join(workspace, "paged.txt")
+    await writeFile(path, "one\ntwo\nthree\nfour\n")
+    await symlink(path, join(workspace, "alias.txt"))
+    const ctx = context(workspace)
+    await readForSession({ file_path: "alias.txt", offset: 4 }, ctx)
+    await readForSession({ file_path: "paged.txt", limit: 1 }, ctx)
+    await expect(writeTool.execute({ file_path: "paged.txt", content: "lost\n" }, ctx)).rejects.toThrow(
+      "has not been read completely",
+    )
+    await expect(
+      editTool.execute({ file_path: "alias.txt", old_string: "o", new_string: "O", replace_all: true }, ctx),
+    ).rejects.toThrow("has not been read completely")
+    expect(await readFile(path, "utf8")).toBe("one\ntwo\nthree\nfour\n")
+    await readForSession({ file_path: "paged.txt", offset: 2, limit: 2 }, ctx)
+    await readForSession({ file_path: "alias.txt", limit: 2 }, ctx)
+    await writeTool.execute({ file_path: "alias.txt", content: "all seen\n" }, ctx)
+    expect(await readFile(path, "utf8")).toBe("all seen\n")
+  })
+})
+
+test("partial reads of changed versions and targeted edits cannot promote incomplete knowledge", async () => {
+  await withWorkspace(async (workspace) => {
+    const path = join(workspace, "changing.txt")
+    const ctx = context(workspace)
+    await writeFile(path, "first\nold\n")
+    await readForSession({ file_path: path }, ctx)
+    await writeFile(path, "unseen change\nlast\n")
+    await readForSession({ file_path: path, offset: 2 }, ctx)
+    await expect(writeTool.execute({ file_path: path, content: "lost\n" }, ctx)).rejects.toThrow(
+      "has not been read completely",
+    )
+    await editTool.execute({ file_path: path, old_string: "last", new_string: "edited\nextra" }, ctx)
+    await readForSession({ file_path: path, limit: 1 }, ctx)
+    await expect(
+      editTool.execute({ file_path: path, old_string: "edited", new_string: "lost", replace_all: true }, ctx),
+    ).rejects.toThrow("has not been read completely")
+    expect(await readFile(path, "utf8")).toBe("unseen change\nedited\nextra\n")
+    await readForSession({ file_path: path, offset: 2 }, ctx)
+    await writeTool.execute({ file_path: path, content: "complete\n" }, ctx)
+  })
+})
+
+test("shortened lines and native output caps do not authorize writes, while empty reads do", async () => {
+  await withWorkspace(async (workspace) => {
+    for (const content of ["x".repeat(2001), Array.from({ length: 100 }, () => "y".repeat(1000)).join("\n")]) {
+      const path = join(workspace, "bounded.txt")
+      const ctx = context(workspace)
+      await writeFile(path, content)
+      await readForSession({ file_path: path }, ctx)
+      await expect(writeTool.execute({ file_path: path, content: "lost" }, ctx)).rejects.toThrow(
+        "has not been read completely",
+      )
+      expect(await readFile(path, "utf8")).toBe(content)
+    }
+    const ctx = context(workspace)
+    await writeFile(join(workspace, "empty.txt"), "")
+    await readForSession({ file_path: "empty.txt" }, ctx)
+    await writeTool.execute({ file_path: "empty.txt", content: "filled\n" }, ctx)
+    expect(await readFile(join(workspace, "empty.txt"), "utf8")).toBe("filled\n")
+  })
+})
+
 test("edit needs no prior read but replace_all requires an unchanged read", async () => {
   await withWorkspace(async (workspace) => {
     const path = join(workspace, "targets.txt")
@@ -456,7 +527,7 @@ test("edit needs no prior read but replace_all requires an unchanged read", asyn
         { file_path: "targets.txt", old_string: "value", new_string: "kept", replace_all: true },
         context(workspace),
       ),
-    ).rejects.toThrow("has not been read in this session")
+    ).rejects.toThrow("has not been read completely in this session")
     expect(await readFile(path, "utf8")).toBe("value\nother\n")
     const ctx = context(workspace)
 
@@ -464,7 +535,7 @@ test("edit needs no prior read but replace_all requires an unchanged read", asyn
       (await editTool.execute({ file_path: "targets.txt", old_string: "value", new_string: "kept" }, ctx)).output,
     ).toContain("Updated targets.txt")
 
-    await readTool.execute({ file_path: "targets.txt" }, ctx)
+    await readForSession({ file_path: "targets.txt" }, ctx)
     await writeFile(path, "kept\nother\nkept\n")
     await expect(
       editTool.execute({ file_path: "targets.txt", old_string: "kept", new_string: "done", replace_all: true }, ctx),

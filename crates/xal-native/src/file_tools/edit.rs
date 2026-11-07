@@ -315,7 +315,7 @@ impl Task for EditTask {
         }
         if self.edits.iter().any(|edit| edit.replace_all) && self.expected.is_none() {
             return Err(failed(format!(
-                "{} has not been read in this session. Read it before replacing every occurrence.",
+                "{} has not been read completely in this session. Read every line through direct read calls without truncation before replacing every occurrence, or use a targeted edit.",
                 self.display_path
             )));
         }
