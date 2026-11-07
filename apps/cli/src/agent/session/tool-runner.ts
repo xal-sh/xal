@@ -483,7 +483,7 @@ export class ToolCallRunner {
       this.host.emit({ type: "tool_started", callId: call.callId, tool: call.name, title, readOnly })
     }
     await this.host.flushPersistence()
-    signal.throwIfAborted()
+    if (signal.aborted) return this.outcome(call, title, readOnly, "Interrupted by user before execution.")
     let output: string
     let savedOutput: string | undefined
     let read: ReadCoverage | undefined

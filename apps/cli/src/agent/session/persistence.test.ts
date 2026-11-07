@@ -163,6 +163,61 @@ test("waits for call acknowledgement and records the terminal event before publi
   })
 })
 
+test("cancellation during intent acknowledgement preserves completed shared-tool results", async () => {
+  await fixture(async (cwd, tool) => {
+    tool.concurrency = () => "shared"
+    const provider = new ScriptedProvider([
+      round([
+        ...Array.from({ length: 5 }, (_, index) => ({
+          type: "item_done" as const,
+          item: {
+            type: "tool_call" as const,
+            callId: `shared-${index}`,
+            name: tool.name,
+            args: { name: String(index) },
+          },
+        })),
+        { type: "done" },
+      ]),
+    ])
+    const session = create(cwd, provider)
+    const entered = Promise.withResolvers<void>()
+    const release = Promise.withResolvers<void>()
+    const append = fs.appendFile
+    const write = spyOn(fs, "appendFile").mockImplementation(async (...args) => {
+      if (typeof args[1] === "string") {
+        const record = parseRecord(args[1])
+        if (record.type === "event" && record.event.type === "tool_started" && record.event.callId === "shared-4") {
+          entered.resolve()
+          await release.promise
+        }
+      }
+      return append(...args)
+    })
+    try {
+      const running = runSettledTurn(session, { text: "Write separate markers concurrently", images: [] })
+      await entered.promise
+      session.interrupt()
+      release.resolve()
+      expect((await running).status).toBe("interrupted")
+      expect(await Bun.file(join(cwd, "4")).exists()).toBe(false)
+      const saved = await loadSession(join(projectSessionsDir(cwd), `${session.id}.jsonl`))
+      expect(saved?.items.filter((item) => item.type === "tool_result")).toEqual(
+        Array.from({ length: 5 }, (_, index) => ({
+          type: "tool_result",
+          callId: `shared-${index}`,
+          output: index === 4 ? "Interrupted by user before execution." : "written",
+        })),
+      )
+      expect(provider.requests).toHaveLength(1)
+    } finally {
+      release.resolve()
+      write.mockRestore()
+      await session.close()
+    }
+  })
+})
+
 test.each(["tool_started", "direct_shell", "turn_ended"])(
   "direct shell fails closed on %s writes; nonpersisted sessions are unaffected",
   async (failedRecord) => {

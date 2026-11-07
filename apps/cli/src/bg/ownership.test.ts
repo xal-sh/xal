@@ -67,6 +67,7 @@ test("worker reservation and attach carry exclusive transcript ownership through
     await session.closePersistence()
     await expect(resumeSession(contender, summary)).rejects.toThrow("running in the background")
     worker.attach(SessionWriter.acquire(summary.path))
+    await expect(resumeSession(contender, summary)).rejects.toThrow("bg attach")
     await worker.eventAndWait({ type: "session_title_changed", title: "Worker wrote this" })
     expect(() => SessionWriter.acquire(summary.path)).toThrow("already open")
     await worker.close()

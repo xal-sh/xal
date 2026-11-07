@@ -195,6 +195,17 @@ export interface ResumeOptions {
   deferGoalResume?: boolean
 }
 
+async function assertResumeLease(sessionId: string, backgroundWorkerId?: string): Promise<void> {
+  const lease = await readBgLease(sessionId)
+  if (backgroundWorkerId && lease?.workerId !== backgroundWorkerId) {
+    throw new Error("background worker no longer owns the session lease")
+  }
+  if (lease && lease.workerId !== backgroundWorkerId) {
+    const short = sessionId.slice(0, 8)
+    throw new Error(`session ${short} is running in the background; use "${appInfo.name} bg attach ${short}"`)
+  }
+}
+
 export async function resumeSession(
   session: AgentSession,
   summary: SessionSummary,
@@ -203,16 +214,10 @@ export async function resumeSession(
   if (session.currentState !== "idle" || session.hasPendingAsyncWork()) {
     throw new Error("cannot resume while a turn or background job is unsettled")
   }
+  if (!options.writer && !options.backgroundWorkerId) await assertResumeLease(summary.id)
   const writer = options.writer?.transfer() ?? SessionWriter.acquire(summary.path)
   try {
-    const lease = await readBgLease(summary.id)
-    if (options.backgroundWorkerId && lease?.workerId !== options.backgroundWorkerId) {
-      throw new Error("background worker no longer owns the session lease")
-    }
-    if (lease && lease.workerId !== options.backgroundWorkerId) {
-      const short = summary.id.slice(0, 8)
-      throw new Error(`session ${short} is running in the background; use "${appInfo.name} bg attach ${short}"`)
-    }
+    await assertResumeLease(summary.id, options.backgroundWorkerId)
     const loaded = await loadSession(summary.path, writer)
     if (!loaded || loaded.meta.id !== summary.id) throw new Error(`session is unreadable: ${summary.path}`)
 
