@@ -566,6 +566,7 @@ export class ToolCallRunner {
         )
       output = redactText(await (parentCallId || program ? withAbortSignal(signal, after) : after()))
     } catch (error) {
+      images = undefined
       if ((parentCallId || program) && signal.aborted) {
         output = failure ?? redactText(`${TOOL_FAILED_PREFIX}${describeError(signal.reason)}`)
         failure ??= output

@@ -132,6 +132,8 @@ export function pendingToolCalls(items: ConversationItem[], target: Conversation
 function attachToolImages(items: ConversationItem[], imageInput: boolean): ConversationItem[] {
   const result: ConversationItem[] = []
   let images: ImageInput[] = []
+  const total = items.reduce((count, item) => count + (item.type === "tool_result" ? (item.images?.length ?? 0) : 0), 0)
+  let stale = Math.max(0, total - 4)
   const flush = (): void => {
     if (images.length === 0) return
     const text =
@@ -155,8 +157,17 @@ function attachToolImages(items: ConversationItem[], imageInput: boolean): Conve
       })
       continue
     }
-    result.push(rest)
-    images = [...images, ...attached]
+    const dropped = Math.min(stale, attached.length)
+    stale -= dropped
+    images = [...images, ...attached.slice(dropped)]
+    if (dropped === 0) {
+      result.push(rest)
+      continue
+    }
+    result.push({
+      ...rest,
+      output: `${rest.output}\n\n[Earlier image omitted to keep requests within provider limits; read the file again to view it]`,
+    })
   }
   flush()
   return result

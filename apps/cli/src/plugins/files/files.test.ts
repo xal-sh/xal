@@ -286,6 +286,7 @@ test("read returns PNG and JPEG files as images and refuses ones a provider woul
     await writeFile(join(workspace, "photo.JPG"), jpeg)
     await writeFile(join(workspace, "tall.png"), png(1000, 9000))
     await writeFile(join(workspace, "fake.png"), "not\u0000an image")
+    await writeFile(join(workspace, "large.jpg"), `${"x".repeat(4_000_000)}\u0000`)
 
     const shot = await readTool.execute({ file_path: "shot.png" }, context(workspace))
     expect(shot.output).toBe("Image shot.png: image/png, 1440×900 pixels, 1 KB")
@@ -297,6 +298,9 @@ test("read returns PNG and JPEG files as images and refuses ones a provider woul
     )
     await expect(readTool.execute({ file_path: "fake.png" }, context(workspace))).rejects.toThrow(
       "Cannot read binary file: fake.png",
+    )
+    await expect(readTool.execute({ file_path: "large.jpg" }, context(workspace))).rejects.toThrow(
+      "Cannot read binary file: large.jpg",
     )
     await expect(readTool.execute({ file_path: "gone.png" }, context(workspace))).rejects.toThrow(
       "File not found: gone.png",

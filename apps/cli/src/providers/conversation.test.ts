@@ -180,6 +180,31 @@ describe("prepareConversation", () => {
     ])
   })
 
+  test("resends only the four most recent tool result images", () => {
+    const items: ConversationItem[] = Array.from({ length: 5 }, (_, index): ConversationItem[] => [
+      { type: "tool_call", callId: `call-${index}`, name: "read", args: {} },
+      {
+        type: "tool_result",
+        callId: `call-${index}`,
+        output: `Image ${index}`,
+        images: [{ mediaType: "image/png", data: `aW1n${index}A==` }],
+      },
+    ]).flat()
+
+    const prepared = prepareConversation(items, target, true)
+
+    expect(prepared[1]).toEqual({
+      type: "tool_result",
+      callId: "call-0",
+      output:
+        "Image 0\n\n[Earlier image omitted to keep requests within provider limits; read the file again to view it]",
+    })
+    const sent = prepared.flatMap((item) =>
+      item.type === "user_message" ? item.images.map((image) => image.data) : [],
+    )
+    expect(sent).toEqual(["aW1n1A==", "aW1n2A==", "aW1n3A==", "aW1n4A=="])
+  })
+
   test("closes pending calls at the end and discards duplicate calls and orphan results", () => {
     const call: ConversationItem = { type: "tool_call", callId: "call-id", name: "read", args: {} }
     const items: ConversationItem[] = [
