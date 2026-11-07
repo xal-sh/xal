@@ -4,6 +4,7 @@ import { saveToolOutput } from "../../tools/output"
 import { decisions } from "../../providers/decisions"
 import { pruneWithJev } from "./jev-compaction"
 import { pruneStaleReads } from "./stale-reads"
+import { offloadToolOutputs } from "./tool-output-compaction"
 import { resolveThinking } from "../../config/thinking"
 import { describeError } from "../../lib/error"
 import { truncateUtf8Middle } from "../../lib/text"
@@ -28,7 +29,7 @@ export type CompactionTrigger = "auto" | "manual"
 
 export interface CompactionObservation {
   trigger: CompactionTrigger
-  strategy: "legacy" | "user_messages_v1" | "jev_v1" | "stale_reads_v1"
+  strategy: "legacy" | "user_messages_v1" | "jev_v1" | "stale_reads_v1" | "tool_outputs_v1"
   outcome: "completed" | "nothing" | "failed" | "interrupted"
   tokensBefore?: number
   before: ConversationItem[]
@@ -323,6 +324,7 @@ export async function runCompaction(
     return false
   }
 
+  let strategy: CompactionObservation["strategy"] = "user_messages_v1"
   try {
     host.setState("compacting")
     const stale = pruneStaleReads(before)
@@ -351,6 +353,37 @@ export async function runCompaction(
         host.emit({ type: "compacted", summary: candidate.summary, replaced: candidate.replaced, tokensBefore })
         return true
       }
+    }
+    if (trigger === "auto") {
+      strategy = "tool_outputs_v1"
+      const offloaded = await offloadToolOutputs(before, host.outputDirectory(), signal)
+      if (offloaded.offloaded > 0) {
+        const candidate: CompactionItem = {
+          type: "compaction",
+          strategy,
+          summary: `Archived ${offloaded.offloaded} older tool outputs; retained conversation is otherwise unchanged.`,
+          replaced: offloaded.offloaded,
+          tokensBefore,
+          retained: offloaded.items,
+        }
+        if (await freesEnoughContext(host, provider, model, history, candidate, signal)) {
+          signal.throwIfAborted()
+          host.observeCompaction({
+            trigger,
+            strategy,
+            outcome: "completed",
+            tokensBefore,
+            before,
+            after: candidate.retained,
+            retained: candidate.retained,
+            removedTypes: [],
+          })
+          host.replaceHistory(candidate)
+          host.emit({ type: "compacted", summary: candidate.summary, replaced: candidate.replaced, tokensBefore })
+          return true
+        }
+      }
+      strategy = "user_messages_v1"
     }
     const transcript = await saveToolOutput(
       host.outputDirectory(),
@@ -549,7 +582,7 @@ export async function runCompaction(
   } catch (error) {
     host.observeCompaction({
       trigger,
-      strategy: "user_messages_v1",
+      strategy,
       outcome: isCompactionInterruption(error, signal) ? "interrupted" : "failed",
       ...(tokensBefore === undefined ? {} : { tokensBefore }),
       before,

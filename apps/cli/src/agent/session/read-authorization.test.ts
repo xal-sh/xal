@@ -11,6 +11,8 @@ import { readTool } from "../../plugins/files/read"
 import { writeTool } from "../../plugins/files/write"
 import { replaceSecretValues } from "../../secrets/redactor"
 import { registerTool, unregisterTool } from "../../tools/registry"
+import { forgetFileStates } from "../../tools/file-state"
+import { registerToolContextDisposer } from "../../tools/session"
 import {
   completedRound,
   round,
@@ -27,6 +29,7 @@ beforeAll(async () => {
   harness = await setupAgentSessionTests("read-authorization-")
   for (const tool of [readTool, writeTool, codeModeTool]) registerTool(tool)
   setUserRules({ allow: ["read(*)", "write(*)", "code_mode(*)"] })
+  registerToolContextDisposer(forgetFileStates)
 })
 
 afterAll(async () => {
@@ -81,6 +84,47 @@ test("only unchanged direct model-visible reads authorize subsequent writes", as
         replaceSecretValues("read-authorization-test", [])
       }
     }
+  } finally {
+    await rm(cwd, { recursive: true, force: true })
+  }
+})
+
+test("automatic output offloading invalidates write authorization until a fresh direct read", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "xal-offloaded-read-"))
+  try {
+    const path = join(cwd, "old.txt")
+    const content = "original source line\n".repeat(1000)
+    await writeFile(path, content)
+    const paths = Array.from({ length: 12 }, (_, index) => join(cwd, `recent-${index}.txt`))
+    await Promise.all(paths.map((file) => writeFile(file, "recent source\n")))
+    const provider = new ScriptedProvider(
+      [
+        toolRound("old-read", "read", { file_path: path }),
+        round([
+          ...paths.map((file, index): StreamEvent => ({
+            type: "item_done",
+            item: { type: "tool_call", callId: `recent-${index}`, name: "read", args: { file_path: file } },
+          })),
+          { type: "done", usage: { totalInputTokens: 80_000 } },
+        ]),
+        toolRound("blocked-write", "write", { file_path: path, content: "must not be written" }),
+        toolRound("fresh-read", "read", { file_path: path }),
+        toolRound("allowed-write", "write", { file_path: path, content: "verified replacement\n" }),
+        completedRound("done"),
+      ],
+      100_000,
+      50_000,
+    )
+    const session = harness.createSession(provider, { cwd })
+    expect((await runSettledTurn(session, { text: "Inspect and update", images: [] })).status).toBe("completed")
+    expect(provider.requests).toHaveLength(6)
+    expect(provider.requests.every((request) => request.toolChoice === "auto")).toBe(true)
+    const results = provider.requests.at(-1)?.input.filter((item) => item.type === "tool_result")
+    expect(results?.find((item) => item.callId === "old-read")?.output).toContain("Archived tool result:")
+    expect(results?.find((item) => item.callId === "blocked-write")?.output).toContain("has not been read completely")
+    expect(results?.find((item) => item.callId === "fresh-read")?.output).toContain("original source line")
+    expect(results?.find((item) => item.callId === "allowed-write")?.output).toContain("Updated")
+    expect(await readFile(path, "utf8")).toBe("verified replacement\n")
   } finally {
     await rm(cwd, { recursive: true, force: true })
   }

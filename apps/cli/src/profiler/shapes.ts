@@ -27,7 +27,7 @@ export interface ToolOutputShape {
 }
 
 export type CompactionProfileOutcome = "completed" | "nothing" | "failed" | "interrupted"
-export type CompactionProfileStrategy = "legacy" | "user_messages_v1" | "jev_v1" | "stale_reads_v1"
+export type CompactionProfileStrategy = "legacy" | "user_messages_v1" | "jev_v1" | "stale_reads_v1" | "tool_outputs_v1"
 export type RemovedItemType = ConversationItem["type"] | "direct_shell" | "compaction"
 
 export interface CompactionShapeInput {
