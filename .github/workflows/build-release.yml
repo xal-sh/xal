@@ -113,6 +113,12 @@ jobs:
           MACOSX_DEPLOYMENT_TARGET: ${{ matrix.deployment_target || '' }}
         run: bun scripts/native/build.ts compile "${{ matrix.rust_target }}" "${{ inputs.version }}" "dist/${{ matrix.asset }}"
 
+      - name: Test native file replacement
+        if: ${{ !endsWith(matrix.rust_target, '-musl') }}
+        env:
+          CARGO_TARGET_DIR: target/native-build
+        run: cargo test --release --locked --target "${{ matrix.rust_target }}" file_tools::replace
+
       - name: Set executable permissions
         if: runner.os != 'Windows'
         shell: bash

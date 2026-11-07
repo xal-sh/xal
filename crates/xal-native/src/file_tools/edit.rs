@@ -305,13 +305,21 @@ impl Task for EditTask {
     type JsValue = NativeEditOutput;
 
     fn compute(&mut self) -> napi::Result<Self::Output> {
-        let metadata =
-            fs::metadata(&self.path).map_err(|_| missing_file(&self.path, &self.display_path))?;
+        let metadata = fs::metadata(&self.path).map_err(|error| {
+            if error.kind() == std::io::ErrorKind::NotFound {
+                missing_file(&self.path, &self.display_path)
+            } else {
+                io_error(error)
+            }
+        })?;
         if metadata.is_dir() {
             return Err(failed(format!(
                 "Path is a directory, not a file: {}",
                 self.display_path
             )));
+        }
+        if !metadata.is_file() {
+            return Err(failed(format!("Not a regular file: {}", self.display_path)));
         }
         if self.edits.iter().any(|edit| edit.replace_all) && self.expected.is_none() {
             return Err(failed(format!(
@@ -379,7 +387,7 @@ impl Task for EditTask {
         let next = apply_spans(&previous, &spans, &replacements);
         let diff = unified_diff(&previous, &next);
         let bytes = utf16_lossy(&next);
-        fs::write(&self.path, bytes.as_bytes()).map_err(io_error)?;
+        replace::replace_file(&self.path, bytes.as_bytes(), true).map_err(io_error)?;
         Ok(NativeEditOutput {
             output: with_diff(
                 format!(
