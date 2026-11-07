@@ -44,16 +44,59 @@ Tools that save their own output may return `outputSaved: true` alongside an out
 
 Plugins register trusted lifecycle hooks with `ctx.registerHook`. Hooks run in built-in and configured-plugin order. Multiple hooks for the same event run sequentially, and a replacement from one hook becomes the input to the next.
 
-| Handler      | Input                                       | Allowed result                                              |
-| ------------ | ------------------------------------------- | ----------------------------------------------------------- |
-| `prompt`     | Model-facing prompt text and image count    | Replace the text or reject the prompt                       |
-| `beforeTool` | Tool name, call ID, and JSON arguments      | Replace the arguments or block the call                     |
-| `afterTool`  | Tool details and its model-facing output    | Replace the output                                          |
-| `turnEnd`    | Final output and token usage when available | No result; use it for lifecycle automation or observability |
+| Handler          | Input                                                | Allowed result                                              |
+| ---------------- | ---------------------------------------------------- | ----------------------------------------------------------- |
+| `prompt`         | Model-facing prompt text and image count             | Replace the text or reject the prompt                       |
+| `beforeTool`     | Tool name, call ID, and JSON arguments               | Replace the arguments or block the call                     |
+| `afterTool`      | Tool details and its model-facing output             | Replace the output                                          |
+| `beforeComplete` | Proposed final output, usage, and continuation count | Allow completion or block it with feedback for the model    |
+| `turnEnd`        | Final output and token usage when available          | No result; use it for lifecycle automation or observability |
 
 Every handler also receives a context containing an abort signal and the session ID, kind, working directory, provider, model, and permission mode. Prompt changes affect what the model sees while the TUI keeps the user's original text. Tool argument changes happen before scheduling, argument validation, and permission evaluation, so Xal validates, authorizes, and records the effective action. A hook that adds an argument the tool does not declare makes the call fail validation. Post-tool hooks also run for failed or interrupted executions, but not for calls blocked before execution.
 
-Hook failures stop prompt, pre-tool, and turn-completion processing. A post-tool failure becomes a failed tool result that warns the model the tool may already have changed state. Hook inputs and code run inside Xal's process, so only load hooks you trust. Returned text and arguments pass through secret redaction before they reach the model, session storage, or TUI.
+Hook failures stop prompt, pre-tool, completion-check, and turn-completion processing. A post-tool failure becomes a failed tool result that warns the model the tool may already have changed state. Hook inputs and code run inside Xal's process, so only load hooks you trust. Returned text and arguments pass through secret redaction before they reach the model, session storage, or TUI.
+
+### Completion gates
+
+`beforeComplete` runs when the agent is ready to finish, after built-in verification corrections and before `turnEnd`. It applies to primary and task-agent turns, including headless runs and schema-validated structured output. It does not run for direct user shell commands, session-restart control, failed turns, or interruptions. Existing `turnEnd` hooks remain completion observers and do not run on a blocked attempt.
+
+Return `undefined` to allow completion, or `{ type: "block", reason: "..." }` to send the model corrective feedback and continue the same turn. The reason must be non-empty after trimming and contain at most 4,000 Unicode characters. Invalid results and thrown errors fail the turn instead of allowing completion. Feedback passes through the normal secret redactor before entering conversation history. Permissions, cancellation, and repeated-tool-call guards still apply; blocking completion does not authorize any action.
+
+The input contains `output` (text or a structured object), `usage` and `context` when available, and `continuationCount`, initially `0`. Hooks run in registration order; the first block stops that pass. Each hook receives an independent copy of the input. After a repair, the checks run again against the new proposed output. A rejected structured response must be submitted again. Input or background results arriving during an asynchronous check are processed before completion. Proposed responses may already have streamed to the user; they are not successful turn completion until the checks pass.
+
+Xal permits three hook-driven continuations per turn. Another block fails the turn with the blocking hook's identity and reason; it never overrides the gate to report success. The counter is shared across hooks within that turn and resets on a new turn. Make checks repeatable and honor `ctx.signal`; put once-on-completion side effects in `turnEnd` instead. `/hooks` lists the `before_complete` event, and its decisions appear in the existing hook activity log.
+
+For example, this plugin requires a non-empty `HANDOFF.md` before a primary agent finishes. It reads the actual file on each check rather than trusting the final answer's claim:
+
+```ts
+import { readFile } from "node:fs/promises"
+import { join } from "node:path"
+
+export default {
+  name: "handoff-gate",
+  register(ctx) {
+    ctx.registerHook({
+      name: "require-handoff",
+      async beforeComplete(input, ctx) {
+        if (ctx.session.kind !== "primary" || ctx.session.mode === "plan") return
+        let text
+        try {
+          text = await readFile(join(ctx.session.cwd, "HANDOFF.md"), { encoding: "utf8", signal: ctx.signal })
+        } catch (error) {
+          if (!(error instanceof Error) || !("code" in error) || error.code !== "ENOENT") throw error
+          return {
+            type: "block",
+            reason: "Create HANDOFF.md with the changes, verification results, and remaining work.",
+          }
+        }
+        if (!text.trim()) return { type: "block", reason: "HANDOFF.md is empty. Add the handoff before finishing." }
+      },
+    })
+  },
+}
+```
+
+This checks the handoff's presence, not the truth of its contents. For test or build evidence tied to workspace state, use [configured verification checks](/docs/configs#verification-checks). Plugins run with host-process privileges: completion hooks do not make arbitrary plugin code sandboxed or permission-checked. Avoid running model-provided commands from a hook.
 
 ## Prompt preparation
 

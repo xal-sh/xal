@@ -1,6 +1,14 @@
 import { afterEach, describe, expect, test } from "bun:test"
-import type { HookAction, HookContext, HookEvent } from "./types"
-import { clearHooks, registerHook, runBeforeToolHooks, runPromptHooks, type HookReporter } from "./registry"
+import type { BeforeCompleteHookInput, HookAction, HookContext, HookEvent } from "./types"
+import {
+  clearHooks,
+  listHooks,
+  registerHook,
+  runBeforeCompleteHooks,
+  runBeforeToolHooks,
+  runPromptHooks,
+  type HookReporter,
+} from "./registry"
 
 interface Report {
   type: "started" | "finished"
@@ -40,6 +48,83 @@ afterEach(() => {
 })
 
 describe("hook pipeline", () => {
+  test("completion gates preserve inputs, registration order, and stop at the first block", async () => {
+    const input: BeforeCompleteHookInput = { output: { ready: true }, usage: { outputTokens: 2 }, continuationCount: 1 }
+    const reports: Report[] = []
+    const seen: BeforeCompleteHookInput[] = []
+    registerHook("plugin", 0, 1, {
+      name: "gate",
+      beforeComplete(value: BeforeCompleteHookInput) {
+        seen.push(value)
+        return { type: "block", reason: "  Missing evidence  " }
+      },
+    })
+    registerHook("plugin", 0, 0, {
+      name: "observe",
+      beforeComplete(value: BeforeCompleteHookInput) {
+        value.output = "mutated"
+        if (value.usage) value.usage.outputTokens = 100
+      },
+    })
+    registerHook("plugin", 0, 2, {
+      name: "unreached",
+      beforeComplete() {
+        throw new Error("must not run")
+      },
+    })
+
+    expect(await runBeforeCompleteHooks(input, context(), reporter(reports))).toEqual({
+      type: "blocked",
+      hook: "plugin/gate",
+      reason: "Missing evidence",
+    })
+    expect(seen).toEqual([input])
+    expect(input).toEqual({ output: { ready: true }, usage: { outputTokens: 2 }, continuationCount: 1 })
+    expect(listHooks()).toEqual([
+      { id: "plugin/observe", events: ["before_complete"] },
+      { id: "plugin/gate", events: ["before_complete"] },
+      { id: "plugin/unreached", events: ["before_complete"] },
+    ])
+    expect(reports.filter((entry) => entry.type === "finished")).toEqual([
+      { type: "finished", hook: "plugin/observe", event: "before_complete", action: "continued" },
+      { type: "finished", hook: "plugin/gate", event: "before_complete", action: "blocked" },
+    ])
+  })
+
+  test("completion gates fail closed on invalid decisions and oversized feedback", async () => {
+    for (const value of [
+      null,
+      true,
+      { type: "continue" },
+      { type: "block", reason: " " },
+      { type: "block", reason: "x".repeat(4_001) },
+    ]) {
+      clearHooks()
+      const reports: Report[] = []
+      registerHook("plugin", 0, 0, { name: "invalid", beforeComplete: () => value })
+      await expect(runBeforeCompleteHooks({ continuationCount: 0 }, context(), reporter(reports))).rejects.toThrow(
+        "hook plugin/invalid failed during before_complete:",
+      )
+      expect(reports.at(-1)?.action).toBe("failed")
+    }
+  })
+
+  test("completion gates honor cancellation after an asynchronous handler", async () => {
+    const abort = new AbortController()
+    const reports: Report[] = []
+    registerHook("plugin", 0, 0, {
+      name: "cancelled",
+      async beforeComplete() {
+        abort.abort(new DOMException("Stopped", "AbortError"))
+        return { type: "block", reason: "must not continue" }
+      },
+    })
+    await expect(
+      runBeforeCompleteHooks({ continuationCount: 0 }, { ...context(), signal: abort.signal }, reporter(reports)),
+    ).rejects.toThrow("Stopped")
+    expect(reports.at(-1)?.action).toBe("interrupted")
+  })
+
   test("runs hooks in registration order and chains prompt replacements", async () => {
     const inputs: string[] = []
     const reports: Report[] = []

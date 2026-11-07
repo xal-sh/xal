@@ -1,4 +1,4 @@
-import { runTurnEndHooks, type HookReporter } from "../../hooks/registry"
+import { runBeforeCompleteHooks, runTurnEndHooks, type HookReporter } from "../../hooks/registry"
 import type { HookContext } from "../../hooks/types"
 import type { JsonObject } from "../../lib/json"
 import { OutputLimitError } from "../../providers/errors"
@@ -94,12 +94,36 @@ export async function runTurn(
   let midWork = true
   let interjected = false
   let outputLimited = false
+  let continuationCount = 0
+  const completionBlocked = async (output: string | JsonObject | undefined): Promise<boolean> => {
+    const outcome = await runBeforeCompleteHooks(
+      {
+        ...(output === undefined ? {} : { output }),
+        ...(usage.turn ? { usage: usage.turn } : {}),
+        ...(usage.context ? { context: usage.context } : {}),
+        continuationCount,
+      },
+      host.hookContext(signal),
+      host.hookReporter,
+    )
+    if (outcome.type === "continue") return false
+    if (continuationCount >= 3) {
+      throw new Error(`Completion blocked by hook ${outcome.hook} after 3 continuations: ${outcome.reason}`)
+    }
+    continuationCount += 1
+    host.pushItem({
+      type: "user_message",
+      text: `Completion blocked by hook ${outcome.hook}: ${outcome.reason}\n\nAddress this feedback before finishing. Continue to follow the user's instructions and permission rules.`,
+      images: [],
+    })
+    return true
+  }
   let verificationBaseline = await host.verificationBaseline(signal)
   const verificationReturned = async (): Promise<boolean> => {
     if (verificationBaseline === undefined) return false
     const correction = await host.verificationCorrection(verificationBaseline, signal)
-    verificationBaseline = undefined
     if (!correction) return false
+    verificationBaseline = undefined
     host.pushItem({ type: "user_message", text: correction, images: [] })
     return true
   }
@@ -174,7 +198,14 @@ export async function runTurn(
       }
       if (await verificationReturned()) continue
       const final = items.findLast((item) => item.type === "assistant_message")
-      await endTurn(host, usage, final?.type === "assistant_message" ? final.text : undefined, signal)
+      const output = final?.type === "assistant_message" ? final.text : undefined
+      if (await completionBlocked(output)) continue
+      if (host.queuedPromptNext()) {
+        midWork = false
+        continue
+      }
+      if (host.asyncResultsQueued() || host.agentQuestionsQueued()) continue
+      await endTurn(host, usage, output, signal)
       return { usage, usedTools }
     }
 
@@ -240,6 +271,14 @@ export async function runTurn(
         continue
       }
       if (await verificationReturned()) {
+        contract.reset()
+        continue
+      }
+      if (await completionBlocked(contract.output)) {
+        contract.reset()
+        continue
+      }
+      if (host.queuedPromptNext() || host.asyncResultsQueued() || host.agentQuestionsQueued()) {
         contract.reset()
         continue
       }
