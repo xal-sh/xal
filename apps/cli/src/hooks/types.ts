@@ -61,6 +61,7 @@ type HookResult<T> = T | Promise<T>
 
 export interface Hook {
   name: string
+  timeoutMs?: number
   prompt?(input: PromptHookInput, ctx: HookContext): HookResult<PromptHookResult>
   beforeTool?(input: BeforeToolHookInput, ctx: HookContext): HookResult<BeforeToolHookResult>
   afterTool?(input: AfterToolHookInput, ctx: HookContext): HookResult<AfterToolHookResult>

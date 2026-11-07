@@ -1,12 +1,15 @@
-import { afterEach, describe, expect, test } from "bun:test"
-import type { BeforeCompleteHookInput, HookAction, HookContext, HookEvent } from "./types"
+import { afterEach, describe, expect, jest, spyOn, test } from "bun:test"
+import { replaceSecretValues } from "../secrets/redactor"
+import type { BeforeCompleteHookInput, Hook, HookAction, HookContext, HookEvent } from "./types"
 import {
   clearHooks,
   listHooks,
   registerHook,
+  runAfterToolHooks,
   runBeforeCompleteHooks,
   runBeforeToolHooks,
   runPromptHooks,
+  runTurnEndHooks,
   type HookReporter,
 } from "./registry"
 
@@ -45,6 +48,183 @@ function reporter(reports: Report[]): HookReporter {
 
 afterEach(() => {
   clearHooks()
+  jest.useRealTimers()
+  replaceSecretValues("hook-tests", [])
+})
+
+function runHooks(event: HookEvent, ctx: HookContext, reports: Report[]): Promise<unknown> {
+  switch (event) {
+    case "prompt":
+      return runPromptHooks({ text: "hello", imageCount: 0 }, ctx, reporter(reports))
+    case "before_tool":
+      return runBeforeToolHooks({ callId: "call", tool: "write", args: {} }, ctx, reporter(reports))
+    case "after_tool":
+      return runAfterToolHooks(
+        { callId: "call", tool: "write", args: {}, title: "write", readOnly: false, output: "Written" },
+        ctx,
+        reporter(reports),
+      )
+    case "before_complete":
+      return runBeforeCompleteHooks({ continuationCount: 0 }, ctx, reporter(reports))
+    case "turn_end":
+      return runTurnEndHooks({}, ctx, reporter(reports))
+  }
+}
+
+function registerHandlers(handler: (_input: unknown, ctx: HookContext) => Promise<undefined>): void {
+  registerHook("plugin", 0, 0, {
+    name: "waiting",
+    prompt: handler,
+    beforeTool: handler,
+    afterTool: handler,
+    beforeComplete: handler,
+    turnEnd: handler,
+  } satisfies Hook)
+  registerHook("plugin", 0, 1, {
+    name: "unreached",
+    prompt: () => {
+      throw new Error("must not run")
+    },
+    beforeTool: () => {
+      throw new Error("must not run")
+    },
+    afterTool: () => {
+      throw new Error("must not run")
+    },
+    beforeComplete: () => {
+      throw new Error("must not run")
+    },
+    turnEnd: () => {
+      throw new Error("must not run")
+    },
+  } satisfies Hook)
+}
+
+test("validates hook deadlines before registration", () => {
+  for (const timeoutMs of [null, "1000", 0, -1, 1.5, NaN, Infinity, 600_001]) {
+    expect(() => registerHook("plugin", 0, 0, { name: "invalid", timeoutMs, prompt() {} })).toThrow(
+      "hook timeoutMs must be an integer from 1 to 600000 milliseconds",
+    )
+  }
+  expect(listHooks()).toEqual([])
+  for (const timeoutMs of [1, 600_000]) {
+    registerHook("plugin", 0, timeoutMs, { name: `valid-${timeoutMs}`, timeoutMs, prompt() {} })
+  }
+  expect(listHooks()).toHaveLength(2)
+})
+
+test.each(["prompt", "before_tool", "after_tool", "before_complete", "turn_end"] satisfies HookEvent[])(
+  "bounds an uncooperative %s hook and ignores its late result",
+  async (event) => {
+    jest.useFakeTimers()
+    const entered = Promise.withResolvers<AbortSignal>()
+    const release = Promise.withResolvers<undefined>()
+    const reports: Report[] = []
+    const ctx = context()
+    registerHandlers(async (_input, hookContext) => {
+      entered.resolve(hookContext.signal)
+      return release.promise
+    })
+    const pending = runHooks(event, ctx, reports).catch((error: unknown) => error)
+    const signal = await entered.promise
+    jest.advanceTimersByTime(60_000)
+    expect(await pending).toMatchObject({
+      message: `hook plugin/waiting failed during ${event}: timed out after 60000ms`,
+    })
+    expect(signal.aborted).toBe(true)
+    expect(ctx.signal.aborted).toBe(false)
+    expect(jest.getTimerCount()).toBe(0)
+    expect(reports).toEqual([
+      { type: "started", hook: "plugin/waiting", event },
+      { type: "finished", hook: "plugin/waiting", event, action: "failed" },
+    ])
+    release.resolve(undefined)
+    await release.promise
+    await Promise.resolve()
+    expect(reports).toHaveLength(2)
+  },
+)
+
+test.each(["prompt", "before_tool", "before_complete", "turn_end"] satisfies HookEvent[])(
+  "interrupts an uncooperative %s hook without starting later handlers",
+  async (event) => {
+    jest.useFakeTimers()
+    const entered = Promise.withResolvers<void>()
+    const controller = new AbortController()
+    const reports: Report[] = []
+    registerHandlers(async () => {
+      entered.resolve()
+      return new Promise<undefined>(() => {})
+    })
+    const ctx = { ...context(), signal: controller.signal }
+    const pending = runHooks(event, ctx, reports).catch((error: unknown) => error)
+    await entered.promise
+    const reason = new Error("Stopped")
+    controller.abort(reason)
+    expect(await pending).toBe(reason)
+    expect(reports.at(-1)?.action).toBe("interrupted")
+    expect(reports).toHaveLength(2)
+    expect(jest.getTimerCount()).toBe(0)
+    await expect(runHooks(event, ctx, reports)).rejects.toBe(reason)
+    expect(reports).toHaveLength(4)
+  },
+)
+
+test("reports unexpected late rejection with redaction but no second terminal hook event", async () => {
+  jest.useFakeTimers()
+  replaceSecretValues("hook-tests", ["hook-secret"])
+  const entered = Promise.withResolvers<void>()
+  const release = Promise.withResolvers<undefined>()
+  const logged = Promise.withResolvers<void>()
+  const reports: Report[] = []
+  const error = spyOn(console, "error").mockImplementation(() => logged.resolve())
+  try {
+    registerHook("plugin", 0, 0, {
+      name: "late",
+      timeoutMs: 10,
+      async beforeComplete() {
+        entered.resolve()
+        return release.promise
+      },
+    } satisfies Hook)
+    const pending = runHooks("before_complete", context(), reports).catch((failure: unknown) => failure)
+    await entered.promise
+    jest.advanceTimersByTime(10)
+    expect(await pending).toMatchObject({ message: expect.stringContaining("timed out after 10ms") })
+    release.reject(new Error("cleanup failed: hook-secret"))
+    await logged.promise
+    expect(error).toHaveBeenCalledTimes(1)
+    expect(error).toHaveBeenCalledWith(
+      "hook plugin/late failed after before_complete stopped waiting: cleanup failed: [REDACTED]",
+    )
+    expect(reports).toHaveLength(2)
+    expect(jest.getTimerCount()).toBe(0)
+  } finally {
+    error.mockRestore()
+  }
+})
+
+test("post-tool hooks observe interrupted execution but cannot wait indefinitely", async () => {
+  jest.useFakeTimers()
+  const entered = Promise.withResolvers<AbortSignal>()
+  const controller = new AbortController()
+  controller.abort()
+  const ctx = { ...context(), signal: controller.signal }
+  const reports: Report[] = []
+  registerHook("plugin", 0, 0, {
+    name: "cleanup",
+    timeoutMs: 10,
+    async afterTool(_input, hookContext) {
+      entered.resolve(hookContext.signal)
+      return new Promise<undefined>(() => {})
+    },
+  } satisfies Hook)
+  const pending = runHooks("after_tool", ctx, reports).catch((error: unknown) => error)
+  expect((await entered.promise).aborted).toBe(true)
+  jest.advanceTimersByTime(10)
+  expect(await pending).toMatchObject({ message: "hook plugin/cleanup failed during after_tool: timed out after 10ms" })
+  expect(reports.at(-1)?.action).toBe("failed")
+  expect(jest.getTimerCount()).toBe(0)
 })
 
 describe("hook pipeline", () => {

@@ -205,8 +205,9 @@ test("interruption during a completion check does not start repair or complete t
   const running = runSettledTurn(session, { text: "Finish", images: [] }, (event) => events.push(event))
   await entered.promise
   session.interrupt()
-  release.resolve()
   const outcome = await running
+  release.resolve()
+  await release.promise
 
   expect(outcome.status).toBe("interrupted")
   expect(provider.requests).toHaveLength(1)
