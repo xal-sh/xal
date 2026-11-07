@@ -566,11 +566,12 @@ export class ToolCallRunner {
         )
       output = redactText(await (parentCallId || program ? withAbortSignal(signal, after) : after()))
     } catch (error) {
-      images = undefined
       if ((parentCallId || program) && signal.aborted) {
+        images = undefined
         output = failure ?? redactText(`${TOOL_FAILED_PREFIX}${describeError(signal.reason)}`)
         failure ??= output
       } else if (!isAbortError(error)) {
+        images = undefined
         output = redactText(
           `${TOOL_FAILED_PREFIX}${describeError(error)}. The tool may have changed state; inspect it before retrying.`,
         )
