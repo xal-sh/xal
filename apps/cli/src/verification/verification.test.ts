@@ -19,6 +19,8 @@ import { projectSessionsDir } from "../config/paths"
 import { settings } from "../config/settings"
 import * as gitCommand from "../git/command"
 import { runGit } from "../git/command"
+import { registerHook, removeHooks } from "../hooks/registry"
+import type { Hook } from "../hooks/types"
 import { contributeRules } from "../permissions/rules"
 import { bashTool } from "../plugins/shell/bash/tool"
 import { disposeShellSession, selectShell } from "../plugins/shell/shell"
@@ -431,6 +433,53 @@ test("gates once when a turn changes the workspace without passing checks", asyn
   if (!correction || correction.type !== "user_message") throw new Error("missing verification correction")
   expect(correction.text).toContain("You changed the workspace during this turn")
   expect(correction.text).toContain("test: not run")
+})
+
+test.each([false, true])("verifies hook-requested workspace repairs (structured=%s)", async (structured) => {
+  settings().verification.gate = true
+  registerHook("verification-test", 0, 0, {
+    name: "handoff",
+    beforeComplete(input) {
+      if (input.continuationCount === 0) return { type: "block", reason: "Create HANDOFF.md before finishing" }
+      return undefined
+    },
+  } satisfies Hook)
+  try {
+    const provider = new ScriptedProvider([
+      structured ? toolRound("first", "submit_output", { done: true }) : completedRound("Done without a handoff."),
+      toolRound("handoff", "bash", { command: "printf ready > HANDOFF.md" }),
+      structured ? toolRound("second", "submit_output", { done: true }) : completedRound("Handoff is ready."),
+      toolRound("check", "bash", { command: settings().verification.checks.test! }),
+      structured ? toolRound("third", "submit_output", { done: true }) : completedRound("Handoff is verified."),
+    ])
+    const target = new AgentSession({
+      provider,
+      profileId: "test-profile",
+      model: "test-model",
+      cwd,
+      persist: false,
+      trackUndoPrompts: false,
+      ...(structured
+        ? { outputSchema: { type: "object", properties: { done: { type: "boolean" } }, required: ["done"] } }
+        : {}),
+    })
+    target.setMode("yolo")
+    sessions.push(target)
+
+    const outcome = await runSettledTurn(target, { text: "Prepare a handoff", images: [] })
+
+    expect(outcome.status).toBe("completed")
+    expect(provider.requests).toHaveLength(5)
+    const correction = provider.requests[3]?.input.at(-1)
+    if (!correction || correction.type !== "user_message") throw new Error("missing verification correction")
+    expect(correction.text).toContain("You changed the workspace during this turn")
+    expect(correction.text).toContain("test: not run")
+    expect(await target.verificationStatus()).toMatchObject([{ status: "passed" }])
+    expect(await readFile(join(cwd, "HANDOFF.md"), "utf8")).toBe("ready")
+    expect(outcome.response).toEqual(structured ? { done: true } : "Handoff is verified.")
+  } finally {
+    removeHooks(0)
+  }
 })
 
 test("gates structured output before accepting it", async () => {

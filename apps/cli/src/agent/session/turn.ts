@@ -122,8 +122,8 @@ export async function runTurn(
   const verificationReturned = async (): Promise<boolean> => {
     if (verificationBaseline === undefined) return false
     const correction = await host.verificationCorrection(verificationBaseline, signal)
-    verificationBaseline = undefined
     if (!correction) return false
+    verificationBaseline = undefined
     host.pushItem({ type: "user_message", text: correction, images: [] })
     return true
   }
