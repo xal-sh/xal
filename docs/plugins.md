@@ -55,6 +55,14 @@ Every handler also receives a context containing an abort signal and the session
 
 Hook failures stop prompt, pre-tool, and turn-completion processing. A post-tool failure becomes a failed tool result that warns the model the tool may already have changed state. Hook inputs and code run inside Xal's process, so only load hooks you trust. Returned text and arguments pass through secret redaction before they reach the model, session storage, or TUI.
 
+## Prompt preparation
+
+A registered prompt section can implement `prepare(ctx, state, signal)` alongside its synchronous `text(ctx)` function. Preparation runs before model requests and manual compaction, receives the current session workspace, and can asynchronously load the data used by `text`. Handlers should be idempotent: preparation can run more than once before a request. An error or cancellation stops the request.
+
+Returning a JSON object saves section state under its `id` in the existing session log. State is secret-redacted, unchanged values are not written again, and changed state is persisted before a provider request. The latest state survives compaction, fork, and resume; `/new` and workspace changes clear it. Returning `undefined` leaves saved state unchanged. Only one section with a given nonempty `id` can register a preparation handler. Plugins must validate restored state and check `ctx.cwd` before reusing workspace-dependent data; state is metadata, not additional conversation text.
+
+The built-in project-instructions plugin uses this to save discovered instruction paths while keeping file contents workspace-scoped and reloading them on resume.
+
 ## Hook example
 
 This plugin marks prompts and read results, and blocks an exact `git push` command:

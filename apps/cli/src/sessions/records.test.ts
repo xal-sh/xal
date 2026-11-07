@@ -2,10 +2,27 @@ import { expect, test } from "bun:test"
 import type { CompactionItem } from "../agent/history"
 import type { ToolResultItem } from "../providers/types"
 import { parseRecord } from "./records"
+import type { SessionRecord } from "./types"
 
 function itemRecord(item: unknown): string {
   return JSON.stringify({ type: "item", item })
 }
+
+test("round-trips prompt state and rejects malformed records", () => {
+  const record = {
+    type: "prompt_state",
+    id: "project_instructions",
+    state: { cwd: "/repo", paths: ["src/AGENTS.md"] },
+  } satisfies SessionRecord
+  expect(parseRecord(JSON.stringify(record))).toEqual(record)
+  for (const invalid of [
+    { ...record, id: "" },
+    { ...record, state: null },
+    { ...record, state: [] },
+  ]) {
+    expect(() => parseRecord(JSON.stringify(invalid))).toThrow("malformed session record")
+  }
+})
 
 test("parses legacy, user-only, and pruned compaction records without changing their shape", () => {
   const legacy: CompactionItem = {

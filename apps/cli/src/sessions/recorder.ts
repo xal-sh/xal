@@ -4,6 +4,7 @@ import type { AgentEvent } from "../agent/events"
 import type { HistoryItem } from "../agent/history"
 import { projectSessionsDir } from "../config/paths"
 import { describeError } from "../lib/error"
+import type { JsonObject } from "../lib/json"
 import { writeNewSecureText } from "../lib/fs"
 import { isPersistable, isRetiredEvent, parseRecord } from "./records"
 import { loadSession } from "./store"
@@ -162,6 +163,10 @@ export class SessionRecorder {
     this.path = path
     this.pending = undefined
     return { path, corrections }
+  }
+
+  promptState(id: string, state: JsonObject): Promise<void> {
+    return this.appendAndWait({ type: "prompt_state", id, state })
   }
 
   item(item: HistoryItem): void {

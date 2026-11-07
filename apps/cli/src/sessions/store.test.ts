@@ -77,6 +77,23 @@ test("reconstructs history and checkpoints from paired user event and item recor
   })
 })
 
+test("replays prompt state outside conversation history and clears it when the workspace changes", async () => {
+  await withSessionFile(async (path) => {
+    const state = { cwd: "/workspace", root: "/workspace", paths: ["src/AGENTS.md"] }
+    const saved = record({ type: "meta", meta }) + record({ type: "prompt_state", id: "instructions", state })
+    await writeFile(path, saved)
+    const loaded = await loadSession(path)
+    expect(loaded?.promptStates).toEqual({ instructions: state })
+    expect(loaded?.items).toEqual([])
+    expect(loaded?.events).toEqual([])
+    await writeFile(
+      path,
+      saved + record({ type: "event", event: { type: "workspace_changed", previous: "/workspace", cwd: "/other" } }),
+    )
+    expect((await loadSession(path))?.promptStates).toBeUndefined()
+  })
+})
+
 test("reloads historical task-agent questions without adding provider history", async () => {
   await withSessionFile(async (path) => {
     const question: AgentEvent = {

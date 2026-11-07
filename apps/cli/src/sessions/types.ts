@@ -23,6 +23,7 @@ export type RetiredEvent = JsonObject & { type: "reasoning_routed" | "request_me
 export type SessionRecord =
   | { type: "meta"; meta: SessionMeta }
   | { type: "item"; item: HistoryItem }
+  | { type: "prompt_state"; id: string; state: JsonObject }
   | { type: "event"; event: AgentEvent | RetiredEvent }
 
 export interface SessionSummary {
@@ -39,5 +40,6 @@ export interface LoadedSession {
   items: HistoryItem[]
   checkpoints: ConversationCheckpoint[]
   events: AgentEvent[]
+  promptStates?: Record<string, JsonObject>
   title?: string
 }

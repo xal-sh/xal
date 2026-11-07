@@ -38,6 +38,7 @@ import {
   redactUserInput,
 } from "../../secrets/data"
 import { redactJsonObject, redactText } from "../../secrets/redactor"
+import { stableJson, type JsonObject } from "../../lib/json"
 import type { SessionExport } from "../../sessions/export"
 import { SessionRecorder } from "../../sessions/recorder"
 import { isPersistable } from "../../sessions/records"
@@ -55,7 +56,7 @@ import type { ElicitationAnswer, RegisteredTool, ToolEvent } from "../../tools/t
 import type { AgentEvent, AgentState, DenialCause, SessionStartedEvent } from "../events"
 import { activeHistory, type ConversationCheckpoint, type HistoryItem } from "../history"
 import { isMessageId } from "../message-id"
-import { composeSystemPrompt } from "../prompt/registry"
+import { composeSystemPrompt, prepareSystemPrompt, type PromptContext } from "../prompt/registry"
 import { captureWorkspaceContext } from "../prompt/workspace"
 import type { DeliveredAgentQuestion, ParentQuestionResult } from "../task/questions"
 import type { SessionKind } from "../types"
@@ -113,6 +114,7 @@ export class AgentSession {
   private title: string | undefined
   private startedAt = Date.now()
   private items: HistoryItem[] = []
+  private promptStates = new Map<string, JsonObject>()
   private events: AgentEvent[] = []
   private checkpoints: ConversationCheckpoint[] = []
   private readonly redoStack = new RedoStack()
@@ -311,8 +313,10 @@ export class AgentSession {
       correctUnansweredAgentQuestions: () => this.correctUnansweredAgentQuestions(),
       drainQueue: (signal, interjected) => this.drainQueue(signal, interjected),
       restartRequested: () => this.pendingRestart !== undefined,
-      autoCompact: (signal, provider, model, thinking) =>
-        autoCompact(this.compactionHost(), signal, provider, model, thinking),
+      autoCompact: async (signal, provider, model, thinking) => {
+        await this.preparePrompt(signal)
+        return autoCompact(this.compactionHost(), signal, provider, model, thinking)
+      },
       compact: (signal, provider, model) => runCompaction(this.compactionHost(), signal, provider, model, "auto"),
       beginCheckpoint: async (messageId, input) => {
         this.ensureTitle(input)
@@ -534,6 +538,7 @@ export class AgentSession {
     this.outputDirectory = toolOutputDirectory(projectSessionsDir(this.cwd), this.sessionId)
     this.startedAt = Date.now()
     this.items = []
+    this.promptStates.clear()
     this.events = []
     this.checkpoints = []
     this.redoStack.reset()
@@ -620,6 +625,9 @@ export class AgentSession {
     this.cwd = resolve(target.cwd)
     this.startedAt = meta.startedAt
     this.items = target.session.items.map(redactHistoryItem)
+    this.promptStates = new Map(
+      Object.entries(target.session.promptStates ?? {}).map(([id, state]) => [id, redactJsonObject(state)]),
+    )
     this.events = target.session.events.map(redactAgentEvent)
     this.checkpoints = target.session.checkpoints.map((checkpoint) => ({
       messageId: checkpoint.messageId,
@@ -759,6 +767,7 @@ export class AgentSession {
     if (next === this.cwd) return
     const previous = this.cwd
     this.disposeToolResources()
+    this.promptStates.clear()
     this.cwd = next
     this.workspaceUndo = new WorkspaceUndo(next)
     this.workspaceUndo.seed(
@@ -974,6 +983,7 @@ export class AgentSession {
     const usage: TurnUsage = {}
     void prepare(controller.signal)
       .then(() => captureWorkspaceContext(this.sessionId, this.cwd, controller.signal))
+      .then(() => this.preparePrompt(controller.signal))
       .then(() => runTurn(this.turnHost(), controller.signal, provider, model, thinking, usage, resumedCalls))
       .then((result) => {
         summary = result
@@ -1368,6 +1378,7 @@ export class AgentSession {
     this.abortController = controller
     this.setState("compacting")
     try {
+      await this.preparePrompt(controller.signal)
       const compacted = await runCompaction(
         this.compactionHost(),
         controller.signal,
@@ -1594,19 +1605,33 @@ export class AgentSession {
     }
   }
 
-  private providerPrompt(model: string): ProviderPrompt {
-    const available = this.availableTools()
-    const tools = available.map(({ name, description, parameters }) => ({ name, description, parameters }))
-    const instructions = composeSystemPrompt({
+  private promptContext(tools = this.availableTools()): PromptContext {
+    return {
       sessionId: this.sessionId,
       appName: appInfo.name,
       platform: `${process.platform} ${release()}`,
       cwd: this.cwd,
       kind: this.kind,
-      tools: available,
+      tools,
       mode: this.mode,
       plan: this.mode === "plan" || this.planHandoffActive ? this.plan : undefined,
+    }
+  }
+
+  private async preparePrompt(signal: AbortSignal): Promise<void> {
+    await prepareSystemPrompt(this.promptContext(), this.promptStates, signal, async (id, state) => {
+      const redacted = redactJsonObject(state)
+      const previous = this.promptStates.get(id)
+      if (previous !== undefined && stableJson(previous) === stableJson(redacted)) return
+      await this.recorder?.promptState(id, redacted)
+      this.promptStates.set(id, redacted)
     })
+  }
+
+  private providerPrompt(model: string): ProviderPrompt {
+    const available = this.availableTools()
+    const tools = available.map(({ name, description, parameters }) => ({ name, description, parameters }))
+    const instructions = composeSystemPrompt(this.promptContext(available))
     return { instructions, tools, cacheKey: promptCacheKey(model, instructions, tools) }
   }
 
