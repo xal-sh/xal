@@ -91,6 +91,7 @@ export interface NativeReadOutput extends NativeToolOutput {
     offset: number
     limit: number
     truncated: boolean
+    totalLines: number
   }
 }
 
@@ -387,11 +388,17 @@ export function parseReadOutput(value: unknown): NativeReadOutput {
   }
   if (value.coverage === undefined) return contentHash === undefined ? { output } : { output, contentHash }
   const coverage = isRecord(value.coverage) ? parseReadCoverage({ ...value.coverage, contentHash }) : undefined
-  if (!coverage) throw new Error("native read returned invalid coverage")
+  if (!coverage || coverage.totalLines === undefined) throw new Error("native read returned invalid coverage")
   return {
     output,
     contentHash,
-    coverage: { path: coverage.path, offset: coverage.offset, limit: coverage.limit, truncated: coverage.truncated },
+    coverage: {
+      path: coverage.path,
+      offset: coverage.offset,
+      limit: coverage.limit,
+      truncated: coverage.truncated,
+      totalLines: coverage.totalLines,
+    },
   }
 }
 

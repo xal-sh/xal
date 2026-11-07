@@ -28,7 +28,7 @@ impl Task for WriteTask {
         }
         if metadata.is_some() && self.expected.is_none() {
             return Err(failed(format!(
-                "{} already exists and has not been read in this session. Read it first so the new content is based on what is there now.",
+                "{} already exists and has not been read completely in this session. Read every line through direct read calls without truncation, or use a targeted edit.",
                 self.display_path
             )));
         }

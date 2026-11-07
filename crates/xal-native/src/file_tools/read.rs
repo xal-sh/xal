@@ -139,6 +139,7 @@ impl Task for ReadTask {
                     offset: 1,
                     limit: 0,
                     truncated: false,
+                    total_lines: 0,
                 }),
             });
         }
@@ -169,6 +170,7 @@ impl Task for ReadTask {
                 offset: checked_count(self.offset, "read offset")?,
                 limit: checked_count(shown, "shown lines")?,
                 truncated,
+                total_lines: total_output,
             }),
         })
     }

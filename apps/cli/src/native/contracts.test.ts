@@ -8,6 +8,7 @@ import {
   parseNativeProcess,
   parseNativeShellManager,
   parsePathRanker,
+  parseReadOutput,
   parseSearchOutcome,
   parseToolOutput,
   parseWorkspaceIndex,
@@ -59,6 +60,17 @@ describe("native contract parsing", () => {
       { ...result, output: undefined },
     ]) {
       expect(() => parseEditOutput(value)).toThrow("native edit returned an invalid value")
+    }
+  })
+
+  test("requires valid total-line counts in native read coverage", () => {
+    const coverage = { path: "/file", offset: 2, limit: 2, truncated: false, totalLines: 3 }
+    const result = { output: "lines", contentHash: "hash", coverage }
+    expect(parseReadOutput(result)).toEqual(result)
+    for (const totalLines of [undefined, null, "3", -1, 1.5, 2, Number.MAX_SAFE_INTEGER]) {
+      expect(() => parseReadOutput({ ...result, coverage: { ...coverage, totalLines } })).toThrow(
+        "native read returned invalid coverage",
+      )
     }
   })
 

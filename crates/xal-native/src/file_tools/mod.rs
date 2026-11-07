@@ -60,6 +60,7 @@ pub struct NativeReadCoverage {
     pub offset: u32,
     pub limit: u32,
     pub truncated: bool,
+    pub total_lines: u32,
 }
 
 #[napi(object)]
