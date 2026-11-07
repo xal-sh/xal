@@ -1487,6 +1487,7 @@ export class AgentSession {
       await this.flushPersistence()
       return compacted ? "compacted" : "nothing"
     } catch (error) {
+      if (this.recorder?.error) throw this.recorder.error
       if (!isAbortError(error) && !controller.signal.aborted) throw error
       return "interrupted"
     } finally {

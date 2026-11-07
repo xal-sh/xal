@@ -195,6 +195,73 @@ test.each(["tool_started", "direct_shell", "turn_ended"])(
   },
 )
 
+test.each([false, true])("concurrent closes wait for pending writes and share their failure (%s)", async (fail) => {
+  await fixture(async (cwd) => {
+    const session = create(cwd, new ScriptedProvider([]))
+    await session.flushPersistence()
+    const path = join(projectSessionsDir(cwd), `${session.id}.jsonl`)
+    const entered = Promise.withResolvers<void>()
+    const release = Promise.withResolvers<void>()
+    const append = fs.appendFile
+    const failure = new Error("ENOSPC: close transcript")
+    const write = spyOn(fs, "appendFile").mockImplementation(async (...args) => {
+      entered.resolve()
+      await release.promise
+      if (fail) throw failure
+      return append(...args)
+    })
+    let closing: Promise<PromiseSettledResult<void>[]> | undefined
+    try {
+      session.setTitle("Pending close")
+      await entered.promise
+      const first = session.closePersistence()
+      let closed = false
+      const second = session.closePersistence().finally(() => {
+        closed = true
+      })
+      closing = Promise.allSettled([first, second])
+      await Bun.sleep(0)
+      expect(closed).toBe(false)
+      expect(() => SessionWriter.acquire(path)).toThrow("already open")
+      release.resolve()
+      const results = await closing
+      expect(results.map((result) => result.status)).toEqual(
+        fail ? ["rejected", "rejected"] : ["fulfilled", "fulfilled"],
+      )
+      for (const result of results) {
+        if (result.status !== "rejected") continue
+        expect(result.reason).toBe(session.persistenceError)
+        expect(session.persistenceError?.cause).toBe(failure)
+      }
+      SessionWriter.acquire(path).close()
+    } finally {
+      release.resolve()
+      await closing
+      write.mockRestore()
+      await session.close()
+    }
+  })
+})
+
+test("manual compaction preserves the original persistence failure instead of reporting interruption", async () => {
+  await fixture(async (cwd) => {
+    const provider = new ScriptedProvider([])
+    const session = create(cwd, provider)
+    await session.flushPersistence()
+    const write = spyOn(fs, "appendFile").mockRejectedValue(new Error("ENOSPC: compaction transcript"))
+    try {
+      session.setTitle("Pending compaction")
+      await expect(session.compact()).rejects.toThrow("ENOSPC")
+      expect(provider.requests).toHaveLength(0)
+      expect(session.send({ text: "Try again", images: [] })).toBe(false)
+      await expect(session.close()).rejects.toThrow("ENOSPC")
+    } finally {
+      write.mockRestore()
+      await session.close()
+    }
+  })
+})
+
 test("shutdown drains an in-flight reset before releasing ownership and refuses new work", async () => {
   await fixture(async (cwd) => {
     const session = create(cwd, new ScriptedProvider([]))

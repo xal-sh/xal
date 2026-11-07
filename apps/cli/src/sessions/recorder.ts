@@ -98,6 +98,7 @@ export class SessionRecorder {
   private queue: Promise<void> = Promise.resolve()
   private writer: SessionWriter | undefined
   private closed = false
+  private closing: Promise<void> | undefined
   private failure: Error | undefined
 
   constructor(private readonly onError: (message: string) => void) {}
@@ -111,14 +112,16 @@ export class SessionRecorder {
   }
 
   start(meta: SessionMeta, cwd: string): void {
-    if (this.path || this.pending) throw new Error("close the current session recorder before starting another")
+    if (this.path || this.pending || this.closing)
+      throw new Error("close the current session recorder before starting another")
     this.pending = { meta, cwd }
     this.closed = false
     this.failure = undefined
   }
 
   attach(writer: SessionWriter): void {
-    if (this.path || this.pending) throw new Error("close the current session recorder before attaching another")
+    if (this.path || this.pending || this.closing)
+      throw new Error("close the current session recorder before attaching another")
     this.writer = writer.transfer()
     this.path = this.writer.path
     this.closed = false
@@ -136,17 +139,21 @@ export class SessionRecorder {
   }
 
   async close(): Promise<void> {
+    if (this.closing) return this.closing
     if (this.closed) return
     this.closed = true
-    try {
-      await this.queue
-      if (this.failure) throw this.failure
-    } finally {
-      this.writer?.close()
-      this.writer = undefined
-      this.path = undefined
-      this.pending = undefined
-    }
+    this.closing = this.queue
+      .then(() => {
+        if (this.failure) throw this.failure
+      })
+      .finally(() => {
+        this.writer?.close()
+        this.writer = undefined
+        this.path = undefined
+        this.pending = undefined
+        this.closing = undefined
+      })
+    return this.closing
   }
 
   async fork(target: ForkTarget, cwd: string): Promise<{ path: string; corrections: AgentEvent[] }> {
