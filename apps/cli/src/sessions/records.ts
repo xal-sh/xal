@@ -554,6 +554,11 @@ export function parseRecord(line: string): SessionRecord {
       if (item) return { type: "item", item }
       break
     }
+    case "prompt_state": {
+      const id = asString(raw.id)
+      if (id && isJsonObject(raw.state)) return { type: "prompt_state", id, state: raw.state }
+      break
+    }
     case "event": {
       const event = parseEvent(raw.event)
       if (event) return { type: "event", event }

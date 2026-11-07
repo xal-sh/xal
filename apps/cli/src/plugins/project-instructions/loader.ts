@@ -18,9 +18,9 @@ export interface ProjectInstructions {
   skipped: string[]
 }
 
-export async function readOptional(path: string): Promise<string | undefined> {
+export async function readOptional(path: string, signal?: AbortSignal): Promise<string | undefined> {
   try {
-    return await readFile(path, "utf8")
+    return await readFile(path, { encoding: "utf8", signal })
   } catch (error) {
     if (isMissingPathError(error)) return undefined
     throw error
@@ -45,7 +45,11 @@ function utf8Prefix(content: string, maxBytes: number): string {
   return decoder.decode(bytes.subarray(0, end))
 }
 
-export async function loadProjectInstructions(cwd: string, maxBytes: number): Promise<ProjectInstructions> {
+export async function loadProjectInstructions(
+  cwd: string,
+  maxBytes: number,
+  signal?: AbortSignal,
+): Promise<ProjectInstructions> {
   const resolvedCwd = resolve(cwd)
   const root = await findProjectRoot(resolvedCwd)
   const sources: ProjectInstructionSource[] = []
@@ -54,7 +58,7 @@ export async function loadProjectInstructions(cwd: string, maxBytes: number): Pr
 
   for (const directory of directoriesToRoot(root, resolvedCwd)) {
     const path = join(directory, "AGENTS.md")
-    const content = await readOptional(path)
+    const content = await readOptional(path, signal)
     if (content === undefined || content.trim().length === 0) continue
 
     const bytes = encoder.encode(content)

@@ -10,6 +10,7 @@ import {
   type HistoryItem,
 } from "../agent/history"
 import { isMessageId } from "../agent/message-id"
+import type { JsonObject } from "../lib/json"
 import { projectSessionsDir, sessionsDir } from "../config/paths"
 import { isRetiredEvent, parseRecord } from "./records"
 import { titleFromEvents, titleFromInput } from "./title"
@@ -105,6 +106,7 @@ async function summarize(path: string): Promise<SessionSummary | undefined> {
         generatedTitle ??= titleFromInput(message.text, message.imageCount)
         continue
       }
+      if (record.type === "prompt_state") continue
       const event = record.event
       if (isRetiredEvent(event)) continue
       if (event.type === "session_title_changed") recordedTitle = event.title
@@ -179,6 +181,7 @@ export async function loadSession(path: string): Promise<LoadedSession | undefin
   const redos: ConversationRedo[] = []
   const seenMessageIds = new Set<string>()
   const events: AgentEvent[] = []
+  const promptStates = new Map<string, JsonObject>()
   let pendingUserMessage: Extract<AgentEvent, { type: "user_message" }> | undefined
   let pendingShell: Extract<AgentEvent, { type: "shell_finished" }> | undefined
 
@@ -253,6 +256,10 @@ export async function loadSession(path: string): Promise<LoadedSession | undefin
         continue
       }
 
+      if (record.type === "prompt_state") {
+        promptStates.set(record.id, record.state)
+        continue
+      }
       const event = record.event
       if (isRetiredEvent(event)) continue
       if (event.type === "user_message" && isMessageId(event.messageId)) {
@@ -281,6 +288,7 @@ export async function loadSession(path: string): Promise<LoadedSession | undefin
         checkpoints = redo.state.checkpoints
       }
       if (event.type === "tool_call_updated" && !updateToolCall(items, event)) return undefined
+      if (event.type === "workspace_changed") promptStates.clear()
       events.push(event)
     }
   } catch {
@@ -295,7 +303,14 @@ export async function loadSession(path: string): Promise<LoadedSession | undefin
       return undefined
     }
   }
-  return { meta, items, checkpoints, events, title: titleFromEvents(events) }
+  return {
+    meta,
+    items,
+    checkpoints,
+    events,
+    ...(promptStates.size ? { promptStates: Object.fromEntries(promptStates) } : {}),
+    title: titleFromEvents(events),
+  }
 }
 
 export async function listSessions(cwd?: string): Promise<SessionSummary[]> {

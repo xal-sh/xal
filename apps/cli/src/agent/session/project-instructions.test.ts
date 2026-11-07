@@ -1,0 +1,192 @@
+import { afterAll, afterEach, beforeAll, beforeEach, expect, test } from "bun:test"
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { dirname, join } from "node:path"
+import { projectSessionsDir } from "../../config/paths"
+import { registerHook, removeHooks } from "../../hooks/registry"
+import { setUserRules } from "../../permissions/rules"
+import { codeModeTool } from "../../plugins/code-mode/tool"
+import { readTool } from "../../plugins/files/read"
+import { registerProjectInstructions } from "../../plugins/project-instructions/plugin"
+import { parseRecord } from "../../sessions/records"
+import { loadSession } from "../../sessions/store"
+import { registerTool, unregisterTool } from "../../tools/registry"
+import { disposeToolSession, registerToolSessionDisposer } from "../../tools/session"
+import { registerPrompt } from "../prompt/registry"
+import {
+  completedRound,
+  runSettledTurn,
+  ScriptedProvider,
+  setupAgentSessionTests,
+  toolRound,
+  type AgentSession,
+  type AgentSessionConstructor,
+  type AgentSessionTestHarness,
+} from "./test-support"
+
+let harness: AgentSessionTestHarness
+let Session: AgentSessionConstructor
+let root: string
+const sessions: AgentSession[] = []
+
+beforeAll(async () => {
+  harness = await setupAgentSessionTests("instruction-continuity-")
+  Session = (await import("./session")).AgentSession
+  registerProjectInstructions({
+    config: {},
+    registerPrompt,
+    registerHook: (hook) => registerHook("project-instructions", 0, 0, hook),
+    registerToolSessionDisposer,
+  })
+  for (const tool of [readTool, codeModeTool]) registerTool(tool)
+  setUserRules({ allow: ["read(*)", "code_mode(*)"] })
+})
+
+beforeEach(async () => {
+  root = await realpath(await mkdtemp(join(tmpdir(), "xal-instruction-workspaces-")))
+  for (const name of ["checkout", "worktree"]) {
+    const cwd = join(root, name)
+    await mkdir(join(cwd, "src"), { recursive: true })
+    await writeFile(join(cwd, ".git"), "gitdir: ../git")
+    await writeFile(join(cwd, "AGENTS.md"), `${name} root rules`)
+    await writeFile(join(cwd, "src", "AGENTS.md"), `${name} nested rules`)
+    await writeFile(join(cwd, "src", "file.ts"), "export {}\n")
+  }
+})
+
+afterEach(async () => {
+  for (const session of sessions.splice(0)) {
+    await session.flushPersistence()
+    disposeToolSession(session.id)
+    session.disposeAsyncDelivery()
+  }
+  await rm(root, { recursive: true, force: true })
+})
+
+afterAll(async () => {
+  for (const tool of [readTool, codeModeTool]) unregisterTool(tool)
+  removeHooks(0)
+  setUserRules({})
+  await harness.cleanup()
+})
+
+function create(provider: ScriptedProvider, workspace = "checkout", persist = false, task = false): AgentSession {
+  const session = new Session({
+    provider,
+    profileId: "test-profile",
+    model: "test-model",
+    cwd: join(root, workspace),
+    persist,
+    kind: task ? "subagent" : "primary",
+    trackUndoPrompts: false,
+  })
+  sessions.push(session)
+  return session
+}
+
+test("prepares isolated primary and worktree task instructions, including Code Mode reads and workspace changes", async () => {
+  const originalCwd = process.cwd()
+  const primary = new ScriptedProvider([
+    toolRound("read", "read", { file_path: "src/file.ts" }),
+    completedRound("done"),
+    completedRound("switched"),
+  ])
+  const task = new ScriptedProvider([
+    toolRound("read", "code_mode", { code: 'emit(await callTool("read", {file_path: "src/file.ts"}));' }),
+    completedRound("done"),
+  ])
+  const session = create(primary)
+  const child = create(task, "worktree", false, true)
+  const outcomes = await Promise.all([
+    runSettledTurn(session, { text: "Inspect", images: [] }),
+    runSettledTurn(child, { text: "Inspect", images: [] }),
+  ])
+  expect(outcomes.map((outcome) => outcome.status)).toEqual(["completed", "completed"])
+  expect(primary.requests[0]?.instructions).toContain("checkout root rules")
+  expect(primary.requests[0]?.instructions).not.toContain("nested rules")
+  expect(primary.requests[1]?.instructions).toContain("checkout nested rules")
+  expect(primary.requests[1]?.instructions).not.toContain("worktree root rules")
+  expect(task.requests[0]?.instructions).toContain("worktree root rules")
+  expect(task.requests[1]?.instructions).toContain("worktree nested rules")
+  expect(task.requests[1]?.instructions).not.toContain("checkout root rules")
+  session.changeWorkspace(join(root, "worktree"))
+  expect((await runSettledTurn(session, { text: "Continue", images: [] })).status).toBe("completed")
+  expect(primary.requests[2]?.instructions).toContain("worktree root rules")
+  expect(primary.requests[2]?.instructions).not.toContain("checkout root rules")
+  expect(primary.requests[2]?.instructions).not.toContain("nested rules")
+  expect(process.cwd()).toBe(originalCwd)
+})
+
+test("persists discovery through compaction, fork and resume, reloads contents, and resets it for new sessions", async () => {
+  const provider = new ScriptedProvider([
+    toolRound("read", "read", { file_path: "src/file.ts" }),
+    completedRound("done"),
+    completedRound("Compacted summary"),
+    completedRound("forked"),
+  ])
+  const session = create(provider, "checkout", true)
+  expect((await runSettledTurn(session, { text: "Inspect", images: [] })).status).toBe("completed")
+  expect(await session.compact()).toBe("compacted")
+  expect((await session.fork()).status).toBe("forked")
+  expect((await runSettledTurn(session, { text: "Continue", images: [] })).status).toBe("completed")
+  expect(provider.requests.at(-1)?.instructions).toContain("checkout nested rules")
+  await session.flushPersistence()
+  const cwd = join(root, "checkout")
+  const path = join(projectSessionsDir(cwd), `${session.id}.jsonl`)
+  const records = (await readFile(path, "utf8")).trim().split("\n").map(parseRecord)
+  expect(records.filter((record) => record.type === "prompt_state")).toHaveLength(2)
+  const loaded = await loadSession(path)
+  if (!loaded) throw new Error("missing persisted session")
+  expect(loaded.items.some((item) => item.type === "compaction")).toBe(true)
+  expect(loaded.promptStates?.project_instructions).toEqual({ cwd, root: cwd, paths: [join("src", "AGENTS.md")] })
+  disposeToolSession(session.id)
+  session.disposeAsyncDelivery()
+  await writeFile(join(cwd, "src", "AGENTS.md"), "Updated nested rules")
+  const resumedProvider = new ScriptedProvider([completedRound("resumed"), completedRound("new")])
+  const resumed = create(resumedProvider, "worktree", true)
+  expect(
+    resumed.resume({
+      session: loaded,
+      path,
+      cwd,
+      provider: resumedProvider,
+      profileId: "test-profile",
+      model: "test-model",
+      mode: "normal",
+      continueGoal: false,
+    }),
+  ).toBe(true)
+  expect((await runSettledTurn(resumed, { text: "Continue", images: [] })).status).toBe("completed")
+  expect(resumedProvider.requests[0]?.instructions).toContain("checkout root rules")
+  expect(resumedProvider.requests[0]?.instructions).toContain("Updated nested rules")
+  expect(resumedProvider.requests[0]?.instructions).not.toContain("worktree root rules")
+  expect(resumed.reset()).toBe(true)
+  expect((await runSettledTurn(resumed, { text: "Start over", images: [] })).status).toBe("completed")
+  expect(resumedProvider.requests[1]?.instructions).toContain("checkout root rules")
+  expect(resumedProvider.requests[1]?.instructions).not.toContain("Updated nested rules")
+})
+
+test("does not request a model response when prompt state cannot be persisted", async () => {
+  const directory = projectSessionsDir(join(root, "checkout"))
+  await mkdir(dirname(directory), { recursive: true })
+  await writeFile(directory, "not a directory")
+  const provider = new ScriptedProvider([completedRound("must not run")])
+  const session = create(provider, "checkout", true)
+  const result = await runSettledTurn(session, { text: "Inspect", images: [] })
+  expect(result.status).toBe("failed")
+  expect(provider.requests).toHaveLength(0)
+  await expect(session.flushPersistence()).rejects.toThrow("session recorder is unavailable")
+  sessions.splice(sessions.indexOf(session), 1)
+  disposeToolSession(session.id)
+  session.disposeAsyncDelivery()
+})
+
+test("does not request a model response when project instructions cannot be loaded", async () => {
+  const path = join(root, "checkout", "AGENTS.md")
+  await rm(path)
+  await mkdir(path)
+  const provider = new ScriptedProvider([completedRound("must not run")])
+  const result = await runSettledTurn(create(provider), { text: "Inspect", images: [] })
+  expect(result.status).toBe("failed")
+  expect(provider.requests).toHaveLength(0)
+})
