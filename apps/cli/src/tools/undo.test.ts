@@ -41,6 +41,32 @@ async function withGitWorkspace(run: (workspace: string, root: string) => Promis
   }
 }
 
+test("counts observed mutations separately from undo bookkeeping and invalidation", async () => {
+  await withGitWorkspace(async (workspace) => {
+    const tracked = join(workspace, "tracked.txt")
+    const undo = new WorkspaceUndo(workspace)
+    undo.markPrompt("message-1", "Observe changes")
+    await undo.trackInvalidation(async () => {})
+    await undo.trackPaths("write", [tracked], () => writeFile(tracked, "before\n"))
+    expect(undo.captureRevision).toBe(0)
+
+    await expect(
+      undo.trackPaths("edit", [tracked], async () => {
+        await writeFile(tracked, "partial\n")
+        throw new Error("partial failure")
+      }),
+    ).rejects.toThrow("partial failure")
+    expect(undo.captureRevision).toBe(1)
+
+    await undo.trackWorkspace("bash", () => git(workspace, ["add", "tracked.txt"]))
+    expect(undo.captureRevision).toBe(2)
+    await undo.trackWorkspace("bash", () =>
+      git(workspace, ["-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "updated"]),
+    )
+    expect(undo.captureRevision).toBe(3)
+  })
+})
+
 test("rewinds and reapplies targeted updates and creations transactionally", async () => {
   await withGitWorkspace(async (workspace) => {
     const tracked = join(workspace, "tracked.txt")

@@ -129,6 +129,21 @@ test.each(["no-op", "failed edit"])("still stops unchanged loops after a %s", as
   })
 })
 
+test.each(["background no-op", "outside failure"])("stops repeated undo invalidation from a %s", async (mode) => {
+  await withWorkspace(async (cwd) => {
+    const outside = join(tmpdir(), `xal-missing-${crypto.randomUUID()}.txt`)
+    const attempt = (id: string): ProviderRound =>
+      mode === "background no-op"
+        ? toolRound(id, "bash", { command: "", background: true })
+        : toolRound(id, "edit", { file_path: outside, old_string: "before", new_string: "after" })
+    const { outcome } = await run(cwd, [attempt("one"), attempt("two"), attempt("warning"), attempt("stop")])
+    expect(outcome).toMatchObject({
+      status: "failed",
+      error: expect.stringContaining(`repeated ${mode === "background no-op" ? "bash" : "edit"} tool calls`),
+    })
+  })
+})
+
 test.each(["direct", "code_mode"])("preserves %s denial history and warnings across edits", async (mode) => {
   await withWorkspace(async (cwd) => {
     setUserRules({ allow: ["*"], deny: ["read"] })

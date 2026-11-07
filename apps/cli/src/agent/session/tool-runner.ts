@@ -482,7 +482,7 @@ export class ToolCallRunner {
     }
     const scope = program ? this.toolScope(call, signal, toolLoops, update) : undefined
     const workspace = this.host.workspaceUndo()
-    const branch = workspace.branch
+    const revision = workspace.captureRevision
     try {
       const execute = (): Promise<ToolResult> =>
         isInteractiveTool(tool)
@@ -558,7 +558,8 @@ export class ToolCallRunner {
       output = redactText(`${TOOL_FAILED_PREFIX}${describeError(error)}`)
       failure = output
     } finally {
-      if (this.host.workspaceUndo() !== workspace || workspace.branch !== branch) toolLoops.workspaceChanged()
+      if (this.host.workspaceUndo() !== workspace || workspace.captureRevision !== revision)
+        toolLoops.workspaceChanged()
       const tail = updates.end()
       if (tail && !parentCallId) this.host.emit({ type: "tool_updated", callId: call.callId, text: tail })
     }
