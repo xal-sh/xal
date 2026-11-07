@@ -21,6 +21,13 @@ pub struct NativeEditRequest {
     pub expected: Option<String>,
 }
 
+#[napi(object)]
+pub struct NativeEditOutput {
+    pub output: Utf16String,
+    pub content_hash: String,
+    pub previous_content_hash: String,
+}
+
 struct Replacement {
     old: Vec<u16>,
     new: Vec<u16>,
@@ -294,8 +301,8 @@ pub struct EditTask {
 }
 
 impl Task for EditTask {
-    type Output = NativeFileToolOutput;
-    type JsValue = NativeFileToolOutput;
+    type Output = NativeEditOutput;
+    type JsValue = NativeEditOutput;
 
     fn compute(&mut self) -> napi::Result<Self::Output> {
         let metadata =
@@ -319,8 +326,9 @@ impl Task for EditTask {
                     self.display_path
                 ))
             })?;
+        let previous_content_hash = content_hash(previous_text.as_bytes());
         if let Some(expected) = self.expected.as_deref()
-            && content_hash(previous_text.as_bytes()) != expected
+            && previous_content_hash != expected
         {
             return Err(failed(format!(
                 "{} changed since it was read. Read it again before replacing every occurrence.",
@@ -372,7 +380,7 @@ impl Task for EditTask {
         let diff = unified_diff(&previous, &next);
         let bytes = utf16_lossy(&next);
         fs::write(&self.path, bytes.as_bytes()).map_err(io_error)?;
-        Ok(NativeFileToolOutput {
+        Ok(NativeEditOutput {
             output: with_diff(
                 format!(
                     "Updated {} (+{} -{})",
@@ -382,6 +390,7 @@ impl Task for EditTask {
             )
             .into(),
             content_hash: content_hash(bytes.as_bytes()),
+            previous_content_hash,
         })
     }
 

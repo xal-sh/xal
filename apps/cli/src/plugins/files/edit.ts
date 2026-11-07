@@ -2,7 +2,7 @@ import { modeDefinition } from "../../permissions/modes"
 import { asBoolean, asString, isRecord } from "../../lib/json"
 import { displayPath, resolveFilePath } from "../../lib/path"
 import { nativeEditFile, type NativeEditOperation } from "../../native"
-import { knownFileState, recordFileState } from "../../tools/file-state"
+import { advanceFileState, knownFileState } from "../../tools/file-state"
 import type { Tool } from "../../tools/types"
 import { pathPermission } from "./permission"
 
@@ -48,7 +48,7 @@ function editsOf(args: Record<string, unknown>): NativeEditOperation[] {
 export const editTool: Tool = {
   name: "edit",
   description:
-    "Replace exact text in an existing file and return a diff of the change. Pass old_string and new_string for one replacement, or edits for several in the same file: every old_string is matched against the file as it was before the call, edits must not overlap, and the file is only written when every edit applies. old_string must match the file text exactly, including whitespace and indentation, and must occur exactly once unless replace_all is true; the call fails with a corrective hint otherwise. replace_all additionally requires that the file was read in this session and has not changed since. Paths are absolute or relative to the working directory.",
+    "Replace exact text in an existing file and return a diff of the change. Pass old_string and new_string for one replacement, or edits for several in the same file: every old_string is matched against the file as it was before the call, edits must not overlap, and the file is only written when every edit applies. old_string must match the file text exactly, including whitespace and indentation, and must occur exactly once unless replace_all is true; the call fails with a corrective hint otherwise. replace_all additionally requires that the file was read in this session and has not changed since. A targeted edit does not count as reading the file for write or replace_all. Paths are absolute or relative to the working directory.",
   parameters: {
     type: "object",
     properties: {
@@ -96,7 +96,7 @@ export const editTool: Tool = {
       edits,
       ...(expected === undefined ? {} : { expected }),
     })
-    if (resolved) recordFileState(ctx.sessionId, resolved, result.contentHash)
+    if (resolved) advanceFileState(ctx.sessionId, resolved, result.previousContentHash, result.contentHash)
     return { output: result.output }
   },
 }

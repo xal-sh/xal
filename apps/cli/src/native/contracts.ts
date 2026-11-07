@@ -80,6 +80,10 @@ export interface NativeFileToolOutput extends NativeToolOutput {
   contentHash: string
 }
 
+export interface NativeEditOutput extends NativeFileToolOutput {
+  previousContentHash: string
+}
+
 export interface NativeReadOutput extends NativeToolOutput {
   contentHash?: string
   coverage?: {
@@ -365,6 +369,13 @@ export function parseFileToolOutput(value: unknown, message: string): NativeFile
   const contentHash = asString(value.contentHash)
   if (output === undefined || contentHash === undefined) throw new Error(message)
   return { output, contentHash }
+}
+
+export function parseEditOutput(value: unknown): NativeEditOutput {
+  if (!isRecord(value)) throw new Error("native edit returned an invalid value")
+  const previousContentHash = asString(value.previousContentHash)
+  if (!previousContentHash) throw new Error("native edit returned an invalid value")
+  return { ...parseFileToolOutput(value, "native edit returned an invalid value"), previousContentHash }
 }
 
 export function parseReadOutput(value: unknown): NativeReadOutput {
