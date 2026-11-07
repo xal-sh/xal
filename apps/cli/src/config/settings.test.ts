@@ -115,6 +115,7 @@ test("trusted project settings override user settings with recursive object merg
       verification: { checks: {}, gate: false },
       typesafeAI: { enabled: false },
       agents: { maxConcurrent: 4, timeoutMinutes: 0, maxTurns: 24 },
+      providerTimeouts: { firstEventMs: 600_000, idleMs: 300_000 },
       redaction: {
         values: [],
         environment: ["MY_PROJECT_TOKEN"],
@@ -159,6 +160,7 @@ test("does not read malformed project settings until the project is trusted", as
       verification: { checks: {}, gate: false },
       typesafeAI: { enabled: false },
       agents: { maxConcurrent: 4, timeoutMinutes: 0, maxTurns: 24 },
+      providerTimeouts: { firstEventMs: 600_000, idleMs: 300_000 },
       redaction: { values: [], environment: [] },
       pluginConfig: {},
       thinking: {},
@@ -241,6 +243,7 @@ test("saves only user settings securely while retaining project overrides in mem
       verification: { checks: {}, gate: false },
       typesafeAI: { enabled: false },
       agents: { maxConcurrent: 4, timeoutMinutes: 0, maxTurns: 24 },
+      providerTimeouts: { firstEventMs: 600_000, idleMs: 300_000 },
       redaction: { values: [], environment: [] },
       pluginConfig: { userPlugin: { enabled: true } },
       thinking: {},
@@ -270,6 +273,67 @@ test("accepts a disabled task-agent runtime limit and rejects negative values", 
 
     await writeJson(config, { agents: { timeoutMinutes: -1 } })
     await expect(loadSettings()).rejects.toThrow("agents.timeoutMinutes must be an integer between 0 and 60")
+  })
+})
+
+test("provider timeouts default independently and accept inclusive bounds", async () => {
+  await withSettingsEnvironment(async ({ home }) => {
+    expect((await loadSettings()).providerTimeouts).toEqual({ firstEventMs: 600_000, idleMs: 300_000 })
+    const config = join(home, "config.json")
+    await writeJson(config, { providerTimeouts: {} })
+    expect((await loadSettings()).providerTimeouts).toEqual({ firstEventMs: 600_000, idleMs: 300_000 })
+    await writeJson(config, { providerTimeouts: { firstEventMs: 1_000 } })
+    expect((await loadSettings()).providerTimeouts).toEqual({ firstEventMs: 1_000, idleMs: 300_000 })
+    await writeJson(config, { providerTimeouts: { idleMs: 1_800_000 } })
+    expect((await loadSettings()).providerTimeouts).toEqual({ firstEventMs: 600_000, idleMs: 1_800_000 })
+    await saveSettings({ providerTimeouts: { firstEventMs: 1_800_000, idleMs: 1_000 } })
+    expect((await loadSettings()).providerTimeouts).toEqual({ firstEventMs: 1_800_000, idleMs: 1_000 })
+  })
+})
+
+test("provider timeouts merge trusted overrides and round-trip user saves", async () => {
+  await withSettingsEnvironment(async ({ home, project }) => {
+    const config = join(home, "config.json")
+    await writeJson(config, { providerTimeouts: { firstEventMs: 700_000, idleMs: 400_000 } })
+    await writeJson(projectConfigPath(project), { providerTimeouts: { idleMs: 500_000 } })
+    expect((await loadSettings()).providerTimeouts).toEqual({ firstEventMs: 700_000, idleMs: 400_000 })
+    await writeJson(join(home, "trust.json"), [project])
+    expect((await loadSettings()).providerTimeouts).toEqual({ firstEventMs: 700_000, idleMs: 500_000 })
+    await saveSettings({ providerTimeouts: { firstEventMs: 800_000, idleMs: 600_000 } })
+    expect(settings().providerTimeouts).toEqual({ firstEventMs: 800_000, idleMs: 500_000 })
+    expect(JSON.parse(await readFile(config, "utf8"))).toEqual({
+      providerTimeouts: { firstEventMs: 800_000, idleMs: 600_000 },
+    })
+    expect((await loadSettings()).providerTimeouts).toEqual({ firstEventMs: 800_000, idleMs: 500_000 })
+  })
+})
+
+test("rejects malformed provider timeouts without saving invalid values", async () => {
+  await withSettingsEnvironment(async ({ home }) => {
+    const config = join(home, "config.json")
+    for (const providerTimeouts of [null, true, 1_000, "slow", []]) {
+      await writeJson(config, { providerTimeouts })
+      await expect(loadSettings()).rejects.toThrow("providerTimeouts must be an object")
+    }
+    for (const field of ["unknown", ""]) {
+      await writeJson(config, { providerTimeouts: { [field]: 1_000 } })
+      await expect(loadSettings()).rejects.toThrow(`providerTimeouts.${field} is not supported`)
+    }
+    for (const field of ["firstEventMs", "idleMs"]) {
+      for (const value of [null, true, "1000", [], {}, 0, -1, 999, 1_800_001, 1_000.5]) {
+        await writeJson(config, { providerTimeouts: { [field]: value } })
+        await expect(loadSettings()).rejects.toThrow(
+          `providerTimeouts.${field} must be an integer between 1000 and 1800000`,
+        )
+      }
+    }
+    await writeJson(config, {})
+    await loadSettings()
+    await expect(saveSettings({ providerTimeouts: { firstEventMs: 0, idleMs: 1_000 } })).rejects.toThrow(
+      "providerTimeouts.firstEventMs must be an integer between 1000 and 1800000",
+    )
+    expect(JSON.parse(await readFile(config, "utf8"))).toEqual({})
+    expect(settings().providerTimeouts).toEqual({ firstEventMs: 600_000, idleMs: 300_000 })
   })
 })
 

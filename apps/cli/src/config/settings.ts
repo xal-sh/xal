@@ -33,6 +33,11 @@ export interface AgentSettings {
   maxTurns: number
 }
 
+export interface ProviderTimeoutSettings {
+  firstEventMs: number
+  idleMs: number
+}
+
 export interface GoalSettings {
   evaluatorModels: Record<string, string>
 }
@@ -50,6 +55,7 @@ export interface Settings {
   verification: VerificationSettings
   redaction: RedactionSettings
   agents: AgentSettings
+  providerTimeouts: ProviderTimeoutSettings
   pluginConfig: Record<string, Record<string, unknown>>
   thinking: Record<string, Record<string, ThinkingEffort>>
   contextWindows: Record<string, Record<string, number>>
@@ -58,6 +64,7 @@ export interface Settings {
 }
 
 const AGENT_DEFAULTS: AgentSettings = { maxConcurrent: 4, timeoutMinutes: 0, maxTurns: 24 }
+const PROVIDER_TIMEOUT_DEFAULTS: ProviderTimeoutSettings = { firstEventMs: 600_000, idleMs: 300_000 }
 
 let current: Settings = {
   plugins: [],
@@ -68,6 +75,7 @@ let current: Settings = {
   verification: { checks: {}, gate: false },
   redaction: { values: [], environment: [] },
   agents: { ...AGENT_DEFAULTS },
+  providerTimeouts: { ...PROVIDER_TIMEOUT_DEFAULTS },
   pluginConfig: {},
   thinking: {},
   contextWindows: {},
@@ -222,6 +230,9 @@ function parseSettings(raw: Record<string, unknown>): Settings {
   }
   const redaction = sectionRecord(raw, "redaction")
   const agents = sectionRecord(raw, "agents")
+  const providerTimeouts = sectionRecord(raw, "providerTimeouts")
+  const unknownTimeout = Object.keys(providerTimeouts).find((key) => key !== "firstEventMs" && key !== "idleMs")
+  if (unknownTimeout !== undefined) throw new Error(`providerTimeouts.${unknownTimeout} is not supported`)
   const pluginConfig: Record<string, Record<string, unknown>> = {}
   if (isRecord(raw.pluginConfig)) {
     for (const [name, value] of Object.entries(raw.pluginConfig)) {
@@ -292,6 +303,22 @@ function parseSettings(raw: Record<string, unknown>): Settings {
         60,
       ),
       maxTurns: strictBoundedInteger(agents.maxTurns, "agents.maxTurns", AGENT_DEFAULTS.maxTurns, 1, 100),
+    },
+    providerTimeouts: {
+      firstEventMs: strictBoundedInteger(
+        providerTimeouts.firstEventMs,
+        "providerTimeouts.firstEventMs",
+        PROVIDER_TIMEOUT_DEFAULTS.firstEventMs,
+        1_000,
+        1_800_000,
+      ),
+      idleMs: strictBoundedInteger(
+        providerTimeouts.idleMs,
+        "providerTimeouts.idleMs",
+        PROVIDER_TIMEOUT_DEFAULTS.idleMs,
+        1_000,
+        1_800_000,
+      ),
     },
     pluginConfig,
     thinking,

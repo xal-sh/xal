@@ -8,6 +8,7 @@ import {
 } from "../../profiler/profiler"
 import { ContextOverflowError, isProviderError, ProviderError } from "../../providers/errors"
 import type { Provider, ProviderOutputItem, StreamRequest, Usage } from "../../providers/types"
+import { streamWithWatchdog } from "../../providers/stream-watchdog"
 import { createRedactedStream, type RedactedStream } from "../../secrets/redactor"
 import type { AgentEvent } from "../events"
 import { OutputLoopDetector, type OutputLoop } from "./loop-detection"
@@ -197,7 +198,7 @@ async function consumeStream(
 
   const rawReasoning = createRedactedStream()
   profileProviderRequestShape(round.profile, request)
-  for await (const event of provider.stream(host.profileId(), request)) {
+  for await (const event of streamWithWatchdog(provider, host.profileId(), request)) {
     if (!round.received) profileProviderFirstEvent(round.profile, event.type)
     round.received = true
     switch (event.type) {

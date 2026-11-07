@@ -34,6 +34,7 @@ test("makes the current writable mode override stale plan-mode context", () => {
     typesafeAI: { enabled: false },
     redaction: { values: [], environment: [] },
     agents: { maxConcurrent: 4, timeoutMinutes: 0, maxTurns: 24 },
+    providerTimeouts: { firstEventMs: 600_000, idleMs: 300_000 },
     pluginConfig: {},
     thinking: {},
     contextWindows: {},

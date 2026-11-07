@@ -31,6 +31,7 @@ function settings(plugins: string[] = [], pluginConfig: Settings["pluginConfig"]
     typesafeAI: { enabled: false },
     redaction: { values: [], environment: [] },
     agents: { maxConcurrent: 4, timeoutMinutes: 0, maxTurns: 24 },
+    providerTimeouts: { firstEventMs: 600_000, idleMs: 300_000 },
     pluginConfig,
     thinking: {},
     contextWindows: {},

@@ -12,6 +12,7 @@ import type { Provider, StreamRequest, Usage } from "./types"
 import { findModel } from "./catalog"
 import { estimateRequestTokens } from "./request-size"
 import { ContextOverflowError, OutputLimitError } from "./errors"
+import { streamWithWatchdog } from "./stream-watchdog"
 
 export interface StreamedTextRequest {
   provider: Provider
@@ -76,7 +77,7 @@ export async function collectStreamedText(input: StreamedTextRequest): Promise<S
     profileProviderRequestShape(profile, request)
     request.signal?.throwIfAborted()
     input.onRequestStarted?.()
-    for await (const event of input.provider.stream(input.profileId, request)) {
+    for await (const event of streamWithWatchdog(input.provider, input.profileId, request)) {
       if (!received) {
         received = true
         profileProviderFirstEvent(profile, event.type)
