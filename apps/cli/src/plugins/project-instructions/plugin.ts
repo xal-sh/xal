@@ -21,6 +21,12 @@ interface InstructionSession {
   sources: Map<string, string>
 }
 
+interface InstructionLoad {
+  cwd: string
+  value?: InstructionSession
+  ready: Promise<InstructionSession>
+}
+
 function maxBytes(config: Record<string, unknown>): number {
   if (!("maxBytes" in config)) return DEFAULT_MAX_BYTES
   const configured = asNumber(config.maxBytes)
@@ -77,15 +83,34 @@ export function registerProjectInstructions(
   ctx: Pick<PluginContext, "config" | "registerPrompt" | "registerHook" | "registerToolSessionDisposer">,
 ): void {
   const budget = maxBytes(ctx.config)
-  const sessions = new Map<string, InstructionSession>()
+  const sessions = new Map<string, InstructionLoad>()
+  function getSession(
+    sessionId: string,
+    cwd: string,
+    signal: AbortSignal,
+    state?: JsonObject,
+  ): Promise<InstructionSession> {
+    const existing = sessions.get(sessionId)
+    if (existing?.cwd === cwd) return existing.ready
+    const loading: InstructionLoad = {
+      cwd,
+      ready: loadSession(cwd, budget, state, signal)
+        .then((session) => {
+          loading.value = session
+          return session
+        })
+        .catch((error: unknown) => {
+          if (sessions.get(sessionId) === loading) sessions.delete(sessionId)
+          throw error
+        }),
+    }
+    sessions.set(sessionId, loading)
+    return loading.ready
+  }
   ctx.registerPrompt({
     id: "project_instructions",
     async prepare(prompt, state, signal) {
-      let session = sessions.get(prompt.sessionId)
-      if (!session || session.cwd !== prompt.cwd) {
-        session = await loadSession(prompt.cwd, budget, state, signal)
-        sessions.set(prompt.sessionId, session)
-      }
+      const session = await getSession(prompt.sessionId, prompt.cwd, signal, state)
       return {
         cwd: session.cwd,
         root: session.root,
@@ -93,7 +118,7 @@ export function registerProjectInstructions(
       }
     },
     text(prompt) {
-      const session = sessions.get(prompt.sessionId)
+      const session = sessions.get(prompt.sessionId)?.value
       if (!session || session.cwd !== prompt.cwd) return ""
       return [session.prompt, renderNestedInstructions(session.root, session.sources, budget)]
         .filter(Boolean)
@@ -106,11 +131,10 @@ export function registerProjectInstructions(
       if ((input.tool !== "read" && input.tool !== "edit" && input.tool !== "write") || toolFailed(input.output)) {
         return undefined
       }
-      const session = sessions.get(hookCtx.session.id)
       const filePath = asString(input.args.file_path)
-      if (session?.cwd === hookCtx.session.cwd && filePath) {
-        await discoverNested(session, resolveFilePath(filePath, hookCtx.session.cwd), hookCtx.signal)
-      }
+      if (!filePath) return undefined
+      const session = await getSession(hookCtx.session.id, hookCtx.session.cwd, hookCtx.signal)
+      await discoverNested(session, resolveFilePath(filePath, hookCtx.session.cwd), hookCtx.signal)
       return undefined
     },
   })

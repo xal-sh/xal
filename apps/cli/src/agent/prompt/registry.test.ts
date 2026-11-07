@@ -35,6 +35,10 @@ test("prepares from a copy of saved state and propagates persistence failure and
   expect(states.get("prepared")).toEqual({ paths: ["src/AGENTS.md"] })
   await expect(prepareSystemPrompt(context, states, AbortSignal.abort(), async () => {})).rejects.toThrow()
   expect(prepares).toBe(1)
+  const controller = new AbortController()
+  await expect(
+    prepareSystemPrompt(context, states, controller.signal, async () => controller.abort()),
+  ).rejects.toThrow()
   expect(() => registerPrompt({ id: "prepared", prepare: async () => undefined, text: () => "" })).toThrow(
     "already has a preparation handler",
   )

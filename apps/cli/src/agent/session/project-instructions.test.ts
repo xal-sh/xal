@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, beforeEach, expect, test } from "bun:test"
+import { afterAll, afterEach, beforeAll, beforeEach, expect, spyOn, test } from "bun:test"
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
@@ -8,13 +8,16 @@ import { setUserRules } from "../../permissions/rules"
 import { codeModeTool } from "../../plugins/code-mode/tool"
 import { readTool } from "../../plugins/files/read"
 import { registerProjectInstructions } from "../../plugins/project-instructions/plugin"
+import { SessionRecorder } from "../../sessions/recorder"
 import { parseRecord } from "../../sessions/records"
 import { loadSession } from "../../sessions/store"
 import { registerTool, unregisterTool } from "../../tools/registry"
 import { disposeToolSession, registerToolSessionDisposer } from "../../tools/session"
+import type { SessionTool } from "../../tools/types"
 import { registerPrompt } from "../prompt/registry"
 import {
   completedRound,
+  round,
   runSettledTurn,
   ScriptedProvider,
   setupAgentSessionTests,
@@ -39,7 +42,7 @@ beforeAll(async () => {
     registerToolSessionDisposer,
   })
   for (const tool of [readTool, codeModeTool]) registerTool(tool)
-  setUserRules({ allow: ["read(*)", "code_mode(*)"] })
+  setUserRules({ allow: ["read(*)", "code_mode(*)", "instruction_switch(*)"] })
 })
 
 beforeEach(async () => {
@@ -115,6 +118,75 @@ test("prepares isolated primary and worktree task instructions, including Code M
   expect(primary.requests[2]?.instructions).not.toContain("checkout root rules")
   expect(primary.requests[2]?.instructions).not.toContain("nested rules")
   expect(process.cwd()).toBe(originalCwd)
+})
+
+test("discovers both nested paths after a workspace switch in the same tool batch", async () => {
+  const cwd = join(root, "worktree")
+  await mkdir(join(cwd, "lib"))
+  await writeFile(join(cwd, "lib", "AGENTS.md"), "Worktree library rules")
+  await writeFile(join(cwd, "lib", "file.ts"), "export {}\n")
+  const switchTool: SessionTool = {
+    name: "instruction_switch",
+    description: "Switch the test workspace",
+    parameters: { type: "object", properties: {}, additionalProperties: false },
+    sessionAware: true,
+    title: () => "Switch workspace",
+    readOnly: () => false,
+    async execute(_args, ctx) {
+      ctx.session.changeWorkspace(cwd)
+      return { output: "switched" }
+    },
+  }
+  registerTool(switchTool)
+  try {
+    const provider = new ScriptedProvider([
+      round([
+        { type: "item_done", item: { type: "tool_call", callId: "switch", name: switchTool.name, args: {} } },
+        {
+          type: "item_done",
+          item: { type: "tool_call", callId: "src", name: "read", args: { file_path: "src/file.ts" } },
+        },
+        {
+          type: "item_done",
+          item: { type: "tool_call", callId: "lib", name: "read", args: { file_path: "lib/file.ts" } },
+        },
+        { type: "done" },
+      ]),
+      completedRound("done"),
+    ])
+    expect((await runSettledTurn(create(provider), { text: "Switch and inspect", images: [] })).status).toBe(
+      "completed",
+    )
+    expect(provider.requests[1]?.instructions).toContain("worktree root rules")
+    expect(provider.requests[1]?.instructions).toContain("worktree nested rules")
+    expect(provider.requests[1]?.instructions).toContain("Worktree library rules")
+    expect(provider.requests[1]?.instructions).not.toContain("checkout root rules")
+  } finally {
+    unregisterTool(switchTool)
+  }
+})
+
+test("does not invoke the provider when cancelled during prompt state persistence", async () => {
+  const provider = new ScriptedProvider([
+    toolRound("read", "read", { file_path: "src/file.ts" }),
+    completedRound("must not run"),
+  ])
+  const session = create(provider, "checkout", true)
+  const save = SessionRecorder.prototype.promptState
+  const persistence = spyOn(SessionRecorder.prototype, "promptState").mockImplementation(async function (
+    this: SessionRecorder,
+    id,
+    state,
+  ) {
+    await save.call(this, id, state)
+    if (Array.isArray(state.paths) && state.paths.length > 0) session.interrupt()
+  })
+  try {
+    expect((await runSettledTurn(session, { text: "Inspect", images: [] })).status).toBe("interrupted")
+    expect(provider.requests).toHaveLength(1)
+  } finally {
+    persistence.mockRestore()
+  }
 })
 
 test("persists discovery through compaction, fork and resume, reloads contents, and resets it for new sessions", async () => {

@@ -52,6 +52,7 @@ export async function prepareSystemPrompt(
       if (state === undefined) continue
       if (!isJsonObject(state)) throw new Error(`prompt ${part.id} state must be a JSON object`)
       await save(part.id, state)
+      signal.throwIfAborted()
     }
   }
 }
