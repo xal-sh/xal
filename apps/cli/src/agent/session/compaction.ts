@@ -12,7 +12,7 @@ import { promptCacheKey } from "../../providers/cache"
 import { conversationForSummary, omitUserMessageImages, prepareConversation } from "../../providers/conversation"
 import { estimateConversationItemTokens, estimateRequestTokens } from "../../providers/request-size"
 import { collectStreamedText, StreamedTextAttemptError } from "../../providers/streamed-text"
-import { isProviderError } from "../../providers/errors"
+import { ContextOverflowError, isProviderError } from "../../providers/errors"
 import type { ConversationItem, Provider, StreamRequest, ThinkingEffort, UserMessageItem } from "../../providers/types"
 import type { AgentEvent, AgentState } from "../events"
 import { activeHistory, type CompactionItem, type HistoryItem } from "../history"
@@ -163,6 +163,7 @@ export interface SummaryRequest {
   signal: AbortSignal
   attempt?: number
   parentRequest?: StreamRequest
+  overflowRecovery?: string
   onRequestStarted?(): void
 }
 
@@ -173,23 +174,36 @@ function summaryRequest(instructions: string | undefined): UserMessageItem {
 
 export async function summarizeHistory(request: SummaryRequest): Promise<string> {
   const target = { provider: request.provider.id, model: request.historyModel ?? request.model }
-  const prompt = request.parentRequest ?? {
+  const info = await findModel(request.provider, request.profileId, request.model)
+  const prompt = (request.overflowRecovery === undefined ? request.parentRequest : undefined) ?? {
     instructions: SUMMARY_SYSTEM_INSTRUCTIONS,
     tools: [],
     cacheKey: promptCacheKey(target.model, SUMMARY_SYSTEM_INSTRUCTIONS, []),
   }
-  const input = prepareConversation(
-    [
-      ...(request.parentRequest?.input ?? conversationForSummary(activeHistory(request.history))),
-      summaryRequest(request.instructions),
-    ],
+  let input = prepareConversation(
+    request.parentRequest?.input ?? conversationForSummary(activeHistory(request.history)),
     target,
     request.imageInput,
   )
-  const info = await findModel(request.provider, request.profileId, request.model)
+  if (request.overflowRecovery !== undefined) {
+    const transcript = prepareConversation(conversationForSummary(activeHistory(request.history)), target, false)
+      .map((item) => JSON.stringify(item))
+      .join("\n")
+    input = [
+      {
+        type: "user_message",
+        text: `The full transcript exceeded the context window. Summarize only the evidence in this abridged transcript excerpt; explicitly identify missing context rather than guessing.\n\n${request.overflowRecovery}\n\n${truncateUtf8Middle(transcript, Math.min(32_000, info?.contextWindow ?? 32_000), "\n\n[Transcript middle omitted to fit context]\n\n")}`,
+        images: [],
+      },
+    ]
+  }
+  input.push(summaryRequest(request.instructions))
   const maxOutputTokens = Math.max(
     1,
-    Math.min(12_000, (info?.contextWindow ?? Infinity) - estimateRequestTokens({ ...prompt, input })),
+    Math.min(
+      request.overflowRecovery === undefined ? 12_000 : 4_000,
+      (info?.contextWindow ?? Infinity) - estimateRequestTokens({ ...prompt, input }),
+    ),
   )
   const result = await collectStreamedText({
     provider: request.provider,
@@ -413,6 +427,7 @@ export async function runCompaction(
     const target = await resolveCompactionTarget(provider, profileId, model)
     let summary: string | undefined
     let attempt = 1
+    let overflowRecovery = false
     while (summary === undefined) {
       try {
         summary = await summarizeHistory({
@@ -427,11 +442,28 @@ export async function runCompaction(
           instructions,
           imageInput: target.imageInput,
           parentRequest: host.buildRequestWithHistory(history, provider, model, target.thinking, signal),
+          ...(overflowRecovery ? { overflowRecovery: recovery } : {}),
           onRequestStarted: () => host.onRequestStarted(),
           signal,
           attempt,
         })
       } catch (error) {
+        if (
+          !overflowRecovery &&
+          !signal.aborted &&
+          error instanceof StreamedTextAttemptError &&
+          !error.receivedEvent &&
+          error.cause instanceof ContextOverflowError
+        ) {
+          overflowRecovery = true
+          attempt += 1
+          host.emit({
+            type: "error",
+            message:
+              "Full summary request exceeded the context window; retrying once with an abridged transcript. The complete transcript is archived.",
+          })
+          continue
+        }
         const retryable =
           trigger === "auto" &&
           attempt === 1 &&
@@ -445,7 +477,12 @@ export async function runCompaction(
       }
     }
 
-    summary = `${summary}\n\n${recovery}`
+    summary = `${overflowRecovery ? "This summary was generated from an abridged transcript and may omit earlier details.\n\n" : ""}${summary}\n\n${recovery}`
+    const info = await findModel(provider, profileId, model)
+    const replacementBudget = Math.min(
+      MAX_REPLACEMENT_REQUEST_TOKENS,
+      effectiveAutoCompactTokenLimit(info?.contextWindow) ?? Infinity,
+    )
     const baseCheckpoint: CompactionItem = {
       type: "compaction",
       strategy: "user_messages_v1",
@@ -456,16 +493,16 @@ export async function runCompaction(
     }
     const baseRequest = host.buildRequestWithHistory([baseCheckpoint], provider, model, undefined, signal)
     const baseEstimate = estimateRequestTokens(baseRequest)
-    if (baseEstimate > MAX_REPLACEMENT_REQUEST_TOKENS) {
+    if (baseEstimate > replacementBudget) {
       throw new ContextCompactionError(
-        `context replacement requires approximately ${baseEstimate} tokens before retaining user messages, exceeding the ${MAX_REPLACEMENT_REQUEST_TOKENS}-token replacement budget`,
+        `context replacement requires approximately ${baseEstimate} tokens before retaining user messages, exceeding the ${replacementBudget}-token replacement budget`,
       )
     }
-    const tail = retainRecentTools(before, Math.min(8_000, MAX_REPLACEMENT_REQUEST_TOKENS - baseEstimate))
+    const tail = retainRecentTools(before, Math.min(8_000, replacementBudget - baseEstimate))
     const tailTokens = tail.reduce((total, item) => total + estimateConversationItemTokens(item), 0)
     const retained = retainAuthoredUsers(
       before,
-      Math.min(MAX_RETAINED_USER_TOKENS, MAX_REPLACEMENT_REQUEST_TOKENS - baseEstimate - tailTokens),
+      Math.min(MAX_RETAINED_USER_TOKENS, replacementBudget - baseEstimate - tailTokens),
     )
     const retainedIds = new Set(retained.map((item) => item.messageId))
     const kept = new Set<ConversationItem>(tail)
@@ -488,11 +525,12 @@ export async function runCompaction(
     }
     const replacementRequest = host.buildRequestWithHistory([checkpoint], provider, model, undefined, signal)
     const replacementEstimate = estimateRequestTokens(replacementRequest)
-    if (replacementEstimate > MAX_REPLACEMENT_REQUEST_TOKENS) {
+    if (replacementEstimate > replacementBudget) {
       throw new ContextCompactionError(
-        `context replacement requires approximately ${replacementEstimate} tokens, exceeding the ${MAX_REPLACEMENT_REQUEST_TOKENS}-token replacement budget`,
+        `context replacement requires approximately ${replacementEstimate} tokens, exceeding the ${replacementBudget}-token replacement budget`,
       )
     }
+    signal.throwIfAborted()
     const after = activeHistory([checkpoint])
     host.observeCompaction({
       trigger,

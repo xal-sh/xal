@@ -1,10 +1,11 @@
 import { asNumber, asString, isJsonObject, isRecord, type JsonObject, type JsonValue } from "../lib/json"
 import { replayMatches, type ConversationTarget } from "./conversation"
-import { OutputLimitError, ProviderError } from "./errors"
+import { ContextOverflowError, isContextOverflow, OutputLimitError, ProviderError } from "./errors"
 import { parseToolArgs, sseEvents, streamError } from "./transport"
 import type { ConversationItem, ProviderOutputItem, ProviderReplay, StreamEvent, Usage } from "./types"
 
 export type WireSseEvent =
+  | { type: "output_started" }
   | { type: "output_text_delta"; delta: string }
   | { type: "reasoning_summary_delta"; delta: string }
   | { type: "reasoning_delta"; delta: string }
@@ -12,6 +13,7 @@ export type WireSseEvent =
   | { type: "terminal"; usage?: Usage }
   | { type: "failure"; message: string; retryable: boolean }
   | { type: "output_limit"; message: string }
+  | { type: "context_overflow"; message: string }
 
 interface ResponseStreamOptions {
   providerId: string
@@ -23,6 +25,7 @@ interface ResponseStreamOptions {
 const TRANSIENT_FAILURE = /overloaded|rate.?limit|server.?error|service.?unavailable|internal.?error|timeout|try again/i
 
 function failure(message: string, code?: string): WireSseEvent {
+  if (isContextOverflow(message, code)) return { type: "context_overflow", message }
   return { type: "failure", message, retryable: TRANSIENT_FAILURE.test(`${code ?? ""} ${message}`) }
 }
 
@@ -32,6 +35,9 @@ export function parseSseEvent(raw: unknown): WireSseEvent | undefined {
   if (!type) return undefined
 
   switch (type) {
+    case "response.output_item.added":
+    case "response.function_call_arguments.delta":
+      return { type: "output_started" }
     case "response.output_text.delta": {
       const delta = asString(raw.delta)
       if (!delta) return undefined
@@ -76,12 +82,13 @@ export function parseSseEvent(raw: unknown): WireSseEvent | undefined {
     case "response.failed": {
       const error = isRecord(raw.response) ? raw.response.error : undefined
       const message = isRecord(error) ? asString(error.message) : undefined
-      const code = isRecord(error) ? asString(error.code) : undefined
+      const code = isRecord(error) ? (asString(error.code) ?? asString(error.type)) : undefined
       return failure(message ?? "response failed", code)
     }
     case "error": {
       const nested = isRecord(raw.error) ? asString(raw.error.message) : undefined
-      const code = asString(raw.code) ?? (isRecord(raw.error) ? asString(raw.error.code) : undefined)
+      const code =
+        asString(raw.code) ?? (isRecord(raw.error) ? (asString(raw.error.code) ?? asString(raw.error.type)) : undefined)
       return failure(asString(raw.message) ?? nested ?? "stream error", code)
     }
     default:
@@ -193,12 +200,16 @@ export async function* responseEvents(response: Response, options: ResponseStrea
   if (!response.body) throw new ProviderError(`${options.providerName} response had no body`, { retryable: true })
 
   let terminal = false
+  let outputStarted = false
   try {
     for await (const raw of sseEvents(response.body)) {
       if (raw.done) continue
       const event = parseSseEvent(raw.data)
       if (!event) continue
       switch (event.type) {
+        case "output_started":
+          outputStarted = true
+          break
         case "output_text_delta":
           yield { type: "text_delta", text: event.delta }
           break
@@ -225,6 +236,9 @@ export async function* responseEvents(response: Response, options: ResponseStrea
           throw new ProviderError(event.message, { retryable: event.retryable })
         case "output_limit":
           throw new OutputLimitError(event.message)
+        case "context_overflow":
+          if (outputStarted) throw new ProviderError(event.message, { retryable: false })
+          throw new ContextOverflowError(event.message)
       }
       if (terminal) break
     }

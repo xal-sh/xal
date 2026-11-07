@@ -6,7 +6,7 @@ import {
   profileProviderRequestStarted,
   type ProviderRequestProfile,
 } from "../../profiler/profiler"
-import { isProviderError, ProviderError } from "../../providers/errors"
+import { ContextOverflowError, isProviderError, ProviderError } from "../../providers/errors"
 import type { Provider, ProviderOutputItem, StreamRequest, Usage } from "../../providers/types"
 import { createRedactedStream, type RedactedStream } from "../../secrets/redactor"
 import type { AgentEvent } from "../events"
@@ -92,8 +92,10 @@ export async function streamProviderTurn(
   signal: AbortSignal,
   provider: Provider,
   request: StreamRequest,
+  recoverContext?: () => Promise<StreamRequest | undefined>,
 ): Promise<ProviderOutputItem[] | undefined> {
   let attempt = 1
+  let recoveredContext = false
 
   while (true) {
     host.onRequestStarted()
@@ -124,6 +126,15 @@ export async function streamProviderTurn(
         host.commitProviderRound(round.items, round.usage, request)
         if (!isSteeringInterrupt(signal)) host.emit({ type: "turn_interrupted" })
         return undefined
+      }
+      if (error instanceof ContextOverflowError && !round.received && !recoveredContext && recoverContext) {
+        recoveredContext = true
+        host.emit({ type: "error", message: `${error.message}; compacting context before one retry.` })
+        const rebuilt = await recoverContext()
+        if (!rebuilt) throw error
+        request = rebuilt
+        attempt += 1
+        continue
       }
       const outputLoop = error instanceof OutputLoopError
       if (

@@ -313,6 +313,7 @@ export class AgentSession {
       restartRequested: () => this.pendingRestart !== undefined,
       autoCompact: (signal, provider, model, thinking) =>
         autoCompact(this.compactionHost(), signal, provider, model, thinking),
+      compact: (signal, provider, model) => runCompaction(this.compactionHost(), signal, provider, model, "auto"),
       beginCheckpoint: async (messageId, input) => {
         this.ensureTitle(input)
         await this.checkpoint(messageId, input)

@@ -25,7 +25,7 @@ export async function raiseForStatus(response: Response): Promise<never> {
     throw new ProviderError(`${PROVIDER_NAME} credits are exhausted`, { retryable: false })
   }
   const text = await response.text().catch(() => "")
-  throw httpError(PROVIDER_NAME, response, errorDetail(text) ?? text.slice(0, 500))
+  throw httpError(PROVIDER_NAME, response, errorDetail(text))
 }
 
 export async function openRouterFetch(path: string, key: string, init: RequestInit = {}): Promise<Response> {

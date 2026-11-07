@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { ProviderError } from "./errors"
+import { ContextOverflowError, ProviderError } from "./errors"
 import type { ConversationItem, StreamEvent, StreamRequest } from "./types"
 import {
   buildChatMessages,
@@ -103,6 +103,77 @@ describe("chat completions wire conversion", () => {
     if (!(thrown instanceof ProviderError)) throw new Error("expected ProviderError")
     expect(thrown.message).toBe("service unavailable")
     expect(thrown.retryable).toBe(true)
+  })
+
+  test("propagates context rejection codes and Gemini messages through the stream", async () => {
+    for (const error of [
+      { code: "context_length_exceeded", message: "request rejected" },
+      {
+        code: 400,
+        status: "INVALID_ARGUMENT",
+        message: "The input token count (1200000) exceeds the maximum number of tokens allowed (1048576).",
+      },
+    ]) {
+      const stream = streamChatCompletions(
+        {
+          model: "model",
+          instructions: "",
+          input: [],
+          tools: [],
+          cacheKey: "cache",
+          toolChoice: "auto",
+          sessionId: "session",
+        },
+        {
+          id: "provider",
+          name: "Provider",
+          imageInput: false,
+          fetch: async () => new Response(`data: ${JSON.stringify({ error })}\n\n`),
+          requestOptions: () => ({}),
+        },
+      )
+      await expect(stream.next()).rejects.toBeInstanceOf(ContextOverflowError)
+    }
+  })
+
+  test("does not recover context rejection after buffered tool output starts", async () => {
+    const events = [
+      {
+        choices: [
+          {
+            delta: { tool_calls: [{ index: 0, id: "call", function: { name: "write", arguments: '{"file_path":' } }] },
+          },
+        ],
+      },
+      { error: { code: "context_length_exceeded", message: "request rejected" } },
+    ]
+    const stream = streamChatCompletions(
+      {
+        model: "model",
+        instructions: "",
+        input: [],
+        tools: [],
+        cacheKey: "cache",
+        toolChoice: "auto",
+        sessionId: "session",
+      },
+      {
+        id: "provider",
+        name: "Provider",
+        imageInput: false,
+        fetch: async () => new Response(events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join("")),
+        requestOptions: () => ({}),
+      },
+    )
+    let thrown: unknown
+    try {
+      await stream.next()
+    } catch (error) {
+      thrown = error
+    }
+    expect(thrown).toBeInstanceOf(ProviderError)
+    expect(thrown).not.toBeInstanceOf(ContextOverflowError)
+    expect(thrown).toMatchObject({ retryable: false, message: "request rejected" })
   })
 
   test("builds replayable output items and validates tool arguments", () => {

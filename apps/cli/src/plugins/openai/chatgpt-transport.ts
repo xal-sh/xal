@@ -49,10 +49,10 @@ async function raiseForStatus(response: Response): Promise<never> {
   if (response.status === 404 && /usage_limit_reached|usage_not_included|rate_limit_exceeded/.test(text)) {
     throw new ProviderError("usage limit reached for your ChatGPT plan — try again later", { retryable: false })
   }
-  const detail = errorDetail(text) ?? text.slice(0, 500)
-  if (/model is not supported/i.test(detail)) {
+  const detail = errorDetail(text)
+  if (/model is not supported/i.test(detail.message)) {
     throw new ProviderError(
-      `${detail} — run \`${appInfo.name} models\` to see accepted models, or set ${appEnvVar("MODEL")}`,
+      `${detail.message} — run \`${appInfo.name} models\` to see accepted models, or set ${appEnvVar("MODEL")}`,
       { retryable: false },
     )
   }

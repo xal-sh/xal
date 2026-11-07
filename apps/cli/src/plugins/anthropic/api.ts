@@ -21,8 +21,8 @@ export async function raiseForStatus(response: Response): Promise<never> {
     throw new ProviderError(`${PROVIDER_NAME} denied access to this model or feature`, { retryable: false })
   }
   const text = await response.text().catch(() => "")
-  const detail = errorDetail(text) ?? text.slice(0, 500)
-  if (response.status === 400 && /credit balance is too low/i.test(detail)) {
+  const detail = errorDetail(text)
+  if (response.status === 400 && /credit balance is too low/i.test(detail.message)) {
     throw new ProviderError(`${PROVIDER_NAME} credit balance is too low`, { retryable: false })
   }
   throw httpError(PROVIDER_NAME, response, detail)

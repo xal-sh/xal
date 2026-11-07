@@ -20,7 +20,7 @@ async function raiseForStatus(response: Response): Promise<never> {
     throw new ProviderError("Alibaba Cloud authentication failed", { retryable: false })
   }
   const text = await response.text().catch(() => "")
-  throw httpError("Alibaba Cloud", response, errorDetail(text) ?? text.slice(0, 500))
+  throw httpError("Alibaba Cloud", response, errorDetail(text))
 }
 
 export async function alibabaCloudFetch(path: string, key: string, init: RequestInit = {}): Promise<Response> {

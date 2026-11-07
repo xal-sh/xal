@@ -34,13 +34,14 @@ export function isPersonalCopilotEndpoint(): boolean {
 
 async function raiseForStatus(response: Response): Promise<never> {
   const text = await response.text().catch(() => "")
-  const detail = errorDetail(text) ?? text.slice(0, 500)
+  const detail = errorDetail(text)
   if (response.status === 401) {
     throw new ProviderError("GitHub Copilot authentication failed — reconnect the provider", { retryable: false })
   }
   if (response.status === 403) {
     throw new ProviderError(
-      detail || "GitHub Copilot denied the request — confirm that this account has an active Copilot subscription",
+      detail.message ||
+        "GitHub Copilot denied the request — confirm that this account has an active Copilot subscription",
       { retryable: false },
     )
   }

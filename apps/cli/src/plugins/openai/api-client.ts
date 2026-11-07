@@ -9,14 +9,17 @@ const OPENAI_URL = "https://api.openai.com/v1"
 
 export async function raiseForStatus(response: Response): Promise<never> {
   const text = await response.text().catch(() => "")
-  const detail = errorDetail(text) ?? text.slice(0, 500)
+  const detail = errorDetail(text)
   if (response.status === 401) {
     throw new ProviderError("OpenAI API authentication failed; reconnect the provider", { retryable: false })
   }
   if (response.status === 403) {
-    throw new ProviderError(detail || "OpenAI denied the request; confirm the API key has access to this project", {
-      retryable: false,
-    })
+    throw new ProviderError(
+      detail.message || "OpenAI denied the request; confirm the API key has access to this project",
+      {
+        retryable: false,
+      },
+    )
   }
   throw httpError(PROVIDER_NAME, response, detail)
 }
