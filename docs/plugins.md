@@ -56,6 +56,26 @@ Every handler also receives a context containing an abort signal and the session
 
 Hook failures stop prompt, pre-tool, completion-check, and turn-completion processing. A post-tool failure becomes a failed tool result that warns the model the tool may already have changed state. Hook inputs and code run inside Xal's process, so only load hooks you trust. Returned text and arguments pass through secret redaction before they reach the model, session storage, or TUI.
 
+### Hook deadlines and cancellation
+
+Every handler invocation has a 60-second deadline. Set `timeoutMs` on the registered hook to override it for that hook's handlers; it must be an integer from `1` to `600000` milliseconds (10 minutes). Omission uses the default; `null`, zero, fractions, and values outside the range reject plugin registration. The budget restarts for each invocation, not for each event chain or turn.
+
+```ts
+ctx.registerHook({
+  name: "validation",
+  timeoutMs: 120000,
+  async beforeComplete(input, ctx) {
+    await validateHandoff(input.output, ctx.signal)
+  },
+})
+```
+
+Xal stops waiting on `prompt`, `beforeTool`, `beforeComplete`, and `turnEnd` when the turn is cancelled, even if the handler ignores its signal. `afterTool` still runs for interrupted executions and may finish its output processing within its deadline; its context signal still carries the turn's cancellation. Programmatic tool dispatch can stop waiting on post-tool processing earlier when its own scope is cancelled.
+
+A timeout is a named hook failure, never approval or a completion-gate repair request. Later hooks in that event chain do not run. Post-tool timeouts use the ordinary failed-tool-result path, warning that the tool may already have changed state; no rollback or automatic retry is implied. Each invocation reports one terminal hook activity event. Late return values cannot replace prompts, arguments, results, or completion decisions, and unexpected late rejections are reported with secret redaction.
+
+The context signal is scoped to the invocation and is aborted on timeout, turn cancellation, or invocation exit. Hooks must pass it to cancellable operations and await their work. These are waiting deadlines, not process isolation: Xal cannot preempt synchronous code that blocks its event loop or undo side effects from an uncooperative in-process plugin. Plugin bootstrap, shutdown, and prompt-section preparation are separate APIs and are not covered by these deadlines.
+
 ### Completion gates
 
 `beforeComplete` runs when the agent is ready to finish, after built-in verification corrections and before `turnEnd`. It applies to primary and task-agent turns, including headless runs and schema-validated structured output. It does not run for direct user shell commands, session-restart control, failed turns, or interruptions. Existing `turnEnd` hooks remain completion observers and do not run on a blocked attempt.

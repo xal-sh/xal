@@ -1,5 +1,7 @@
+import { withAbortSignal } from "../lib/abort"
 import { describeError } from "../lib/error"
 import { asString, isJsonObject, isRecord, type JsonObject } from "../lib/json"
+import { redactText } from "../secrets/redactor"
 import type {
   AfterToolHookInput,
   BeforeCompleteHookInput,
@@ -18,6 +20,7 @@ interface RegisteredHook {
   id: string
   pluginOrder: number
   hookOrder: number
+  timeoutMs: number
   prompt?: RegisteredHandler
   beforeTool?: RegisteredHandler
   afterTool?: RegisteredHandler
@@ -91,10 +94,16 @@ export function registerHook(plugin: string, pluginOrder: number, hookOrder: num
     )
   }
 
+  const timeoutMs = value.timeoutMs === undefined ? 60_000 : value.timeoutMs
+  if (typeof timeoutMs !== "number" || !Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 600_000) {
+    throw new Error("hook timeoutMs must be an integer from 1 to 600000 milliseconds")
+  }
+
   const hook: RegisteredHook = {
     id: `${plugin}/${name}`,
     pluginOrder,
     hookOrder,
+    timeoutMs,
     prompt: registeredHandler(value, "prompt"),
     beforeTool: registeredHandler(value, "beforeTool"),
     afterTool: registeredHandler(value, "afterTool"),
@@ -202,10 +211,22 @@ async function invoke<T>(
 ): Promise<T> {
   reporter.started(hook.id, event)
   const startedAt = Date.now()
+  const controller = new AbortController()
+  const signal = AbortSignal.any([ctx.signal, controller.signal])
+  const waiting = honorAbort ? signal : controller.signal
+  const timer = setTimeout(() => controller.abort(new Error(`timed out after ${hook.timeoutMs}ms`)), hook.timeoutMs)
   try {
-    if (honorAbort) ctx.signal.throwIfAborted()
-    const result: unknown = await handler(input, { session: { ...ctx.session }, signal: ctx.signal })
-    if (honorAbort) ctx.signal.throwIfAborted()
+    const result: unknown = await withAbortSignal(waiting, async () => {
+      try {
+        return await handler(input, { session: { ...ctx.session }, signal })
+      } catch (error) {
+        if (waiting.aborted && error !== waiting.reason && !isAbortError(error)) {
+          console.error(redactText(`hook ${hook.id} failed after ${event} stopped waiting: ${describeError(error)}`))
+        }
+        throw error
+      }
+    })
+    waiting.throwIfAborted()
     const parsed = parse(result)
     reporter.finished(hook.id, event, parsed.action, Date.now() - startedAt)
     return parsed.value
@@ -214,6 +235,9 @@ async function invoke<T>(
     reporter.finished(hook.id, event, interrupted ? "interrupted" : "failed", Date.now() - startedAt)
     if (interrupted) throw error
     throw new Error(`hook ${hook.id} failed during ${event}: ${describeError(error)}`, { cause: error })
+  } finally {
+    clearTimeout(timer)
+    controller.abort()
   }
 }
 
