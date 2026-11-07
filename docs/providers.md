@@ -35,6 +35,16 @@ Anthropic discovers models from its authenticated `/models` endpoint and layers 
 
 xAI discovers models from its authenticated `/models` endpoint, hides the image, speech, and voice models that the chat endpoint rejects, and layers bundled context windows and thinking options over the result because that endpoint reports neither. The account's credential decides what the endpoint returns, so a Grok subscription and an API key each see their own catalog. DeepSeek discovers models from its authenticated `/models` endpoint and reports when it must use bundled model metadata. Alibaba Cloud uses a bundled catalog of Qwen models shared by Model Studio and Coding Plan. MiniMax and MiniMax Coding Plan use the bundled minimax.io catalog. OpenCode Go discovers the account-visible catalog from its `/models` endpoint, which reports only IDs, so bundled metadata supplies names, context windows, input modalities, thinking controls, and each model's wire protocol; unknown IDs are served over Chat Completions with conservative defaults. It falls back to its bundled catalog and reports the failure when live discovery is unavailable.
 
+## Stream timeouts
+
+Xal bounds waits for text-generation events in primary sessions, task agents, compaction, and goal evaluation, including plugin-provided text models. Each attempt allows 10 minutes for its first provider event and 5 minutes between later events. These are inactivity limits, not a total response deadline: a long response can continue while events keep arriving. The timer runs only while Xal is waiting for the provider, not while it processes an event or executes tools.
+
+Text, reasoning, completed items, and completion events count as progress. Transport-only heartbeats do not, because this watchdog operates on the shared provider event interface rather than individual HTTP or WebSocket transports. Models that reason silently for longer need higher [provider timeouts](/docs/configs#provider-timeouts).
+
+A timeout cancels the attempt and reports which limit expired. Before any provider event, normal turns retain their existing exponential-backoff retry policy, with at most six attempts. After any event, a timeout fails the turn without automatically replaying the partial response or executing its tool calls. Auxiliary requests retain their own retry policies, and a failed summary does not replace session history. User cancellation remains an interruption, not a timeout or an automatic retry.
+
+Xal stops waiting even if a plugin ignores cancellation, discards late events, and requests iterator cleanup without blocking recovery on it. Cleanup failures are reported on stderr. This cannot forcibly stop a plugin's own background work; provider implementations must honor the request's abort signal and release their resources. Model discovery and authentication outside the streaming request are not covered by these limits.
+
 ## Anthropic
 
 `pluginConfig.anthropic.clientName` is a non-empty string used in the provider request user agent. It defaults to the package application name. Anthropic currently has no other configuration options.

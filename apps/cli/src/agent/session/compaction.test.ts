@@ -368,7 +368,10 @@ test("rebuilds and re-admits after compaction and sends that exact snapshot", as
     provider,
     admitted,
   )
-  expect(provider.requests[1]).toBe(admitted)
+  expect(provider.requests[1]).toEqual({ ...admitted, signal: expect.any(AbortSignal) })
+  expect(provider.requests[1]?.input).toBe(admitted.input)
+  expect(provider.requests[1]?.tools).toBe(admitted.tools)
+  expect(admitted.signal).toBeUndefined()
 })
 
 test("summarizes with the parent prefix and atomically keeps users, a recent exchange, and a recoverable transcript", async () => {

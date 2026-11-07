@@ -25,31 +25,32 @@ Global memory is stored at `<app-home>/MEMORY.md`. On Unix, Xal creates it with 
 
 ## Top-level options
 
-| Option             | Type       | Default                  | Details                                                                     |
-| ------------------ | ---------- | ------------------------ | --------------------------------------------------------------------------- |
-| `plugins`          | `string[]` | `[]`                     | Additional modules described in [Plugins and hooks](/docs/plugins).         |
-| `provider`         | `string`   | Last registered provider | Provider ID or alias used for new sessions.                                 |
-| `profile`          | `string`   | Selected connection      | Internal ID of the named provider profile used for new sessions.            |
-| `model`            | `string`   | Provider default         | Model ID used for new sessions.                                             |
-| `ui`               | `string`   | `"tui"`                  | UI ID started when Xal runs without a command.                              |
-| `mode`             | `string`   | `"normal"`               | Permission mode used for new TUI and headless sessions.                     |
-| `permissions`      | `object`   | `{}`                     | Global rules described in [Permissions and security](/docs/permissions).    |
-| `modes`            | `object`   | `{}`                     | [Custom permission modes](/docs/permissions#custom-modes) keyed by name.    |
-| `goal`             | `object`   | `{}`                     | Evaluator models described in [Goals](/docs/goals).                         |
-| `verification`     | `object`   | `{}`                     | Named [verification checks](#verification-checks) and workspace evidence.   |
-| `redaction`        | `object`   | `{}`                     | [Sensitive values](/docs/permissions#redaction) to redact.                  |
-| `agents`           | `object`   | `{}`                     | Limits described in [Background work](/docs/background-work#configuration). |
-| `pluginConfig`     | `object`   | `{}`                     | Configuration keyed by plugin name.                                         |
-| `thinking`         | `object`   | `{}`                     | Thinking effort keyed by provider ID and model ID.                          |
-| `contextWindows`   | `object`   | `{}`                     | Context-window choices keyed by provider ID and model ID.                   |
-| `compactionLimits` | `object`   | `{}`                     | Auto-compaction limits keyed by provider ID and model ID.                   |
-| `typesafeAI`       | `object`   | `{ "enabled": false }`   | One switch for all [TypeSafe AI features](#typesafe-ai).                    |
+| Option             | Type       | Default                                     | Details                                                                     |
+| ------------------ | ---------- | ------------------------------------------- | --------------------------------------------------------------------------- |
+| `plugins`          | `string[]` | `[]`                                        | Additional modules described in [Plugins and hooks](/docs/plugins).         |
+| `provider`         | `string`   | Last registered provider                    | Provider ID or alias used for new sessions.                                 |
+| `profile`          | `string`   | Selected connection                         | Internal ID of the named provider profile used for new sessions.            |
+| `model`            | `string`   | Provider default                            | Model ID used for new sessions.                                             |
+| `ui`               | `string`   | `"tui"`                                     | UI ID started when Xal runs without a command.                              |
+| `mode`             | `string`   | `"normal"`                                  | Permission mode used for new TUI and headless sessions.                     |
+| `permissions`      | `object`   | `{}`                                        | Global rules described in [Permissions and security](/docs/permissions).    |
+| `modes`            | `object`   | `{}`                                        | [Custom permission modes](/docs/permissions#custom-modes) keyed by name.    |
+| `goal`             | `object`   | `{}`                                        | Evaluator models described in [Goals](/docs/goals).                         |
+| `verification`     | `object`   | `{}`                                        | Named [verification checks](#verification-checks) and workspace evidence.   |
+| `redaction`        | `object`   | `{}`                                        | [Sensitive values](/docs/permissions#redaction) to redact.                  |
+| `agents`           | `object`   | `{}`                                        | Limits described in [Background work](/docs/background-work#configuration). |
+| `providerTimeouts` | `object`   | See [Provider timeouts](#provider-timeouts) | First-event and idle limits for provider streams.                           |
+| `pluginConfig`     | `object`   | `{}`                                        | Configuration keyed by plugin name.                                         |
+| `thinking`         | `object`   | `{}`                                        | Thinking effort keyed by provider ID and model ID.                          |
+| `contextWindows`   | `object`   | `{}`                                        | Context-window choices keyed by provider ID and model ID.                   |
+| `compactionLimits` | `object`   | `{}`                                        | Auto-compaction limits keyed by provider ID and model ID.                   |
+| `typesafeAI`       | `object`   | `{ "enabled": false }`                      | One switch for all [TypeSafe AI features](#typesafe-ai).                    |
 
 The `profile` value is managed by `/connect` and `/model`. Profile names remain user-facing and may be renamed without changing this ID.
 
 `mode` accepts `normal`, `plan`, `yolo`, or a name defined under `modes`. A command-line `--mode` overrides the configured default for that session.
 
-Malformed `mode`, `permissions`, `modes`, `goal`, `verification`, `redaction`, `typesafeAI`, or `agents` configuration fails startup instead of silently running without those rules.
+Malformed `mode`, `permissions`, `modes`, `goal`, `verification`, `redaction`, `typesafeAI`, `agents`, or `providerTimeouts` configuration fails startup instead of silently running without those rules.
 
 Built-in configuration is documented with the feature that consumes it:
 
@@ -60,6 +61,23 @@ Built-in configuration is documented with the feature that consumes it:
 - [Plugins and hooks](/docs/plugins) covers custom plugin configuration.
 - [Commands and skills](/docs/commands-and-skills) covers project instruction limits.
 - [Scheduler](/docs/scheduler) covers delayed model continuation.
+
+## Provider timeouts
+
+`providerTimeouts` bounds how long a provider stream can wait for its first event and how long it can remain idle between events:
+
+```json
+{
+  "providerTimeouts": {
+    "firstEventMs": 600000,
+    "idleMs": 300000
+  }
+}
+```
+
+The defaults are 10 minutes for `firstEventMs` and 5 minutes for `idleMs`. Each value must be an integer from `1000` to `1800000` milliseconds, inclusive. Omitted fields keep their defaults; unknown fields and non-object sections are rejected. User and trusted project settings merge recursively, so a project can override either limit independently.
+
+Choose higher values for slow models that take longer to produce their first event or pause during generation. See [Stream timeouts](/docs/providers#stream-timeouts) for timeout behavior and recovery.
 
 ## Verification checks
 
