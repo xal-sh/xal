@@ -1,9 +1,10 @@
-import { afterEach, beforeEach, expect, test } from "bun:test"
+import { afterEach, beforeEach, expect, spyOn, test } from "bun:test"
 import { mkdtemp, readFile, readdir, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { ConversationItem, StreamRequest } from "../../providers/types"
 import { parseRecord } from "../../sessions/records"
+import * as output from "../../tools/output"
 import { activeHistory, type HistoryItem } from "../history"
 import { autoCompact, runCompaction, type CompactionHost, type CompactionObservation } from "./compaction"
 import { ContextBudget } from "./context-budget"
@@ -95,6 +96,7 @@ test("automatically offloads without inference and round-trips the exact active 
 
 test("manual compaction and insufficient automatic savings summarize the unchanged original history", async () => {
   for (const scenario of ["manual", "reduction", "limit"]) {
+    const archivesBefore = (await readdir(directory)).length
     const original = historyWithOutputs()
     if (scenario === "reduction") original.unshift({ type: "assistant_message", text: "decision".repeat(20_000) })
     const host = hostFor(original)
@@ -116,7 +118,7 @@ test("manual compaction and insufficient automatic savings summarize the unchang
     expect(provider.requests[0]?.toolChoice).toBe("none")
     expect(provider.requests[0]?.input.slice(0, -1)).toEqual(original)
     expect(host.history()[0]).toMatchObject({ type: "compaction", strategy: "user_messages_v1" })
-    if (scenario === "manual") expect(await readdir(directory)).toHaveLength(1)
+    expect(await readdir(directory)).toHaveLength(archivesBefore + 1)
   }
 })
 
@@ -155,4 +157,40 @@ test("archive failures and cancellation before committing leave active history u
   expect(host.history()).toBe(original)
   expect(host.observations.at(-1)).toMatchObject({ strategy: "tool_outputs_v1", outcome: "interrupted" })
   expect(provider.requests).toHaveLength(0)
+  expect(await readdir(directory)).toEqual([])
+})
+
+test("removes every pending archive when a later save fails or is interrupted", async () => {
+  for (const scenario of ["failure", "interrupted"]) {
+    const original = historyWithOutputs()
+    original.unshift(
+      { type: "tool_call", callId: "extra", name: "grep", args: {} },
+      { type: "tool_result", callId: "extra", output: "older matches\n".repeat(1000) },
+    )
+    const host = hostFor(original)
+    const provider = new ScriptedProvider([])
+    const controller = new AbortController()
+    const save = output.saveToolOutput
+    let saved = 0
+    const archive = spyOn(output, "saveToolOutput").mockImplementation(async (...args) => {
+      const path = await save(...args)
+      saved += 1
+      if (saved === 2) {
+        if (scenario === "failure") throw new Error("later archive failed")
+        controller.abort(new Error("archive interrupted"))
+      }
+      return path
+    })
+    try {
+      await expect(runCompaction(host, controller.signal, provider, "test-model", "auto")).rejects.toThrow(
+        scenario === "failure" ? "later archive failed" : "archive interrupted",
+      )
+      expect(saved).toBe(2)
+      expect(host.history()).toBe(original)
+      expect(provider.requests).toHaveLength(0)
+      expect(await readdir(directory)).toEqual([])
+    } finally {
+      archive.mockRestore()
+    }
+  }
 })

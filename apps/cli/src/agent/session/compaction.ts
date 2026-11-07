@@ -1,3 +1,5 @@
+import { mkdir, mkdtemp, rm } from "node:fs/promises"
+import { join } from "node:path"
 import { settings } from "../../config/settings"
 import { redactHistoryItem } from "../../secrets/data"
 import { saveToolOutput } from "../../tools/output"
@@ -356,32 +358,41 @@ export async function runCompaction(
     }
     if (trigger === "auto") {
       strategy = "tool_outputs_v1"
-      const offloaded = await offloadToolOutputs(before, host.outputDirectory(), signal)
-      if (offloaded.offloaded > 0) {
-        const candidate: CompactionItem = {
-          type: "compaction",
-          strategy,
-          summary: `Archived ${offloaded.offloaded} older tool outputs; retained conversation is otherwise unchanged.`,
-          replaced: offloaded.offloaded,
-          tokensBefore,
-          retained: offloaded.items,
-        }
-        if (await freesEnoughContext(host, provider, model, history, candidate, signal)) {
-          signal.throwIfAborted()
-          host.observeCompaction({
-            trigger,
+      const outputDirectory = host.outputDirectory()
+      await mkdir(outputDirectory, { recursive: true, mode: 0o700 })
+      const directory = await mkdtemp(join(outputDirectory, "compaction-"))
+      let accepted = false
+      try {
+        const offloaded = await offloadToolOutputs(before, directory, signal)
+        if (offloaded.offloaded > 0) {
+          const candidate: CompactionItem = {
+            type: "compaction",
             strategy,
-            outcome: "completed",
+            summary: `Archived ${offloaded.offloaded} older tool outputs; retained conversation is otherwise unchanged.`,
+            replaced: offloaded.offloaded,
             tokensBefore,
-            before,
-            after: candidate.retained,
-            retained: candidate.retained,
-            removedTypes: [],
-          })
-          host.replaceHistory(candidate)
-          host.emit({ type: "compacted", summary: candidate.summary, replaced: candidate.replaced, tokensBefore })
-          return true
+            retained: offloaded.items,
+          }
+          if (await freesEnoughContext(host, provider, model, history, candidate, signal)) {
+            signal.throwIfAborted()
+            accepted = true
+            host.observeCompaction({
+              trigger,
+              strategy,
+              outcome: "completed",
+              tokensBefore,
+              before,
+              after: candidate.retained,
+              retained: candidate.retained,
+              removedTypes: [],
+            })
+            host.replaceHistory(candidate)
+            host.emit({ type: "compacted", summary: candidate.summary, replaced: candidate.replaced, tokensBefore })
+            return true
+          }
         }
+      } finally {
+        if (!accepted) await rm(directory, { recursive: true, force: true })
       }
       strategy = "user_messages_v1"
     }
