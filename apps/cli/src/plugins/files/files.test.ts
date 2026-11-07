@@ -83,7 +83,9 @@ test.skipIf(process.platform === "win32")("write and edit preserve symlink targe
     expect(await readFile(target, "utf8")).toBe("edited\n")
     expect((await lstat(alias)).isSymbolicLink()).toBe(true)
     expect((await stat(target)).mode & 0o777).toBe(0o751)
-    expect(await knownFileState(ctx.sessionId, alias)).toBe(await knownFileState(ctx.sessionId, target))
+    const known = await knownFileState(ctx.sessionId, alias)
+    expect(known).toBeDefined()
+    expect(known).toBe(await knownFileState(ctx.sessionId, target))
     expect((await readdir(workspace)).sort()).toEqual(["alias.txt", "target.txt"])
   })
 })
@@ -94,7 +96,7 @@ test.skipIf(process.platform === "win32")("write refuses dangling symlinks witho
     await symlink("missing.txt", alias)
     await expect(
       writeTool.execute({ file_path: "alias.txt", content: "replacement" }, context(workspace)),
-    ).rejects.toThrow()
+    ).rejects.toThrow("dangling symlinks are not replaced")
     expect((await lstat(alias)).isSymbolicLink()).toBe(true)
     expect(await readdir(workspace)).toEqual(["alias.txt"])
   })

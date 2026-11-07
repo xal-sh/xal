@@ -12,6 +12,15 @@ pub(super) fn replace_file(path: &Path, content: &[u8], existing: bool) -> io::R
         match fs::symlink_metadata(path) {
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
             Err(error) => return Err(error),
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!(
+                        "Cannot create {} through an existing symlink; dangling symlinks are not replaced",
+                        path.display()
+                    ),
+                ));
+            }
             Ok(_) => {
                 return Err(io::Error::new(
                     io::ErrorKind::AlreadyExists,
