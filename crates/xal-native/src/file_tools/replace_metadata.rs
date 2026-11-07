@@ -13,20 +13,52 @@ pub(super) fn copy_metadata(source: &File, destination: &File) -> io::Result<()>
     {
         return Err(io::Error::last_os_error());
     }
-    copy_attributes(source, destination)?;
-    destination.set_permissions(original.permissions())
+    copy_attributes(source, destination)
 }
 
 #[cfg(target_os = "macos")]
 fn copy_attributes(source: &File, destination: &File) -> io::Result<()> {
+    use std::ffi::c_void;
     use std::os::fd::AsRawFd;
 
+    unsafe extern "C" {
+        fn acl_get_fd(fd: i32) -> *mut c_void;
+        fn acl_init(count: i32) -> *mut c_void;
+        fn acl_set_fd(fd: i32, acl: *mut c_void) -> i32;
+        fn acl_free(acl: *mut c_void) -> i32;
+    }
+
+    let acl = unsafe { acl_get_fd(source.as_raw_fd()) };
+    let acl = if acl.is_null() {
+        let error = io::Error::last_os_error();
+        if error.raw_os_error() != Some(libc::ENOENT) {
+            return Err(error);
+        }
+        unsafe { acl_init(0) }
+    } else {
+        acl
+    };
+    if acl.is_null() {
+        return Err(io::Error::last_os_error());
+    }
+    let copied = if unsafe { acl_set_fd(destination.as_raw_fd(), acl) } == 0 {
+        Ok(())
+    } else {
+        Err(io::Error::last_os_error())
+    };
+    let freed = if unsafe { acl_free(acl) } == 0 {
+        Ok(())
+    } else {
+        Err(io::Error::last_os_error())
+    };
+    copied?;
+    freed?;
     if unsafe {
         libc::fcopyfile(
             source.as_raw_fd(),
             destination.as_raw_fd(),
             std::ptr::null_mut(),
-            libc::COPYFILE_ACL | libc::COPYFILE_XATTR,
+            libc::COPYFILE_XATTR,
         )
     } != 0
     {
@@ -169,5 +201,5 @@ pub(super) fn copy_metadata(source: &File, destination: &File) -> io::Result<()>
     {
         return Err(io::Error::last_os_error());
     }
-    destination.set_permissions(source.metadata()?.permissions())
+    Ok(())
 }

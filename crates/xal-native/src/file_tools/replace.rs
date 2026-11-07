@@ -93,6 +93,7 @@ fn stage_and_publish(
         write(&mut file)?;
         if let Some(source) = source {
             super::replace_metadata::copy_metadata(source, &file)?;
+            file.set_permissions(source.metadata()?.permissions())?;
         }
         file.sync_all()
     })();
@@ -280,6 +281,51 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn preserves_macos_acls_without_adding_inherited_access() {
+        use std::os::unix::fs::PermissionsExt;
+        use std::process::Command;
+
+        fn chmod(path: &Path, arguments: &[&str]) {
+            assert!(
+                Command::new("chmod")
+                    .args(arguments)
+                    .arg(path)
+                    .status()
+                    .unwrap()
+                    .success()
+            );
+        }
+
+        fn acl(path: &Path) -> Vec<String> {
+            let output = Command::new("ls").arg("-le").arg(path).output().unwrap();
+            assert!(output.status.success());
+            String::from_utf8(output.stdout)
+                .unwrap()
+                .lines()
+                .skip(1)
+                .map(str::to_owned)
+                .collect()
+        }
+
+        let root = workspace();
+        chmod(&root, &["+a", "user:nobody allow read,file_inherit"]);
+        let path = root.join("source.txt");
+        fs::write(&path, b"original").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+        chmod(&path, &["-N"]);
+        assert!(acl(&path).is_empty());
+        replace_file(&path, b"replacement", true).unwrap();
+        assert!(acl(&path).is_empty());
+        chmod(&path, &["+a", "user:nobody deny write"]);
+        let expected = acl(&path);
+        assert_eq!(expected.len(), 1);
+        replace_file(&path, b"another replacement", true).unwrap();
+        assert_eq!(acl(&path), expected);
+        fs::remove_dir_all(root).unwrap();
+    }
+
     #[cfg(windows)]
     #[test]
     fn preserves_alternate_data_streams_when_replacing_contents() {
@@ -291,6 +337,27 @@ mod tests {
         replace_file(&path, b"short", true).unwrap();
         assert_eq!(fs::read(&path).unwrap(), b"short");
         assert_eq!(fs::read(&stream).unwrap(), b"metadata");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn preserves_hidden_file_attributes_when_replacing_contents() {
+        use std::os::windows::fs::{MetadataExt, OpenOptionsExt};
+
+        let root = workspace();
+        let path = root.join("source.txt");
+        OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .attributes(2)
+            .open(&path)
+            .unwrap()
+            .write_all(b"original")
+            .unwrap();
+        replace_file(&path, b"replacement", true).unwrap();
+        assert_eq!(fs::read(&path).unwrap(), b"replacement");
+        assert_eq!(fs::metadata(&path).unwrap().file_attributes() & 2, 2);
         fs::remove_dir_all(root).unwrap();
     }
 
