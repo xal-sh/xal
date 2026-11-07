@@ -276,12 +276,23 @@ export class ToolCallRunner {
       }
 
       if (batch.concurrency === "shared") {
-        const completed = await Promise.all(ready.map(({ prepared }) => this.execute(prepared, signal, toolLoops)))
-        completed.forEach((outcome, index) => {
-          const entry = ready[index]
-          if (!entry) throw new Error("tool scheduler lost a shared call")
-          outcomes[entry.index] = outcome
-        })
+        const pending = ready.values()
+        let failed = false
+        const workers = await Promise.allSettled(
+          Array.from({ length: Math.min(4, ready.length) }, async () => {
+            for (const entry of pending) {
+              if (failed) return
+              try {
+                outcomes[entry.index] = await this.execute(entry.prepared, signal, toolLoops)
+              } catch (error) {
+                failed = true
+                throw error
+              }
+            }
+          }),
+        )
+        const failure = workers.find((worker) => worker.status === "rejected")
+        if (failure) throw failure.reason
       } else {
         for (const entry of ready) outcomes[entry.index] = await this.execute(entry.prepared, signal, toolLoops)
       }

@@ -4,6 +4,12 @@ Xal registers its built-in tools at startup, but the model is only offered the o
 
 Every call is checked against the tool's declared parameters before permission rules, approvals, or execution. A wrong type, a missing required argument, an unknown argument where the schema forbids extras, or a value outside an `enum` fails the call with a message naming each problem, so the model can correct it instead of having the argument silently ignored. A `null` value for an optional argument counts as omitted. Schema constructs Xal does not check, such as `$ref`, `allOf`, `not`, and conditionals, are left to the tool itself, and `anyOf` or `oneOf` pass when any branch matches. This applies to MCP tools as well, using the input schema their server declares. Structured output's `submit_output` is the exception: it keeps its own schema check, which counts rejected attempts.
 
+## Parallel execution
+
+Consecutive tool calls declared safe to share run with at most four executions in flight per session. Further calls wait and start as soon as a slot becomes free; results enter the conversation in the original call order. Exclusive calls, including file mutations and ordinary persistent-shell commands, wait for the preceding shared batch to finish and complete before later calls start. Hooks, argument validation, and permissions still apply to every call. On interruption, running tools receive cancellation and queued tool implementations do not start; their calls receive interrupted results.
+
+The limit applies to primary and task-agent sessions independently, including read-sandboxed Bash calls when the platform supports that sandbox. It is not a process-wide resource limit and does not count detached background processes or replace the separate task-agent and Code Mode limits. It is fixed rather than configurable.
+
 ## Files
 
 | Tool    | Purpose                                                                  | Availability        |
