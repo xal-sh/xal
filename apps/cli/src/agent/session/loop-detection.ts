@@ -26,6 +26,7 @@ interface SignatureOccurrence {
 interface ToolResultRecord {
   signature: string
   output: string
+  kind: "result" | "denial"
 }
 
 function letterCount(tokens: string[]): number {
@@ -153,7 +154,7 @@ export class OutputLoopDetector {
 
 export class ToolLoopDetector {
   private results: ToolResultRecord[] = []
-  private readonly steered = new Set<string>()
+  private readonly steered = new Map<string, ToolResultRecord["kind"]>()
   private stopped: Error | undefined
 
   get failure(): Error | undefined {
@@ -173,16 +174,23 @@ export class ToolLoopDetector {
     if (!latest || !previous || latest.output !== previous.output) return "allow"
 
     if (this.steered.size >= MAX_TOOL_RESULTS) {
-      const oldest = this.steered.values().next().value
+      const oldest = this.steered.keys().next().value
       if (oldest !== undefined) this.steered.delete(oldest)
     }
-    this.steered.add(signature)
+    this.steered.set(signature, latest.kind === "denial" || previous.kind === "denial" ? "denial" : "result")
     return "steer"
   }
 
-  record(call: ToolCallItem, output: string): void {
-    this.results.push({ signature: toolSignature(call), output })
+  record(call: ToolCallItem, output: string, kind: ToolResultRecord["kind"] = "result"): void {
+    this.results.push({ signature: toolSignature(call), output, kind })
     if (this.results.length > MAX_TOOL_RESULTS) this.results.shift()
+  }
+
+  workspaceChanged(): void {
+    this.results = this.results.filter((result) => result.kind === "denial")
+    for (const [signature, kind] of this.steered) {
+      if (kind !== "denial") this.steered.delete(signature)
+    }
   }
 
   reset(): void {

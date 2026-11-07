@@ -83,6 +83,39 @@ describe("ToolLoopDetector", () => {
     expect(detector.inspect(call("after-reset", { path: "notes.md" }))).toBe("allow")
   })
 
+  test("forgets results and warnings after workspace progress without clearing a terminal failure", () => {
+    const detector = new ToolLoopDetector()
+    const repeated = call("read", { path: "notes.md" })
+    detector.record(repeated, "unchanged")
+    detector.record(repeated, "unchanged")
+    expect(detector.inspect(repeated)).toBe("steer")
+
+    detector.workspaceChanged()
+    expect(detector.inspect(repeated)).toBe("allow")
+    detector.record(repeated, "unchanged")
+    expect(detector.inspect(repeated)).toBe("allow")
+    detector.record(repeated, "unchanged")
+    expect(detector.inspect(repeated)).toBe("steer")
+    expect(detector.inspect(repeated)).toBe("stop")
+    const failure = detector.failure
+    expect(failure).toBeDefined()
+
+    detector.workspaceChanged()
+    expect(detector.failure).toBe(failure)
+  })
+
+  test("retains denial history and warnings across workspace progress", () => {
+    const detector = new ToolLoopDetector()
+    const denied = call("denied", { path: "private.txt" })
+    detector.record(denied, "Blocked by policy", "denial")
+    detector.workspaceChanged()
+    detector.record(denied, "Blocked by policy", "denial")
+    detector.workspaceChanged()
+    expect(detector.inspect(denied)).toBe("steer")
+    detector.workspaceChanged()
+    expect(detector.inspect(denied)).toBe("stop")
+  })
+
   test("allows retries when the latest tool outputs differ", () => {
     const detector = new ToolLoopDetector()
     detector.record(call("first", { path: "notes.md" }), "first version")

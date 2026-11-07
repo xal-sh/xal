@@ -302,7 +302,9 @@ export class ToolCallRunner {
       for (const [index, outcome] of completed.entries()) {
         const output = bounded[index]!
         this.commit(output === outcome.output ? outcome : { ...outcome, output, read: undefined })
-        if (recorded[index]) toolLoops.record(outcome.call, outcome.loopOutput ?? outcome.output)
+        if (recorded[index]) {
+          toolLoops.record(outcome.call, outcome.loopOutput ?? outcome.output, outcome.denial ? "denial" : "result")
+        }
       }
       profileToolBatchFinished(profile, loopError ? "failed" : signal.aborted ? "interrupted" : "completed")
       return loopError
@@ -479,6 +481,8 @@ export class ToolCallRunner {
       if (redacted && !parentCallId) this.host.emit({ type: "tool_updated", callId: call.callId, text: redacted })
     }
     const scope = program ? this.toolScope(call, signal, toolLoops, update) : undefined
+    const workspace = this.host.workspaceUndo()
+    const revision = workspace.captureRevision
     try {
       const execute = (): Promise<ToolResult> =>
         isInteractiveTool(tool)
@@ -530,13 +534,13 @@ export class ToolCallRunner {
           result = await execute()
           break
         case "paths":
-          result = await this.host.workspaceUndo().trackPaths(call.name, undo.paths, execute)
+          result = await workspace.trackPaths(call.name, undo.paths, execute)
           break
         case "workspace":
-          result = await this.host.workspaceUndo().trackWorkspace(call.name, execute)
+          result = await workspace.trackWorkspace(call.name, execute)
           break
         case "invalidate":
-          result = await this.host.workspaceUndo().trackInvalidation(execute)
+          result = await workspace.trackInvalidation(execute)
           break
       }
       output = redactText(result.output)
@@ -554,6 +558,8 @@ export class ToolCallRunner {
       output = redactText(`${TOOL_FAILED_PREFIX}${describeError(error)}`)
       failure = output
     } finally {
+      if (this.host.workspaceUndo() !== workspace || workspace.captureRevision !== revision)
+        toolLoops.workspaceChanged()
       const tail = updates.end()
       if (tail && !parentCallId) this.host.emit({ type: "tool_updated", callId: call.callId, text: tail })
     }
@@ -625,7 +631,7 @@ export class ToolCallRunner {
         const preparation = await this.prepareChild(child, childSignal, loops, call.callId, updateCall)
         childSignal.throwIfAborted()
         if (preparation.type === "outcome" && preparation.outcome.denial) {
-          loops.record(preparation.outcome.call, preparation.outcome.output)
+          loops.record(preparation.outcome.call, preparation.outcome.output, "denial")
         }
         return preparation
       },

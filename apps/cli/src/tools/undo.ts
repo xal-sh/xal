@@ -181,6 +181,7 @@ class UndoCore {
   private readonly snapshots: Snapshot[] = []
   private checkpoints: PromptCheckpoint[] = []
   private branchValue = 0
+  private captureRevisionValue = 0
   private epoch = 0
   private busy: BusyState | undefined
   private captureTail: Promise<void> = Promise.resolve()
@@ -195,6 +196,10 @@ class UndoCore {
 
   get branch(): number {
     return this.branchValue
+  }
+
+  get captureRevision(): number {
+    return this.captureRevisionValue
   }
 
   seed(prompts: Array<{ messageId: string; prompt: string }>): void {
@@ -336,9 +341,14 @@ class UndoCore {
       try {
         if (this.epoch === epoch) {
           const after = await observe(repository, capture, watchIndex)
-          if (before.head !== undefined && after.head !== undefined && before.head !== after.head) {
+          const headChanged = before.head !== after.head
+          const indexChanged = before.index && after.index && !bytesEqual(before.index, after.index)
+          if (headChanged || indexChanged || before.tree !== after.tree) {
+            this.captureRevisionValue = this.increment(this.captureRevisionValue)
+          }
+          if (headChanged) {
             this.invalidateCode("Git HEAD changed during a shell command, so full undo is unavailable")
-          } else if (before.index && after.index && !bytesEqual(before.index, after.index)) {
+          } else if (indexChanged) {
             this.invalidateCode("the Git index changed during a shell command, so full undo is unavailable")
           } else if (before.tree !== after.tree) {
             const changed = await repository.changedPaths(before.tree, after.tree)
@@ -634,6 +644,10 @@ export class WorkspaceUndo {
 
   get branch(): number {
     return this.core.branch
+  }
+
+  get captureRevision(): number {
+    return this.core.captureRevision
   }
 
   seed(prompts: Array<{ messageId: string; prompt: string }>): void {
