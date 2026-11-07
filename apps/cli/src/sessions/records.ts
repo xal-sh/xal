@@ -487,7 +487,8 @@ function parseCompaction(raw: Record<string, unknown>): CompactionItem | undefin
     raw.strategy !== undefined &&
     strategy !== "user_messages_v1" &&
     strategy !== "jev_v1" &&
-    strategy !== "stale_reads_v1"
+    strategy !== "stale_reads_v1" &&
+    strategy !== "tool_outputs_v1"
   ) {
     return undefined
   }
@@ -518,7 +519,7 @@ function parseCompaction(raw: Record<string, unknown>): CompactionItem | undefin
     if (!item) return undefined
     retained.push(item)
   }
-  if (strategy === "jev_v1" || strategy === "stale_reads_v1") {
+  if (strategy === "jev_v1" || strategy === "stale_reads_v1" || strategy === "tool_outputs_v1") {
     return { type: "compaction", strategy, summary, replaced, tokensBefore, retained }
   }
   return { type: "compaction", summary, replaced, tokensBefore, retained }

@@ -1,9 +1,12 @@
+import { mkdir, mkdtemp, rm } from "node:fs/promises"
+import { join } from "node:path"
 import { settings } from "../../config/settings"
 import { redactHistoryItem } from "../../secrets/data"
 import { saveToolOutput } from "../../tools/output"
 import { decisions } from "../../providers/decisions"
 import { pruneWithJev } from "./jev-compaction"
 import { pruneStaleReads } from "./stale-reads"
+import { offloadToolOutputs } from "./tool-output-compaction"
 import { resolveThinking } from "../../config/thinking"
 import { describeError } from "../../lib/error"
 import { truncateUtf8Middle } from "../../lib/text"
@@ -28,7 +31,7 @@ export type CompactionTrigger = "auto" | "manual"
 
 export interface CompactionObservation {
   trigger: CompactionTrigger
-  strategy: "legacy" | "user_messages_v1" | "jev_v1" | "stale_reads_v1"
+  strategy: "legacy" | "user_messages_v1" | "jev_v1" | "stale_reads_v1" | "tool_outputs_v1"
   outcome: "completed" | "nothing" | "failed" | "interrupted"
   tokensBefore?: number
   before: ConversationItem[]
@@ -323,6 +326,7 @@ export async function runCompaction(
     return false
   }
 
+  let strategy: CompactionObservation["strategy"] = "user_messages_v1"
   try {
     host.setState("compacting")
     const stale = pruneStaleReads(before)
@@ -351,6 +355,46 @@ export async function runCompaction(
         host.emit({ type: "compacted", summary: candidate.summary, replaced: candidate.replaced, tokensBefore })
         return true
       }
+    }
+    if (trigger === "auto") {
+      strategy = "tool_outputs_v1"
+      const outputDirectory = host.outputDirectory()
+      await mkdir(outputDirectory, { recursive: true, mode: 0o700 })
+      const directory = await mkdtemp(join(outputDirectory, "compaction-"))
+      let accepted = false
+      try {
+        const offloaded = await offloadToolOutputs(before, directory, signal)
+        if (offloaded.offloaded > 0) {
+          const candidate: CompactionItem = {
+            type: "compaction",
+            strategy,
+            summary: `Archived ${offloaded.offloaded} older tool outputs; retained conversation is otherwise unchanged.`,
+            replaced: offloaded.offloaded,
+            tokensBefore,
+            retained: offloaded.items,
+          }
+          if (await freesEnoughContext(host, provider, model, history, candidate, signal)) {
+            signal.throwIfAborted()
+            accepted = true
+            host.observeCompaction({
+              trigger,
+              strategy,
+              outcome: "completed",
+              tokensBefore,
+              before,
+              after: candidate.retained,
+              retained: candidate.retained,
+              removedTypes: [],
+            })
+            host.replaceHistory(candidate)
+            host.emit({ type: "compacted", summary: candidate.summary, replaced: candidate.replaced, tokensBefore })
+            return true
+          }
+        }
+      } finally {
+        if (!accepted) await rm(directory, { recursive: true, force: true })
+      }
+      strategy = "user_messages_v1"
     }
     const transcript = await saveToolOutput(
       host.outputDirectory(),
@@ -549,7 +593,7 @@ export async function runCompaction(
   } catch (error) {
     host.observeCompaction({
       trigger,
-      strategy: "user_messages_v1",
+      strategy,
       outcome: isCompactionInterruption(error, signal) ? "interrupted" : "failed",
       ...(tokensBefore === undefined ? {} : { tokensBefore }),
       before,
