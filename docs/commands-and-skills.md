@@ -52,7 +52,7 @@ After startup, type `/` in the TUI to see discovered commands in the command pal
 
 ## Verification checks
 
-`/checks` refreshes the status of configured checks without running them. `/checks <name>` runs one named check through the regular direct-shell permission and hook flow. Both commands require an idle session. Receipts distinguish current passes and failures from missing or stale evidence; they do not gate completion. See [Verification checks](/docs/configs#verification-checks) for configuration, persistence, and freshness limits.
+`/checks` refreshes the status of configured checks without running them. `/checks <name>` runs one named check through the regular direct-shell permission and hook flow. Both commands require an idle session. Receipts distinguish current passes and failures from missing or stale evidence. These commands do not gate completion themselves; `verification.gate` can use the receipts to remind the model or require fresh passing checks before model completion. See [Verification checks](/docs/configs#verification-checks) for configuration, persistence, and freshness limits.
 
 ## Saved sessions
 

@@ -14,6 +14,7 @@ import type {
 import { TOOL_FAILED_PREFIX } from "../../tools/output"
 import { ToolOutputBudget } from "../../tools/output-budget"
 import type { ToolEvent } from "../../tools/types"
+import { requiredVerificationFailure, type VerificationGate } from "../../verification/service"
 import type { VerificationCheckStatus } from "../../verification/types"
 import type { AgentEvent, AgentState } from "../events"
 import { activeHistory, type HistoryItem } from "../history"
@@ -32,8 +33,8 @@ export interface TurnHost {
   complete(event: Extract<AgentEvent, { type: "turn_ended" }>): Promise<void>
   outputContract(): OutputContract | undefined
   verificationStatus(signal: AbortSignal): Promise<VerificationCheckStatus[] | undefined>
-  verificationBaseline(signal: AbortSignal): Promise<string | undefined>
-  verificationCorrection(baseline: string, signal: AbortSignal): Promise<string | undefined>
+  verificationGate(signal: AbortSignal): Promise<VerificationGate | undefined>
+  verificationCorrection(gate: VerificationGate, signal: AbortSignal): Promise<string | undefined>
   queuedPromptNext(): boolean
   asyncResultsQueued(): boolean
   paused(): boolean
@@ -121,12 +122,19 @@ export async function runTurn(
     })
     return true
   }
-  let verificationBaseline = await host.verificationBaseline(signal)
+  let verificationGate = await host.verificationGate(signal)
+  const requireVerification = verificationGate?.type === "required"
+  let verificationContinuations = 0
   const verificationReturned = async (): Promise<boolean> => {
-    if (verificationBaseline === undefined) return false
-    const correction = await host.verificationCorrection(verificationBaseline, signal)
+    if (verificationGate === undefined) return false
+    const correction = await host.verificationCorrection(verificationGate, signal)
+    signal.throwIfAborted()
     if (!correction) return false
-    verificationBaseline = undefined
+    if (requireVerification && verificationContinuations >= 3) {
+      throw new Error(`Completion blocked by required verification after 3 continuations:\n${correction}`)
+    }
+    verificationContinuations += 1
+    if (!requireVerification) verificationGate = undefined
     host.pushItem({ type: "user_message", text: correction, images: [] })
     return true
   }
@@ -201,16 +209,17 @@ export async function runTurn(
         host.pushItem({ type: "user_message", text: correction, images: [] })
         continue
       }
-      if (await verificationReturned()) continue
+      if (!requireVerification && (await verificationReturned())) continue
       const final = items.findLast((item) => item.type === "assistant_message")
       const output = final?.type === "assistant_message" ? final.text : undefined
       if (await completionBlocked(output)) continue
+      if (requireVerification && (await verificationReturned())) continue
       if (host.queuedPromptNext()) {
         midWork = false
         continue
       }
       if (host.asyncResultsQueued() || host.agentQuestionsQueued()) continue
-      await endTurn(host, usage, output, signal)
+      await endTurn(host, usage, output, signal, requireVerification)
       return { usage, usedTools }
     }
 
@@ -276,7 +285,7 @@ export async function runTurn(
         contract.reset()
         continue
       }
-      if (await verificationReturned()) {
+      if (!requireVerification && (await verificationReturned())) {
         contract.reset()
         continue
       }
@@ -284,11 +293,15 @@ export async function runTurn(
         contract.reset()
         continue
       }
+      if (requireVerification && (await verificationReturned())) {
+        contract.reset()
+        continue
+      }
       if (host.queuedPromptNext() || host.asyncResultsQueued() || host.agentQuestionsQueued()) {
         contract.reset()
         continue
       }
-      await endTurn(host, usage, contract.output, signal)
+      await endTurn(host, usage, contract.output, signal, requireVerification)
       return { usage, usedTools }
     }
     if (contract?.exhausted) throw contract.failure()
@@ -373,6 +386,7 @@ async function endTurn(
   usage: TurnUsage,
   output: string | JsonObject | undefined,
   signal: AbortSignal,
+  requireVerification = false,
 ): Promise<void> {
   host.stopAcceptingInput()
   await host.flushPersistence()
@@ -387,6 +401,10 @@ async function endTurn(
   )
   const verification = await host.verificationStatus(signal)
   signal.throwIfAborted()
+  if (requireVerification) {
+    const failure = requiredVerificationFailure(verification)
+    if (failure) throw new Error(`Completion blocked by required verification at turn end:\n${failure}`)
+  }
   await host.complete({
     type: "turn_ended",
     usage: usage.turn,

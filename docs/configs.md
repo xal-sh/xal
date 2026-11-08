@@ -102,6 +102,26 @@ Receipts persist in session history with the command, workspace, timestamps, act
 
 Set `verification.gate` to `true` to hold the model to its checks. Xal fingerprints the workspace when a turn starts. When the model is about to finish, including when it submits structured output, and the workspace fingerprint has changed while any configured check is not `passed`, Xal returns the turn to the model once with each check's status and asks it to run the checks covering its change, or to say which cannot pass and why. After that correction, the verification gate does not block again during the turn, so it cannot loop. Plugin completion gates can still request their own bounded repairs. Turns that leave the workspace unchanged, including read-only questions, are never gated. The gate needs captured workspace evidence at turn start, so it does nothing outside a Git workspace. It defaults to `false`.
 
+For an enforced completion contract, set `verification.gate` to `"required"` with at least one configured check:
+
+```json
+{
+  "verification": {
+    "gate": "required",
+    "checks": {
+      "test": "bun test",
+      "typecheck": "bun run typecheck"
+    }
+  }
+}
+```
+
+In this mode, **every configured check** must have a fresh `passed` receipt before any model turn can complete, even if the turn leaves the workspace unchanged. It applies to primary and task agents, headless runs, and structured output. Existing fresh receipts can satisfy it without rerunning; assistant claims, explanations, missing runs, failures, stale receipts, and unavailable evidence cannot. Use this mode for workflows that require checks on every completion, not just workspace-changing turns. A non-Git workspace cannot satisfy it. `gate` accepts only `false`, `true`, or `"required"`; required mode with no checks fails configuration loading.
+
+Xal sends the model each check's status and exact command and permits at most three verification repair continuations per turn, separately from the plugin completion-gate budget. Another unmet attempt fails the turn rather than accepting an unverified answer. Repairs still use normal tools, permissions, cancellation, and loop guards; Xal does not run commands automatically or override denials. Required evidence is checked after `beforeComplete` hooks and refreshed again after `turnEnd` hooks, just before recording success. If that final refresh is not passing, the turn fails immediately without rerunning completion observers. In headless mode, failures exit nonzero: JSON reports `status: "failed"`, JSONL emits `turn_failed`, and text output reports the error. A proposed response may already have streamed; only the terminal outcome establishes success.
+
+Direct user shell commands (`!` and `/checks <name>`) and session-restart control remain ungated. You can run or diagnose a check independently without having to satisfy the entire contract. Failed and interrupted turns never become successful through verification. A required-gate failure also uses the existing goal-loop failure path rather than advancing the goal evaluator.
+
 Freshness compares SHA-256 fingerprints before and after execution and again when inspected. It covers tracked and non-ignored files across the Git workspace, including untracked additions, deletions, executable bits, and symlink destinations. It does not track ignored files, installed dependencies, environment variables, external services, Git metadata, or the contents behind symlinks. Non-Git directories, unsupported entries such as submodule directories or non-UTF-8 filenames and symlink destinations, and read failures produce unavailable evidence, never a pass. Unsettled managed background work also prevents a fresh status. Fingerprints are observations, not atomic filesystem snapshots or proof that a command tested the intended behavior; use foreground, non-watch commands and rerun after relevant external changes.
 
 ## Code Mode
