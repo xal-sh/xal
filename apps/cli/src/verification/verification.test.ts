@@ -2,7 +2,9 @@ import { afterAll, afterEach, beforeAll, beforeEach, expect, spyOn, test } from 
 import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { registerAgentClis } from "../agent/cli"
 import type { AgentEvent } from "../agent/events"
+import * as sessionCompose from "../agent/session/compose"
 import { AgentSession } from "../agent/session/session"
 import {
   completedRound,
@@ -13,6 +15,7 @@ import {
   type AgentSessionTestHarness,
 } from "../agent/session/test-support"
 import { requestBackground } from "../background/promotion"
+import { resolveCli } from "../cli/registry"
 import { getCommand } from "../commands/registry"
 import type { CommandContext } from "../commands/types"
 import { projectSessionsDir } from "../config/paths"
@@ -512,4 +515,209 @@ test("gates structured output before accepting it", async () => {
   const correction = provider.requests[2]?.input.at(-1)
   if (!correction || correction.type !== "user_message") throw new Error("missing verification correction")
   expect(correction.text).toContain("You changed the workspace during this turn")
+})
+
+test.each([false, true])(
+  "required verification bounds unverified completion (structured task=%s)",
+  async (structured) => {
+    settings().verification.gate = "required"
+    const provider = new ScriptedProvider(
+      Array.from({ length: 5 }, (_, index) =>
+        structured
+          ? toolRound(`finish-${index}`, "submit_output", { attempt: index })
+          : completedRound("All checks passed."),
+      ),
+    )
+    const target = harness.createSession(provider, {
+      cwd,
+      kind: structured ? "subagent" : "primary",
+      ...(structured
+        ? { outputSchema: { type: "object", properties: { attempt: { type: "integer" } }, required: ["attempt"] } }
+        : {}),
+    })
+    sessions.push(target)
+    const events: AgentEvent[] = []
+    const outcome = await runSettledTurn(target, { text: "Explain the code", images: [] }, (event) =>
+      events.push(event),
+    )
+
+    expect(outcome.status).toBe("failed")
+    if (outcome.status !== "failed") throw new Error("required verification did not fail")
+    expect(outcome.error).toContain("Completion blocked by required verification after 3 continuations")
+    expect(outcome.error).toContain("test: not run")
+    expect(provider.requests).toHaveLength(4)
+    expect(events.filter((event) => event.type === "turn_ended")).toHaveLength(0)
+    expect(events.filter((event) => event.type === "turn_failed")).toHaveLength(1)
+    for (const request of provider.requests.slice(1)) {
+      expect(request.input.at(-1)).toMatchObject({
+        type: "user_message",
+        text: expect.stringContaining("Continue to follow the user's instructions and permission rules"),
+      })
+    }
+    target.setMode("yolo")
+    await runCheck(target)
+    expect(await runSettledTurn(target, { text: "Finish with evidence", images: [] })).toMatchObject({
+      status: "completed",
+      response: structured ? { attempt: 4 } : "All checks passed.",
+      verification: [{ status: "passed" }],
+    })
+    expect(provider.requests).toHaveLength(5)
+  },
+)
+
+test("required verification repairs failures and hook-invalidated passes for every check", async () => {
+  settings().verification.gate = "required"
+  settings().verification.checks.lint = "test -f source.txt"
+  registerHook("verification-test", 0, 0, {
+    name: "handoff",
+    async beforeComplete(input) {
+      if (input.output === "Verified.") await writeFile(join(cwd, "HANDOFF.md"), "ready")
+      return undefined
+    },
+  } satisfies Hook)
+  try {
+    const provider = new ScriptedProvider([
+      completedRound("Done."),
+      toolRound("break", "bash", { command: "printf broken > source.txt" }),
+      toolRound("failing-test", "bash", { command: settings().verification.checks.test! }),
+      toolRound("lint", "bash", { command: settings().verification.checks.lint! }),
+      completedRound("The test cannot pass."),
+      toolRound("repair", "bash", { command: "printf ok > source.txt" }),
+      toolRound("test", "bash", { command: settings().verification.checks.test! }),
+      toolRound("lint-again", "bash", { command: settings().verification.checks.lint! }),
+      completedRound("Verified."),
+      toolRound("test-handoff", "bash", { command: settings().verification.checks.test! }),
+      toolRound("lint-handoff", "bash", { command: settings().verification.checks.lint! }),
+      completedRound("Reverified."),
+    ])
+    const target = session(provider)
+    const outcome = await runSettledTurn(target, { text: "Change and verify", images: [] })
+
+    expect(outcome).toMatchObject({
+      status: "completed",
+      response: "Reverified.",
+      verification: [
+        { name: "test", status: "passed" },
+        { name: "lint", status: "passed" },
+      ],
+    })
+    expect(provider.requests).toHaveLength(12)
+    expect(provider.requests[5]?.input.at(-1)).toMatchObject({ text: expect.stringContaining("test: failed") })
+    expect(provider.requests[9]?.input.at(-1)).toMatchObject({ text: expect.stringContaining("test: stale") })
+    expect(await readFile(join(cwd, "HANDOFF.md"), "utf8")).toBe("ready")
+  } finally {
+    removeHooks(0)
+  }
+})
+
+test("required verification accepts fresh receipts and rejects turn-end mutations", async () => {
+  settings().verification.gate = "required"
+  const provider = new ScriptedProvider([completedRound("Verified."), completedRound("Still verified.")])
+  const target = session(provider)
+  await runCheck(target)
+  expect(await runSettledTurn(target, { text: "Finish", images: [] })).toMatchObject({
+    status: "completed",
+    verification: [{ status: "passed" }],
+  })
+  let observed = 0
+  registerHook("verification-test", 0, 0, {
+    name: "late-change",
+    async turnEnd() {
+      observed += 1
+      await writeFile(join(cwd, "source.txt"), "late change")
+    },
+  } satisfies Hook)
+  try {
+    const events: AgentEvent[] = []
+    const outcome = await runSettledTurn(target, { text: "Finish again", images: [] }, (event) => events.push(event))
+    expect(outcome).toMatchObject({
+      status: "failed",
+      error: expect.stringContaining("required verification at turn end"),
+    })
+    expect(events.some((event) => event.type === "turn_ended")).toBe(false)
+    expect(observed).toBe(1)
+    expect(provider.requests).toHaveLength(2)
+    expect(await target.verificationStatus()).toMatchObject([{ status: "stale" }])
+  } finally {
+    removeHooks(0)
+  }
+})
+
+test("required verification fails closed when workspace evidence is unavailable", async () => {
+  settings().verification.gate = "required"
+  await rm(join(cwd, ".git"), { recursive: true })
+  const provider = new ScriptedProvider(Array.from({ length: 4 }, () => completedRound("The command passed.")))
+  const target = session(provider)
+  const events = await runCheck(target)
+  expect(events.find((event) => event.type === "shell_finished")).toMatchObject({
+    execution: { status: "exited", exitCode: 0 },
+  })
+
+  const outcome = await runSettledTurn(target, { text: "Finish", images: [] })
+  expect(outcome).toMatchObject({ status: "failed", error: expect.stringContaining("test: stale") })
+  expect(provider.requests).toHaveLength(4)
+})
+
+test.each([false, true])(
+  "required verification preserves denied checks and cancellation (interrupt=%s)",
+  async (interrupt) => {
+    settings().verification.gate = "required"
+    const provider = new ScriptedProvider([
+      toolRound("check", "bash", { command: settings().verification.checks.test! }),
+      ...Array.from({ length: 4 }, () => completedRound("The check was denied.")),
+    ])
+    const target = session(provider)
+    target.setMode("normal")
+    let approvals = 0
+    const outcome = await runSettledTurn(target, { text: "Check and finish", images: [] }, (event) => {
+      if (event.type !== "approval_requested") return
+      approvals += 1
+      if (interrupt) target.interrupt()
+      else target.deny("user")
+    })
+
+    expect(outcome.status).toBe(interrupt ? "interrupted" : "failed")
+    expect(approvals).toBe(1)
+    expect(provider.requests).toHaveLength(interrupt ? 1 : 5)
+    expect(await target.verificationStatus()).toMatchObject([{ status: "not_run" }])
+  },
+)
+
+test("headless required-verification failure returns JSON failure and a nonzero exit code", async () => {
+  settings().verification.gate = "required"
+  const target = session(new ScriptedProvider(Array.from({ length: 4 }, () => completedRound("Done."))))
+  const create = spyOn(sessionCompose, "createSession").mockResolvedValue({ session: target, model: "test-model" })
+  const exitCode = process.exitCode
+  const idle = Promise.withResolvers<void>()
+  const unsubscribe = target.subscribe((event) => {
+    if (event.type === "state_changed" && event.state === "idle") idle.resolve()
+  })
+  try {
+    process.exitCode = 0
+    registerAgentClis()
+    const resolved = resolveCli(["run", "--format", "json", "Finish"])
+    if (!resolved?.cli.run) throw new Error("missing run CLI")
+    const printed: string[] = []
+    await resolved.cli.run(resolved.args, {
+      print: (text) => printed.push(text),
+      error: (text) => printed.push(text),
+      async ask() {
+        throw new Error("headless run requested input")
+      },
+      async askSecret() {
+        throw new Error("headless run requested a secret")
+      },
+    })
+    await idle.promise
+    expect(process.exitCode).toBe(1)
+    const output: unknown = JSON.parse(printed.join("\n"))
+    expect(output).toMatchObject({
+      status: "failed",
+      error: expect.stringContaining("required verification after 3 continuations"),
+    })
+  } finally {
+    process.exitCode = exitCode ?? 0
+    unsubscribe()
+    create.mockRestore()
+  }
 })

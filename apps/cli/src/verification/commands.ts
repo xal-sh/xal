@@ -39,9 +39,12 @@ export function registerVerification(): void {
       const verification = settings().verification
       const checks = Object.entries(verification.checks)
       if (checks.length === 0) return ""
-      const completion = verification.gate
-        ? "A turn that changes the workspace is returned to you once if any check has not passed against the final workspace."
-        : "Run checks when appropriate; they are not automatic completion gates."
+      const completion =
+        verification.gate === "required"
+          ? "Every configured check must have a fresh passing receipt before any model turn can finish, even without workspace changes. You have at most three verification repair continuations before the turn fails. Continue to follow the user's instructions and permission rules; never bypass a denial to satisfy verification."
+          : verification.gate
+            ? "A turn that changes the workspace is returned to you once if any check has not passed against the final workspace."
+            : "Run checks when appropriate; they are not automatic completion gates."
       return [
         "# Verification",
         `Configured checks produce execution receipts only when their exact command is run with bash in the foreground. They run in a fresh shell at the session workspace, not the persistent shell. Receipts describe observed execution, not proof of correctness; later workspace changes make them stale. ${completion}`,

@@ -50,7 +50,7 @@ import { toolOutputDirectory } from "../../tools/output"
 import { isInteractiveTool } from "../../tools/types"
 import { disposeToolContext, disposeToolSession } from "../../tools/session"
 import { WorkspaceUndo } from "../../tools/undo"
-import { verificationBaseline, verificationCorrection, verificationSummary } from "../../verification/service"
+import { verificationGate, verificationCorrection, verificationSummary } from "../../verification/service"
 import type { VerificationCheckStatus, VerificationRecord } from "../../verification/types"
 import type { ElicitationAnswer, RegisteredTool, ToolEvent } from "../../tools/types"
 import type { AgentEvent, AgentState, DenialCause, SessionStartedEvent } from "../events"
@@ -305,15 +305,9 @@ export class AgentSession {
       },
       outputContract: () => this.outputContract,
       verificationStatus: (signal) => this.verificationStatus(signal),
-      verificationBaseline: (signal) => verificationBaseline(this.cwd, signal),
-      verificationCorrection: (baseline, signal) =>
-        verificationCorrection(
-          this.cwd,
-          baseline,
-          this.verificationRecords,
-          this.asyncState.hasPendingAsyncWork(),
-          signal,
-        ),
+      verificationGate: (signal) => verificationGate(this.cwd, signal),
+      verificationCorrection: (gate, signal) =>
+        verificationCorrection(this.cwd, gate, this.verificationRecords, this.asyncState.hasPendingAsyncWork(), signal),
       queuedPromptNext: () => this.queue.promptFirst,
       asyncResultsQueued: () => this.asyncState.hasQueued(),
       paused: () => this.paused,

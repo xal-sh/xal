@@ -107,29 +107,54 @@ export async function verificationSummary(
   })
 }
 
-export async function verificationBaseline(cwd: string, signal?: AbortSignal): Promise<string | undefined> {
+export type VerificationGate = { type: "required" } | { type: "changed"; fingerprint: string }
+
+export async function verificationGate(cwd: string, signal?: AbortSignal): Promise<VerificationGate | undefined> {
   const verification = settings().verification
-  if (!verification.gate || Object.keys(verification.checks).length === 0) return undefined
-  const evidence = await workspaceEvidence(cwd, signal)
-  return evidence.status === "captured" ? evidence.fingerprint : undefined
+  switch (verification.gate) {
+    case false:
+      return undefined
+    case "required":
+      return { type: "required" }
+    case true: {
+      if (Object.keys(verification.checks).length === 0) return undefined
+      const evidence = await workspaceEvidence(cwd, signal)
+      return evidence.status === "captured" ? { type: "changed", fingerprint: evidence.fingerprint } : undefined
+    }
+  }
 }
 
 export async function verificationCorrection(
   cwd: string,
-  baseline: string,
+  gate: VerificationGate,
   records: ReadonlyMap<string, VerificationRecord>,
   unsettled: boolean,
   signal?: AbortSignal,
 ): Promise<string | undefined> {
-  const evidence = await workspaceEvidence(cwd, signal)
-  if (evidence.status === "captured" && evidence.fingerprint === baseline) return undefined
+  if (gate.type === "changed") {
+    const evidence = await workspaceEvidence(cwd, signal)
+    if (evidence.status === "captured" && evidence.fingerprint === gate.fingerprint) return undefined
+  }
   const checks = await verificationSummary(cwd, records, unsettled, signal)
+  if (gate.type === "required") {
+    const failure = requiredVerificationFailure(checks)
+    if (!failure) return undefined
+    return `${failure}\nRun every configured check against the current workspace and fix failures caused by your change before finishing. Continue to follow the user's instructions and permission rules; a blocked or unavailable check cannot be waived by explaining it.`
+  }
   if (!checks || checks.every((check) => check.status === "passed")) return undefined
   return [
     "You changed the workspace during this turn, but not every configured check has passed against the current workspace:",
     ...verificationDetails(checks),
     "Run the checks that cover your change and fix failures it caused before finishing, or say which check cannot pass and why.",
   ].join("\n")
+}
+
+export function requiredVerificationFailure(checks: VerificationCheckStatus[] | undefined): string | undefined {
+  if (!checks?.length) return "Required verification has no configured checks."
+  if (checks.every((check) => check.status === "passed")) return undefined
+  return ["Not every required check has passed against the current workspace:", ...verificationDetails(checks)].join(
+    "\n",
+  )
 }
 
 export function verificationHeadline(checks: VerificationCheckStatus[]): string {

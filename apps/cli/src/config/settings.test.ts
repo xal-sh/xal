@@ -192,6 +192,30 @@ test("merges verification checks only from trusted projects and rejects malforme
   })
 })
 
+test("merges required verification only from trusted projects and requires checks", async () => {
+  await withSettingsEnvironment(async ({ home, project }) => {
+    await writeJson(join(home, "config.json"), { verification: { checks: { test: "bun test" } } })
+    await writeJson(projectConfigPath(project), { verification: { gate: "required" } })
+    expect((await loadSettings()).verification.gate).toBe(false)
+    await writeJson(join(home, "trust.json"), [project])
+    expect((await loadSettings()).verification).toEqual({ checks: { test: "bun test" }, gate: "required" })
+    for (const verification of [{ gate: "required" }, { gate: "required", checks: {} }]) {
+      await writeJson(join(home, "config.json"), { verification })
+      await expect(loadSettings()).rejects.toThrow('verification.gate "required" needs at least one configured check')
+    }
+  })
+})
+
+test.each([null, "strict", 1, {}, []].map((gate) => ({ gate })))(
+  "rejects invalid verification gates: %j",
+  async ({ gate }) => {
+    await withSettingsEnvironment(async ({ home }) => {
+      await writeJson(join(home, "config.json"), { verification: { checks: { test: "bun test" }, gate } })
+      await expect(loadSettings()).rejects.toThrow('verification.gate must be a boolean or "required"')
+    })
+  },
+)
+
 test("validates built-in and custom default modes", async () => {
   await withSettingsEnvironment(async ({ home }) => {
     const config = join(home, "config.json")
