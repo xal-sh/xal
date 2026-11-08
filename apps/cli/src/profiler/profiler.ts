@@ -106,6 +106,11 @@ type AnonymousAppEvent =
   | { type: "plugin_registration_finished"; total: number; failedPhases: string[]; notices: number }
   | { type: "plugin_bootstrap_started"; total: number }
   | { type: "plugin_bootstrap_finished"; total: number; failedPhases: string[]; notices: number }
+  | {
+      type: "runtime_reload"
+      source: "settings" | "skills"
+      outcome: "reloaded" | "restart_required" | "error"
+    }
 
 export type ProfileRecord =
   | { type: "run_started"; version: string }
@@ -435,6 +440,8 @@ function anonymousAppEvent(event: AppEvent): AnonymousAppEvent {
       }
     case "plugin_bootstrap_started":
       return event
+    case "runtime_reload":
+      return { type: event.type, source: event.source, outcome: event.outcome }
   }
 }
 

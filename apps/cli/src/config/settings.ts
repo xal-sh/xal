@@ -83,8 +83,23 @@ let current: Settings = {
   compactionLimits: {},
 }
 
+let reloadOwner: { root: string } | undefined
+
+export function beginSettingsReload(root: string): () => void {
+  if (reloadOwner) throw new Error("settings reload is already active")
+  const owner = { root }
+  reloadOwner = owner
+  return () => {
+    if (reloadOwner === owner) reloadOwner = undefined
+  }
+}
+
 export function settings(): Settings {
   return current
+}
+
+export function replaceSettings(next: Settings): void {
+  current = next
 }
 
 export async function loadSettings(): Promise<Settings> {
@@ -104,7 +119,7 @@ export async function saveSettings(patch: Partial<Settings>): Promise<void> {
   const nextUser = mergeSettings(user, { ...patch })
   const next = parseSettings(mergeSettings(nextUser, project))
   await writeSecureJson(path, nextUser)
-  current = next
+  publishSavedSettings(next, { ...patch })
 }
 
 export async function saveProviderModelNumber(
@@ -128,16 +143,32 @@ export async function saveProviderModelNumber(
   })
   const next = parseSettings(mergeSettings(nextUser, project))
   await writeSecureJson(path, nextUser)
-  current = next
+  publishSavedSettings(next, { [field]: { [provider]: { [model]: value } } })
 }
 
-async function readSettings(): Promise<Settings> {
+function selectSettingsPatch(
+  effective: Record<string, unknown>,
+  patch: Record<string, unknown>,
+): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(patch).map(([key, value]) => {
+      const selected = effective[key]
+      return [key, isRecord(value) && isRecord(selected) ? selectSettingsPatch(selected, value) : selected]
+    }),
+  )
+}
+
+function publishSavedSettings(next: Settings, patch: Record<string, unknown>): void {
+  current = reloadOwner ? parseSettings(mergeSettings({ ...current }, selectSettingsPatch({ ...next }, patch))) : next
+}
+
+export async function readSettings(): Promise<Settings> {
   const [user, project] = await Promise.all([readSettingsFile(userConfigPath()), readProjectSettings()])
   return parseSettings(mergeSettings(user, project))
 }
 
 async function readProjectSettings(): Promise<Record<string, unknown>> {
-  const root = await findProjectRoot(process.cwd())
+  const root = reloadOwner?.root ?? (await findProjectRoot(process.cwd()))
   if (!(await isTrusted(root))) return {}
   return readSettingsFile(projectConfigPath(root))
 }

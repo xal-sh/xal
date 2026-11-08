@@ -23,6 +23,18 @@ Commands that save model, thinking, context-window, compaction-limit, TypeSafe A
 
 Global memory is stored at `<app-home>/MEMORY.md`. On Unix, Xal creates it with mode `0600` and rejects broader permissions. Windows does not expose an equivalent mode through the filesystem API, so Xal relies on the inherited ACL of `<app-home>`. If the app home is overridden on Windows, its directory must be private to the current user.
 
+## Automatic reload
+
+While the interactive TUI is open, Xal checks the user and trusted project configuration files and skill directories every two seconds while idle. Changes wait until the current turn, background tasks, and managed shell jobs have settled. Reloading preserves the usual recursive merge and project precedence. It also handles files or directories created after startup, deletion, and atomic editor saves. Configuration and skills stay scoped to the project where Xal was launched, as at startup; entering a worktree does not switch these sources.
+
+Runtime changes to `permissions`, `goal`, `verification`, `redaction`, `agents`, `providerTimeouts`, `typesafeAI`, `contextWindows`, and `compactionLimits` take effect on subsequent work. Provider, profile, model, and thinking defaults are reread too, but do not replace the active session's selected connection, model, or thinking effort; use `/model` or `/thinking` to change those selections.
+
+`plugins`, `ui`, `mode`, `modes`, and all `pluginConfig` settings remain startup-only for external edits. Xal keeps their running values and displays a restart-required notice when they change. Existing commands such as `/config` still apply the preferences they support directly. This does not reload plugin code, reconnect integrations, rediscover `.mcp.json`, reload prompt commands or project instructions, or monitor headless runs.
+
+While automatic reload is active, in-app saves apply only the settings paths you explicitly changed, using their effective values after project overrides. Unrelated external edits remain pending until an idle reload, including permission and redaction changes.
+
+A malformed configuration edit reports an error and leaves the previous valid runtime configuration in use; it never writes that configuration back over your edit. Fix the file to resume automatic updates. Repeated identical errors are reported once until recovery. Skill reloads are independent, so a configuration error does not block valid skill updates. See [Skills](/docs/commands-and-skills#skills) for skill reload behavior.
+
 ## Top-level options
 
 | Option             | Type       | Default                                     | Details                                                                     |

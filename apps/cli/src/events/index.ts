@@ -22,6 +22,8 @@ function redactEvent(event: AppEvent): AppEvent {
       }
     case "plugin_bootstrap_started":
       return event
+    case "runtime_reload":
+      return { ...event, message: redactText(event.message) }
   }
 }
 

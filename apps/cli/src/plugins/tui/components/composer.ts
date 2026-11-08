@@ -259,6 +259,7 @@ export class Composer {
   }
 
   refreshCompletion(): void {
+    this.syncSkillHighlights()
     this.notifyCompletion()
   }
 

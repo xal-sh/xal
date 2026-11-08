@@ -19,6 +19,12 @@ export type AppEvent =
   | { type: "plugin_registration_finished"; status: PluginStatus }
   | { type: "plugin_bootstrap_started"; total: number }
   | { type: "plugin_bootstrap_finished"; status: PluginStatus }
+  | {
+      type: "runtime_reload"
+      source: "settings" | "skills"
+      outcome: "reloaded" | "restart_required" | "error"
+      message: string
+    }
 
 export interface EventService {
   emitRetained(event: AppEvent): void
