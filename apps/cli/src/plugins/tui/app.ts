@@ -12,6 +12,7 @@ import {
 import { appInfo } from "../../app-info"
 import { createSession, resumeSession } from "../../agent/session/compose"
 import { detachSession } from "../../bg/launch"
+import { RuntimeReloader } from "../../config/reload"
 import type { EventService } from "../../events"
 import { describeError } from "../../lib/error"
 import { compactPath } from "../../lib/path"
@@ -239,9 +240,21 @@ export async function startTui(events: EventService, config: TuiConfig, options:
     stopAttention()
   })
 
-  const appEvents = new AppEventController(screen, input, shortcuts.help("display.toggle-details"))
-  const unsubscribe = events.subscribe((event) => appEvents.handle(event), true)
-  screen.view.on(RenderableEvents.DESTROYED, unsubscribe)
+  const reloader = new RuntimeReloader(
+    root,
+    () => !editing && session.currentState === "idle" && !session.hasPendingAsyncWork(),
+  )
+  const appEvents = new AppEventController(screen, input, shortcuts.help("display.toggle-details"), () =>
+    agentEvents.trackContextWindow(),
+  )
+  const unsubscribe = events.subscribe((event) => {
+    appEvents.handle(event)
+    if (event.type === "plugin_bootstrap_finished") reloader.start()
+  }, true)
+  screen.view.on(RenderableEvents.DESTROYED, () => {
+    unsubscribe()
+    void reloader.stop()
+  })
 
   const edit = async (): Promise<void> => {
     if (editing) return
@@ -295,6 +308,7 @@ export async function startTui(events: EventService, config: TuiConfig, options:
 
   screen.composer.focus()
   await destroyed
+  await reloader.stop()
   await session.close()
   resetCommands()
   clearTimeout(replayTimer)

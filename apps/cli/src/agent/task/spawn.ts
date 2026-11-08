@@ -39,11 +39,11 @@ class Semaphore {
   private active = 0
   private readonly waiters: Waiter[] = []
 
-  constructor(private readonly limit: number) {}
+  constructor(private readonly limit: () => number) {}
 
   acquire(signal: AbortSignal): Promise<void> {
     if (signal.aborted) return Promise.reject(new Error("task cancelled before it started"))
-    if (this.active < this.limit) {
+    if (this.active < this.limit()) {
       this.active += 1
       return Promise.resolve()
     }
@@ -65,18 +65,20 @@ class Semaphore {
 
   release(): void {
     if (this.active > 0) this.active -= 1
-    const waiter = this.waiters.shift()
-    if (!waiter) return
-    waiter.signal.removeEventListener("abort", waiter.abort)
-    this.active += 1
-    waiter.resolve()
+    while (this.active < this.limit()) {
+      const waiter = this.waiters.shift()
+      if (!waiter) return
+      waiter.signal.removeEventListener("abort", waiter.abort)
+      this.active += 1
+      waiter.resolve()
+    }
   }
 }
 
 let scheduler: Semaphore | undefined
 
-function taskScheduler(): Semaphore {
-  scheduler ??= new Semaphore(settings().agents.maxConcurrent)
+export function taskScheduler(): Semaphore {
+  scheduler ??= new Semaphore(() => settings().agents.maxConcurrent)
   return scheduler
 }
 

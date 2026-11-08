@@ -33,12 +33,25 @@ export class AppEventController {
     private readonly screen: Screen,
     private readonly input: InputQueue,
     private readonly detailsShortcut: string | undefined,
+    private readonly refreshContextWindow: () => void,
   ) {}
 
   handle(event: AppEvent): void {
     const { scrollback, statusBar, composer } = this.screen
 
     switch (event.type) {
+      case "runtime_reload":
+        scrollback.append({ kind: event.outcome === "error" ? "error" : "info", text: event.message })
+        if (event.outcome !== "reloaded") break
+        switch (event.source) {
+          case "skills":
+            this.screen.activeComposer.refreshCompletion()
+            break
+          case "settings":
+            this.refreshContextWindow()
+            break
+        }
+        break
       case "plugin_registration_finished": {
         const { total, failures } = event.status
         const registered = total - failures.length

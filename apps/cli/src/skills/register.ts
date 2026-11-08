@@ -3,8 +3,9 @@ import { dirname, join } from "node:path"
 import { registerPrompt } from "../agent/prompt/registry"
 import { agentHome, projectConfigPath } from "../config/paths"
 import { findProjectRoot } from "../project/root"
+import { isTrusted } from "../project/trust"
 import { registerTool } from "../tools/registry"
-import { loadSkills } from "./catalog"
+import { loadSkills, type SkillLoadResult, type SkillRoot } from "./catalog"
 import { listSkills, replaceSkills } from "./registry"
 import { skillTool } from "./tool"
 
@@ -31,14 +32,22 @@ export function registerSkills(): void {
   registerPrompt({ id: "skills", text: catalogPrompt })
 }
 
-export async function discoverSkills(): Promise<string[]> {
-  const root = await findProjectRoot(process.cwd())
-  const loaded = await loadSkills([
+export async function readSkills(root: string): Promise<SkillLoadResult> {
+  const roots: SkillRoot[] = [
     { directory: join(homedir(), ".agents", "skills"), source: "user" },
     { directory: join(agentHome(), "skills"), source: "user" },
-    { directory: join(root, ".agents", "skills"), source: "project" },
-    { directory: join(dirname(projectConfigPath(root)), "skills"), source: "project" },
-  ])
+  ]
+  if (await isTrusted(root)) {
+    roots.push(
+      { directory: join(root, ".agents", "skills"), source: "project" },
+      { directory: join(dirname(projectConfigPath(root)), "skills"), source: "project" },
+    )
+  }
+  return loadSkills(roots)
+}
+
+export async function discoverSkills(): Promise<string[]> {
+  const loaded = await readSkills(await findProjectRoot(process.cwd()))
   replaceSkills(loaded.skills)
   return loaded.failures.map((failure) => `${failure.path}: ${failure.reason}`)
 }

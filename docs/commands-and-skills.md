@@ -101,6 +101,10 @@ Xal discovers reusable skill packages from four directories, in increasing prior
 
 A later package replaces an earlier package with the same skill name. Project skill directories are read only after workspace trust is established.
 
+In the interactive TUI, these directories are checked automatically every two seconds while the session and its background work are idle. Adding, editing, renaming, or removing a package updates `$` completion, explicit skill invocation, the `skill` tool, and the catalog in subsequent model prompts without restarting Xal. Newly created directories and symlinked packages are included. Removing a project override reveals the lower-priority user skill again. Supporting files are read from disk on demand. Instructions already loaded into conversation history are not rewritten.
+
+Invalid edits or discovery failures report an error and retain the previous skill catalog until fixed; other valid packages still load normally at startup. Reloads keep the original launch project's scope and trust rules. See [Automatic reload](/docs/configs#automatic-reload) for configuration support and restart-only settings.
+
 Every package is a directory containing a `SKILL.md` entry file. The entry file requires YAML frontmatter with a `description`. Its `name` is optional and defaults to the package directory name:
 
 ```md
