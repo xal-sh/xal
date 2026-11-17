@@ -19,7 +19,11 @@ export interface ApiKeyCredential {
   key: string
 }
 
-export type Credential = OAuthCredential | ApiKeyCredential
+export interface NoAuthCredential {
+  type: "none"
+}
+
+export type Credential = OAuthCredential | ApiKeyCredential | NoAuthCredential
 
 export interface ProviderProfile {
   id: string
@@ -33,13 +37,20 @@ interface StoredProfile extends ProviderProfile {
 
 function secretValues(profiles: Record<string, StoredProfile>): string[] {
   return Object.values(profiles).flatMap(({ credential }) => {
-    if (credential.type === "api_key") return [credential.key]
-    return [credential.access, credential.refresh]
+    switch (credential.type) {
+      case "none":
+        return []
+      case "api_key":
+        return [credential.key]
+      case "oauth":
+        return [credential.access, credential.refresh]
+    }
   })
 }
 
 function parseCredential(raw: unknown): Credential | undefined {
   if (!isRecord(raw)) return undefined
+  if (raw.type === "none") return { type: "none" }
   if (raw.type === "api_key") {
     const key = asString(raw.key)
     return key ? { type: "api_key", key } : undefined
@@ -232,16 +243,20 @@ export async function loadCredential(providerId: string, profileId: string): Pro
 }
 
 function sameCredential(left: Credential, right: Credential): boolean {
-  if (left.type !== right.type) return false
-  if (left.type === "api_key" || right.type === "api_key") {
-    return left.type === "api_key" && right.type === "api_key" && left.key === right.key
+  switch (left.type) {
+    case "none":
+      return right.type === "none"
+    case "api_key":
+      return right.type === "api_key" && left.key === right.key
+    case "oauth":
+      return (
+        right.type === "oauth" &&
+        left.access === right.access &&
+        left.refresh === right.refresh &&
+        left.expires === right.expires &&
+        left.accountId === right.accountId
+      )
   }
-  return (
-    left.access === right.access &&
-    left.refresh === right.refresh &&
-    left.expires === right.expires &&
-    left.accountId === right.accountId
-  )
 }
 
 function storedProfileFor(
