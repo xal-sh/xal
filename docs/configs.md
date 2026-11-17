@@ -69,7 +69,7 @@ Built-in configuration is documented with the feature that consumes it:
 - [TUI](/docs/tui) covers display preferences and keybindings.
 - [Built-in tools](/docs/tools) covers the tools the model is offered and when each one is available.
 - [Integrations](/docs/integrations) covers language servers and MCP servers.
-- [Providers and models](/docs/providers) covers built-in provider options and model discovery.
+- [Providers and models](/docs/providers) covers built-in provider options and model discovery, including [local server configuration](/docs/providers#local-provider-configuration) for Ollama, LM Studio, and OpenAI-compatible servers.
 - [Plugins and hooks](/docs/plugins) covers custom plugin configuration.
 - [Commands and skills](/docs/commands-and-skills) covers project instruction limits.
 - [Scheduler](/docs/scheduler) covers delayed model continuation.

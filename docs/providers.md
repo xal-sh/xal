@@ -4,7 +4,7 @@ Connect a built-in or plugin-provided model service, select a model, and configu
 
 ## Built-in providers
 
-Built-in provider IDs are `anthropic`, `google`, `openai`, `openai-chatgpt`, `openrouter`, `github-copilot`, `xai`, `deepseek`, `alibaba-cloud`, `minimax`, `minimax-coding-plan`, `kimi-code-plan-global`, `kimi-code-plan-cn`, `opencode-go`, and `typesafe`. `claude` is an alias for `anthropic`, `gemini` is an alias for `google`, `openai-api` is an alias for `openai`, `chatgpt` is an alias for `openai-chatgpt`, `copilot` is an alias for `github-copilot`, `grok` is an alias for `xai`, `dashscope` is an alias for `alibaba-cloud`, `kimi` is an alias for `kimi-code-plan-global`, and `kimi-cn` is an alias for `kimi-code-plan-cn`.
+Built-in provider IDs are `anthropic`, `google`, `openai`, `openai-chatgpt`, `openrouter`, `github-copilot`, `xai`, `deepseek`, `alibaba-cloud`, `minimax`, `minimax-coding-plan`, `kimi-code-plan-global`, `kimi-code-plan-cn`, `opencode-go`, `ollama`, `lmstudio`, `openai-compatible`, and `typesafe`. `claude` is an alias for `anthropic`, `gemini` is an alias for `google`, `openai-api` is an alias for `openai`, `chatgpt` is an alias for `openai-chatgpt`, `copilot` is an alias for `github-copilot`, `grok` is an alias for `xai`, `dashscope` is an alias for `alibaba-cloud`, `kimi` is an alias for `kimi-code-plan-global`, `kimi-cn` is an alias for `kimi-code-plan-cn`, and `lm-studio` is an alias for `lmstudio`.
 
 The only built-in UI ID is `tui`. Plugins may register more providers, aliases, and UIs.
 
@@ -34,6 +34,61 @@ GitHub Copilot discovers the models enabled for each connected subscription and 
 Anthropic discovers models from its authenticated `/models` endpoint and layers bundled context windows, output limits, and thinking options over the result because that endpoint reports none of them. Google Gemini discovers models from `/models`, keeps the ones that support `generateContent`, and reads each context window from the reported input token limit. OpenRouter discovers its full catalog from `/models` and reads context window, input modalities, and reasoning support directly from the response, so no bundled metadata is layered over it. Each of the three falls back to a small bundled catalog and reports the failure when live discovery is unavailable.
 
 xAI discovers models from its authenticated `/models` endpoint, hides the image, speech, and voice models that the chat endpoint rejects, and layers bundled context windows and thinking options over the result because that endpoint reports neither. The account's credential decides what the endpoint returns, so a Grok subscription and an API key each see their own catalog. DeepSeek discovers models from its authenticated `/models` endpoint and reports when it must use bundled model metadata. Alibaba Cloud uses a bundled catalog of Qwen models shared by Model Studio and Coding Plan. MiniMax and MiniMax Coding Plan use the bundled minimax.io catalog. OpenCode Go discovers the account-visible catalog from its `/models` endpoint, which reports only IDs, so bundled metadata supplies names, context windows, input modalities, thinking controls, and each model's wire protocol; unknown IDs are served over Chat Completions with conservative defaults. It falls back to its bundled catalog and reports the failure when live discovery is unavailable.
+
+## Local models
+
+Ollama, LM Studio, and other OpenAI-compatible servers are built in; no additional plugin or cloud account is required. Xal connects to a server you run. It does not install servers, download models, or manage their processes.
+
+| Provider ID         | Default `baseUrl`           | Use case                                      |
+| ------------------- | --------------------------- | --------------------------------------------- |
+| `ollama`            | `http://localhost:11434/v1` | Ollama's OpenAI-compatible API.               |
+| `lmstudio`          | `http://localhost:1234/v1`  | LM Studio's local server.                     |
+| `openai-compatible` | `http://localhost:8080/v1`  | llama.cpp, vLLM, and similar compatible APIs. |
+
+Start your server and download or load a **tool-capable chat model**, then connect:
+
+```bash
+xal connect ollama local-ollama
+xal connect lmstudio local-studio
+xal connect openai-compatible local-server
+```
+
+Each command creates a separate named profile. Choose **No authentication** for an ordinary local server, or **API key** if your server requires a bearer token. Keyless profiles store an explicit no-authentication credential and send no `Authorization` header; API keys are stored in the existing protected credentials file, not in configuration. `/connect` offers the same choices in the TUI, and `/profiles` and `/logout` work normally.
+
+Connection validates `GET <baseUrl>/models` without running inference. The first returned model becomes the default; use `/model` to choose another, and `/model refresh` or `xal models ollama` to discover newly available models. These providers use only the server's catalog, with no bundled model list or persistent disk cache. Unreachable servers and invalid or empty catalogs fail visibly. A failed refresh retains the previous in-process catalog with a warning. The standard models endpoint does not reliably distinguish embeddings from chat models or advertise tool support, so select a chat model that supports tools; model names alone are not treated as proof of compatibility.
+
+Requests use streamed Chat Completions, including tool calls, tool-result replay, reasoning text when supplied, and token usage when reported by the server. The server and model must support OpenAI-compatible tool calling for coding tasks. Some servers need a tool parser or a suitable chat template enabled. Xal does not send provider-specific sampling, caching, or thinking-effort parameters; `/thinking` is unavailable for these connections.
+
+### Local provider configuration
+
+Configure each provider independently under `pluginConfig.ollama`, `pluginConfig.lmstudio`, or `pluginConfig.openai-compatible`:
+
+| Option          | Type             | Default                  | Description                                                                                          |
+| --------------- | ---------------- | ------------------------ | ---------------------------------------------------------------------------------------------------- |
+| `baseUrl`       | string           | Provider default above   | Full HTTP or HTTPS API base, including `/v1` or any reverse-proxy prefix.                            |
+| `contextWindow` | Positive integer | Unknown                  | Context budget Xal uses for every model on this provider; must not exceed the server's actual limit. |
+| `imageInput`    | boolean          | `false`                  | Enable image input only when the models you use support it.                                          |
+| `clientName`    | string           | Package application name | Non-empty client name used in the request user agent.                                                |
+
+For example, connect vLLM on port 8000 and track a 32K context budget for an Ollama model already configured with at least that much context:
+
+```json
+{
+  "pluginConfig": {
+    "ollama": {
+      "contextWindow": 32768
+    },
+    "openai-compatible": {
+      "baseUrl": "http://localhost:8000/v1",
+      "contextWindow": 32768
+    }
+  }
+}
+```
+
+The standard `/models` response does not reliably report the active context window or image support, so Xal does not guess them. Set `contextWindow` to enable context tracking and automatic compaction. This setting does **not** change the server's context allocation: configure Ollama's `num_ctx`, LM Studio's loaded context, or your server's equivalent separately. Use a context budget large enough for the harness instructions, tool definitions, and task. With `imageInput: true`, every model on that provider is treated as image-capable; leave it off for mixed or text-only catalogs.
+
+All four options are startup-only and apply to every profile of that provider. Restart Xal after editing them. Changing `baseUrl` redirects those profiles, including any stored API key, to the new server. Use only trusted endpoints and prefer HTTPS outside loopback or a trusted local network. URLs with embedded credentials, query strings, or fragments are rejected, and HTTP redirects are not followed. Unknown settings and invalid values report a plugin registration failure rather than silently using defaults.
 
 ## Stream timeouts
 
