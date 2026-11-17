@@ -27,7 +27,7 @@ function configuredBaseUrl(id: string, config: Record<string, unknown>, fallback
   if (url.protocol !== "http:" && url.protocol !== "https:") {
     throw new Error(`${id} baseUrl must use HTTP or HTTPS`)
   }
-  if (url.username || url.password || url.search || url.hash) {
+  if (url.username || url.password || /[?#]/.test(url.href)) {
     throw new Error(`${id} baseUrl cannot contain credentials, a query, or a fragment`)
   }
   return url.href.replace(/\/+$/, "")

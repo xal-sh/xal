@@ -179,7 +179,9 @@ describe("local model configuration and authentication", () => {
       "not a URL",
       "file:///tmp/models",
       "http://user:secret@localhost/v1",
+      "http://localhost/v1?",
       "http://localhost/v1?key=secret",
+      "http://localhost/v1#",
       "http://localhost/v1#fragment",
     ]) {
       expect(() => provider(ollama, { baseUrl })).toThrow("baseUrl")
