@@ -90,7 +90,9 @@ Session totals include normal turns, compaction, and goal evaluation requests as
 
 ## Skills
 
-Xal discovers reusable skill packages from four directories, in increasing priority:
+Xal ships two skills inside the executable. `$xal-help` lists the installed version's offline Markdown docs as supporting files. `$xal-plugin` guides the agent through creating and activating a [live plugin](/docs/plugins#live-plugins), including tool-result UI. They use the ordinary skill catalog, tool, and `$` completion; the full docs are not added to every model prompt. Neither needs a checkout, extraction step, or network connection.
+
+On-disk packages can override a bundled skill. Xal discovers them from four directories, in increasing priority:
 
 | Scope   | Path                                    |
 | ------- | --------------------------------------- |

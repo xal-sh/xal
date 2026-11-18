@@ -44,6 +44,7 @@ export class AppEventController {
         scrollback.append({ kind: event.outcome === "error" ? "error" : "info", text: event.message })
         if (event.outcome !== "reloaded") break
         switch (event.source) {
+          case "plugins":
           case "skills":
             this.screen.activeComposer.refreshCompletion()
             break

@@ -70,12 +70,16 @@ test("repairs common plain scalar YAML and accepts relaxed skill metadata", asyn
 
     expect(failures).toEqual([])
     expect(skills).toHaveLength(2)
-    expect(skills.find((skill) => skill.path.endsWith("directory-name/SKILL.md"))).toMatchObject({
+    expect(
+      skills.find((skill) => skill.source !== "builtin" && skill.path.endsWith("directory-name/SKILL.md")),
+    ).toMatchObject({
       name: "Display Name",
       description: "Multiple words",
       body: "body",
     })
-    expect(skills.find((skill) => skill.path.endsWith("release-swift/SKILL.md"))).toMatchObject({
+    expect(
+      skills.find((skill) => skill.source !== "builtin" && skill.path.endsWith("release-swift/SKILL.md")),
+    ).toMatchObject({
       name: "release-swift",
       description: "Cut a release (Swift app): pick a version",
       body: "",

@@ -33,6 +33,17 @@ export function registerToolRenderer(renderer: ToolRenderer): void {
   renderers.set(renderer.tool, renderer)
 }
 
+const liveRenderers = new Map<string, ToolRenderer>()
+
+export function registerLiveToolRenderer(renderer: ToolRenderer): () => void {
+  const key = renderer.tool
+  if (liveRenderers.has(key)) throw new Error(`live renderer already registered: ${key}`)
+  liveRenderers.set(key, renderer)
+  return () => {
+    if (liveRenderers.get(key) === renderer) liveRenderers.delete(key)
+  }
+}
+
 export function getToolRenderer(tool: string): ToolRenderer | undefined {
-  return renderers.get(tool)
+  return liveRenderers.get(tool) ?? renderers.get(tool)
 }
