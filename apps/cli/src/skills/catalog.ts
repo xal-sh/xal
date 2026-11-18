@@ -2,7 +2,7 @@ import { readdir, readFile, realpath, stat } from "node:fs/promises"
 import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path"
 import { describeError, isMissingPathError } from "../lib/error"
 import { asString, isRecord } from "../lib/json"
-import type { Skill, SkillSource } from "./types"
+import type { FileSkill, Skill, SkillSource } from "./types"
 
 const MAX_SKILL_BYTES = 64 * 1024
 const MAX_RESOURCE_BYTES = 50_000
@@ -196,7 +196,7 @@ function parseSkill(path: string, content: string): SkillDocument {
   return { name, description, body: normalized.slice(frontmatter[0].length).trim() }
 }
 
-async function loadSkill(path: string, source: SkillSource): Promise<Skill> {
+async function loadSkill(path: string, source: SkillSource): Promise<FileSkill> {
   const info = await stat(path)
   if (info.size > MAX_SKILL_BYTES) throw new Error(`${path}: SKILL.md exceeds ${MAX_SKILL_BYTES} bytes`)
   const document = parseSkill(path, await readFile(path, "utf8"))
@@ -226,8 +226,8 @@ async function loadRoot(root: SkillRoot): Promise<SkillLoadResult> {
   return { skills, failures }
 }
 
-export async function loadSkills(roots: SkillRoot[]): Promise<SkillLoadResult> {
-  const catalog = new Map<string, Skill>()
+export async function loadSkills(roots: SkillRoot[], builtins: Skill[] = []): Promise<SkillLoadResult> {
+  const catalog = new Map(builtins.map((skill) => [skill.name, skill]))
   const failures: SkillLoadFailure[] = []
   for (const root of roots) {
     const loaded = await loadRoot(root)
@@ -239,6 +239,7 @@ export async function loadSkills(roots: SkillRoot[]): Promise<SkillLoadResult> {
 }
 
 export async function listSkillFiles(skill: Skill): Promise<string[]> {
+  if (skill.source === "builtin") return [...skill.resources.keys()]
   const root = await realpath(skill.directory)
   const files: string[] = []
   for (const path of await walkFiles(skill.directory)) {
@@ -252,6 +253,11 @@ export async function listSkillFiles(skill: Skill): Promise<string[]> {
 
 export async function readSkillResource(skill: Skill, resource: string): Promise<string> {
   if (!resource || isAbsolute(resource)) throw new Error("path must be relative to the skill directory")
+  if (skill.source === "builtin") {
+    const text = skill.resources.get(resource)
+    if (text === undefined) throw new Error(`skill file not found: ${resource}`)
+    return text
+  }
   const root = await realpath(skill.directory)
   const candidate = resolve(root, resource)
   if (candidate !== root && !candidate.startsWith(`${root}${sep}`)) {

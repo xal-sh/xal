@@ -21,7 +21,7 @@ export type AppEvent =
   | { type: "plugin_bootstrap_finished"; status: PluginStatus }
   | {
       type: "runtime_reload"
-      source: "settings" | "skills"
+      source: "settings" | "skills" | "plugins"
       outcome: "reloaded" | "restart_required" | "error"
       message: string
     }

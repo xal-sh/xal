@@ -106,11 +106,7 @@ type AnonymousAppEvent =
   | { type: "plugin_registration_finished"; total: number; failedPhases: string[]; notices: number }
   | { type: "plugin_bootstrap_started"; total: number }
   | { type: "plugin_bootstrap_finished"; total: number; failedPhases: string[]; notices: number }
-  | {
-      type: "runtime_reload"
-      source: "settings" | "skills"
-      outcome: "reloaded" | "restart_required" | "error"
-    }
+  | Omit<Extract<AppEvent, { type: "runtime_reload" }>, "message">
 
 export type ProfileRecord =
   | { type: "run_started"; version: string }

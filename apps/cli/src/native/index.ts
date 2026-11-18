@@ -104,6 +104,7 @@ export interface NativeSecretMatcher {
 
 interface NativeBinding {
   createSessionLock(path: string): NativeSessionLock
+  readPluginDraft(root: string, path: string, limit: number): string
   createSecretMatcher(values: string[], marker: string): NativeSecretMatcher
   createGitRepository(cwd: string): NativeGitRepository
   createLspManager(definitions: unknown, appName: string, appVersion: string): NativeLspManager
@@ -192,6 +193,7 @@ function createBinding(value: unknown): NativeBinding {
   if (version !== NATIVE_API_VERSION) throw new Error(`native addon API version mismatch: ${String(version)}`)
   const Matcher = value.NativeSecretMatcher
   if (typeof Matcher !== "function") throw new Error("native addon NativeSecretMatcher export is invalid")
+  const readDraft = requiredFunction(value, "readPluginDraft")
   const nativeBatchScores = requiredFunction(value, "nativeBatchScores")
   const nativeNormalizeProcessOutput = requiredFunction(value, "nativeNormalizeProcessOutput")
   const GitRepository = value.NativeGitRepository
@@ -328,6 +330,11 @@ function createBinding(value: unknown): NativeBinding {
     createShellManager() {
       return parseNativeShellManager(Reflect.construct(ShellManager, []))
     },
+    readPluginDraft(root, path, limit) {
+      const source: unknown = Reflect.apply(readDraft, value, [root, path, limit])
+      if (typeof source !== "string") throw new Error("native plugin draft is not text")
+      return source
+    },
     normalizeProcessOutput(output) {
       const normalized: unknown = Reflect.apply(nativeNormalizeProcessOutput, value, [output])
       if (typeof normalized !== "string") throw new Error("native process normalization returned an invalid value")
@@ -454,6 +461,10 @@ export function createNativeLspManager(definitions: unknown, appName: string, ap
 
 export function createNativeMcpManager(configs: unknown, appName: string, appVersion: string): NativeMcpManager {
   return nativeBinding().createMcpManager(configs, appName, appVersion)
+}
+
+export function readPluginDraft(root: string, path: string, limit: number): string {
+  return nativeBinding().readPluginDraft(root, path, limit)
 }
 
 export function createNativeSessionLock(path: string): NativeSessionLock {

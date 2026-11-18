@@ -5,6 +5,7 @@ import { agentHome, projectConfigPath } from "../config/paths"
 import { findProjectRoot } from "../project/root"
 import { isTrusted } from "../project/trust"
 import { registerTool } from "../tools/registry"
+import { builtinSkills } from "./builtins"
 import { loadSkills, type SkillLoadResult, type SkillRoot } from "./catalog"
 import { listSkills, replaceSkills } from "./registry"
 import { skillTool } from "./tool"
@@ -27,7 +28,7 @@ function catalogPrompt(): string {
 }
 
 export function registerSkills(): void {
-  replaceSkills([])
+  replaceSkills(builtinSkills)
   registerTool(skillTool)
   registerPrompt({ id: "skills", text: catalogPrompt })
 }
@@ -43,7 +44,7 @@ export async function readSkills(root: string): Promise<SkillLoadResult> {
       { directory: join(dirname(projectConfigPath(root)), "skills"), source: "project" },
     )
   }
-  return loadSkills(roots)
+  return loadSkills(roots, builtinSkills)
 }
 
 export async function discoverSkills(): Promise<string[]> {

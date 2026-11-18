@@ -1,9 +1,10 @@
 import { expect, test } from "bun:test"
+import { t } from "@opentui/core"
 import { createTestRenderer } from "@opentui/core/testing"
 import { appInfo } from "../../../app-info"
-import { registerToolRenderer } from "../../../ui/extension"
+import { registerLiveToolRenderer, registerToolRenderer } from "../../../ui/extension"
 import { displayWidth, terminalGlyph } from "../lib/text"
-import type { BackgroundBlock } from "./blocks"
+import type { BackgroundBlock, ToolBlock } from "./blocks"
 import { backgroundResultHeading } from "./render"
 import { Scrollback } from "./scrollback"
 
@@ -502,6 +503,70 @@ test("a collapsed tool stays one line while naming the command and why it failed
     expect(text).not.toContain("failed")
     expect(text).not.toContain("third line of output")
   } finally {
+    setup.renderer.destroy()
+  }
+})
+
+test("replay preserves legacy result bodies and tool failure status when replacement renderers throw", async () => {
+  const setup = await createTestRenderer({
+    width: 90,
+    height: 24,
+    footerHeight: 1,
+    screenMode: "split-footer",
+    externalOutputMode: "capture-stdout",
+  })
+  await setup.renderer.setupTerminal()
+  const scrollback = new Scrollback(
+    setup.renderer,
+    0,
+    () => {},
+    { showOutputs: true, showThinking: false, scrollbackRows: 40 },
+    undefined,
+  )
+  const result = {
+    kind: "tool",
+    tool: "versioned-counter",
+    title: "Count",
+    readOnly: true,
+    expanded: true,
+    denial: undefined,
+    execution: undefined,
+    elapsed: undefined,
+  } satisfies Omit<ToolBlock, "output">
+  const legacy = "This legacy counter returned a sentence instead of a number"
+  const rejected = "Counting was declined by this tool"
+  scrollback.append({ ...result, output: legacy })
+  const remove = registerLiveToolRenderer({
+    tool: result.tool,
+    failed: (output) => output === rejected,
+    summarize(output) {
+      if (output === rejected) return "count declined"
+      if (output !== "3") throw new Error("expected numeric output")
+      return "3 counted"
+    },
+    renderOutput(output) {
+      if (output === rejected) throw new Error("unknown result format")
+      return { content: t`Count: ${output}`, rows: 1 }
+    },
+  })
+  try {
+    scrollback.append({ ...result, output: "3" })
+    scrollback.append({ ...result, output: rejected })
+    setup.externalOutput.clear()
+    scrollback.replay()
+    const text = setup.externalOutput
+      .take()
+      .flatMap((commit) => commit.rows)
+      .join("\n")
+    expect(text).toContain(legacy)
+    expect(text).toContain("versioned-counter renderer failed: expected numeric output")
+    expect(text).toContain("3 counted")
+    expect(text).toContain("Count: 3")
+    expect(text).toContain("count declined x")
+    expect(text).toContain(rejected)
+    expect(text).toContain("versioned-counter renderer failed: unknown result format")
+  } finally {
+    remove()
     setup.renderer.destroy()
   }
 })

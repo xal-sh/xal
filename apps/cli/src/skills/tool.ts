@@ -1,4 +1,5 @@
 import { asString } from "../lib/json"
+import { listSkillFiles, readSkillResource } from "./catalog"
 import { getSkill } from "./registry"
 import type { Skill } from "./types"
 import type { Tool } from "../tools/types"
@@ -12,7 +13,21 @@ function requiredSkill(args: Record<string, unknown>): Skill {
   return skill
 }
 
+export async function describeSkill(skill: Skill): Promise<string> {
+  const files = await listSkillFiles(skill)
+  const resources = files.length
+    ? `Supporting files:\n${files.map((file) => `- ${file}`).join("\n")}`
+    : "Supporting files: none"
+  return [
+    `Skill: ${skill.name}`,
+    skill.source === "builtin" ? "Source: built into Xal" : `Directory: ${skill.directory}`,
+    resources,
+    skill.body,
+  ].join("\n\n")
+}
+
 export async function renderSkill(skill: Skill): Promise<string> {
+  if (skill.source === "builtin") return describeSkill(skill)
   const result = await nativeSkill({
     name: skill.name,
     directory: skill.directory,
@@ -22,7 +37,7 @@ export async function renderSkill(skill: Skill): Promise<string> {
   return result.output
 }
 
-export const skillTool: Tool = {
+export const skillTool = {
   name: "skill",
   description:
     "Load a discovered skill's instructions and supporting-file list into the conversation, or read one supporting text file from its package. Omitting path loads the skill instructions.",
@@ -56,6 +71,7 @@ export const skillTool: Tool = {
     const skill = requiredSkill(args)
     const resource = asString(args.path)
     if (resource === undefined) return { output: await renderSkill(skill) }
+    if (skill.source === "builtin") return { output: await readSkillResource(skill, resource) }
     return nativeSkill({
       name: skill.name,
       directory: skill.directory,
@@ -64,4 +80,4 @@ export const skillTool: Tool = {
       resource,
     })
   },
-}
+} satisfies Tool

@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test"
 import { createTestRenderer } from "@opentui/core/testing"
-import { registerToolRenderer } from "../../../ui/extension"
+import { registerLiveToolRenderer, registerToolRenderer } from "../../../ui/extension"
 import { LiveTools } from "./live-tools"
 
 test("child approvals stay under the existing parent row and leave no orphan view", async () => {
@@ -58,6 +58,32 @@ test("live bash uses compact execution titles and only expands output on request
     expect(live.height).toBe(0)
   } finally {
     live.clear()
+    setup.renderer.destroy()
+  }
+})
+
+test("invalid compact titles keep the first heading line and a visible warning", async () => {
+  const setup = await createTestRenderer({ width: 120, height: 24 })
+  const live = new LiveTools(setup.renderer, () => {}, false)
+  const remove = registerLiveToolRenderer({
+    tool: "counter",
+    compactTitle(title) {
+      if (title.startsWith("Invalid")) return JSON.parse("42")
+      throw Object.create(null)
+    },
+  })
+  setup.renderer.root.add(live.view)
+  try {
+    live.start("invalid", "counter", "Invalid title\nsecond line", true)
+    live.start("exception", "counter", "Unreadable error\nsecond line", true)
+    await setup.renderOnce()
+    const frame = setup.captureCharFrame()
+    expect(frame).toContain("counter Invalid title · counter renderer failed:")
+    expect(frame).toContain("counter Unreadable error · counter renderer failed: no diagnostic available")
+    expect(frame).not.toContain("second line")
+  } finally {
+    live.clear()
+    remove()
     setup.renderer.destroy()
   }
 })
