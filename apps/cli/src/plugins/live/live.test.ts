@@ -165,13 +165,74 @@ async function restart(
   return JSON.parse(stdout)
 }
 
+test("cancelling staging stops waiting for a pending module import", async () => {
+  const entered = new Promise<() => void>((resolve) => process.once("xal-test-import-started", resolve))
+  const controller = new AbortController()
+  const source = `await new Promise(resolve => process.emit("xal-test-import-started", resolve));\n${commandPlugin("waiting", "waiting-alias")}`
+  const stage = contributions.stageLivePlugin("waiting", source, controller.signal)
+  const resume = await entered
+  try {
+    controller.abort(new Error("staging cancelled"))
+    await expect(stage).rejects.toThrow("staging cancelled")
+  } finally {
+    resume()
+  }
+})
+
+test.each([1, 2])(
+  "startup handles %i concurrent approval changes without publishing stale commands",
+  async (changes) => {
+    const name = `restore-race-${changes}`
+    const publish = async (version: number) => {
+      await draft("user", name, commandPlugin(name, `${name}-v${version}`))
+      await restart(root, agentHome(), { type: "activate", scope: "user", name, skipRestore: true })
+    }
+    await publish(0)
+    const stage = contributions.stageLivePlugin
+    let attempts = 0
+    const probe = spyOn(contributions, "stageLivePlugin").mockImplementation(async (...args) => {
+      const result = await stage(...args)
+      if (args[0] === name && ++attempts <= changes) await publish(attempts)
+      return result
+    })
+    try {
+      const failures = await plugins.restore(signal)
+      expect(attempts).toBe(2)
+      expect(getCommand(`${name}-v0`)).toBeUndefined()
+      if (changes === 1) {
+        expect(failures).toEqual([])
+        expect(getCommand(`${name}-v1`)?.name).toBe(name)
+      } else {
+        expect(failures).toMatchObject([
+          { plugin: `user:${name}`, phase: "bootstrap", reason: expect.stringContaining("changed repeatedly") },
+        ])
+        expect(getCommand(name)).toBeUndefined()
+        expect(await restart(root)).toHaveProperty(`commands.${name}-v2`, name)
+      }
+    } finally {
+      probe.mockRestore()
+    }
+  },
+)
+
 test("restores only approved source for each scope and preserves the working revision when a replacement conflicts", async () => {
   const user = await draft("user", "my-user", commandPlugin("my-user", "user-alias"))
   await plugins.activate("user", "my-user", user.sha256, root, signal)
   const project = await draft("project", "my-project", commandPlugin("my-project", "old-alias"))
   await plugins.activate("project", "my-project", project.sha256, root, signal)
   const updated = await draft("project", "my-project", commandPlugin("my-project", "current-alias"))
-  await plugins.activate("project", "my-project", updated.sha256, root, signal)
+  const published: (string | undefined)[] = []
+  const unsubscribe = events.subscribe((event) => {
+    if (event.type === "runtime_reload" && event.source === "plugins" && event.outcome === "reloaded") {
+      published.push(getCommand("current-alias")?.name)
+    }
+  })
+  try {
+    await plugins.activate("project", "my-project", updated.sha256, root, signal)
+    expect(published).toEqual(["my-project"])
+  } finally {
+    unsubscribe()
+  }
   expect(getCommand("old-alias")).toBeUndefined()
   registerCommand({ name: "taken", describe: "reserved", async run() {} })
   const bad = await draft("project", "my-project", commandPlugin("my-project", "taken"))

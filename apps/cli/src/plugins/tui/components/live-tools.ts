@@ -3,7 +3,7 @@ import { withToolRenderer } from "../../../ui/extension"
 import { formatDuration } from "../lib/format"
 import { column, label, row } from "../lib/renderables"
 import { spinnerGlyph, spinnerHandle } from "../lib/spinner"
-import { sanitize } from "../lib/text"
+import { firstLine, sanitize } from "../lib/text"
 import { COLORS } from "../theme/colors"
 import { commandLabel, liveStatus, type LivePhase } from "./tool-status"
 
@@ -205,10 +205,13 @@ export class LiveTools {
 
   private render(): void {
     for (const entry of this.rows.values()) {
-      const { value: title, warning } = withToolRenderer(entry.tool, (renderer) =>
-        entry.phase === "requested" ? entry.title : (renderer?.compactTitle?.(entry.title) ?? entry.title),
+      const { value: heading, warning } = withToolRenderer(entry.tool, (renderer) =>
+        commandLabel(
+          entry.tool,
+          entry.phase === "requested" ? entry.title : (renderer?.compactTitle?.(entry.title) ?? entry.title),
+        ),
       )
-      entry.heading.content = commandLabel(entry.tool, warning ? `${title} · ${warning}` : title)
+      entry.heading.content = warning ? `${heading} · ${firstLine(warning)}` : heading
       entry.status.content = liveStatus(entry.phase, formatDuration(this.elapsed(entry)), spinnerGlyph())
     }
   }

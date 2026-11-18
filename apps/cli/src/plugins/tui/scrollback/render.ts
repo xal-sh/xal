@@ -297,8 +297,6 @@ function tool(
 
   const width = Math.max(1, ctx.width - GUTTER * 2 - 4)
   const coreOutput = bounded || coreFailed
-  const customOutput =
-    !coreOutput && detailsVisible && block.output ? toolRenderer?.renderOutput?.(block.output, width) : undefined
   const marginTop = grouped ? 0 : 1
   const box = column(ctx)
   const head = row(ctx, { height: 1, alignItems: "center" })
@@ -340,15 +338,20 @@ function tool(
   }
   if (block.output.length === 0) return frame(ctx, box, marginTop)
 
+  const custom =
+    !coreOutput && toolRenderer
+      ? withToolRenderer(block.tool, (renderer) => renderer?.renderOutput?.(block.output, width))
+      : undefined
   const maxRows = coreOutput ? MAX_OUTPUT_ROWS : (toolRenderer?.maxRows ?? MAX_OUTPUT_ROWS)
-  const output = customOutput ?? renderToolOutput(block.output, width, maxRows)
+  const output = custom?.value ?? renderToolOutput(block.output, width, maxRows)
   const body = detailPanel(ctx, { marginLeft: 2 })
   const content = label(ctx, { content: output.content, height: output.rows })
-  if (!customOutput) {
+  if (!custom?.value) {
     content.wrapMode = "char"
     content.truncate = false
   }
   body.add(content)
   box.add(body)
+  if (custom?.warning) box.add(paragraph(ctx, { content: custom.warning, color: COLORS.warning }))
   return frame(ctx, box, marginTop)
 }

@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test"
+import { t } from "@opentui/core"
 import { createTestRenderer } from "@opentui/core/testing"
 import { appInfo } from "../../../app-info"
 import { registerLiveToolRenderer, registerToolRenderer } from "../../../ui/extension"
@@ -506,7 +507,7 @@ test("a collapsed tool stays one line while naming the command and why it failed
   }
 })
 
-test("a replacement renderer can fail on an old result without breaking transcript replay", async () => {
+test("replay preserves legacy result bodies and tool failure status when replacement renderers throw", async () => {
   const setup = await createTestRenderer({
     width: 90,
     height: 24,
@@ -532,25 +533,38 @@ test("a replacement renderer can fail on an old result without breaking transcri
     execution: undefined,
     elapsed: undefined,
   } satisfies Omit<ToolBlock, "output">
-  scrollback.append({ ...result, output: "three words" })
+  const legacy = "This legacy counter returned a sentence instead of a number"
+  const rejected = "Counting was declined by this tool"
+  scrollback.append({ ...result, output: legacy })
   const remove = registerLiveToolRenderer({
     tool: result.tool,
+    failed: (output) => output === rejected,
     summarize(output) {
+      if (output === rejected) return "count declined"
       if (output !== "3") throw new Error("expected numeric output")
       return "3 counted"
+    },
+    renderOutput(output) {
+      if (output === rejected) throw new Error("unknown result format")
+      return { content: t`Count: ${output}`, rows: 1 }
     },
   })
   try {
     scrollback.append({ ...result, output: "3" })
+    scrollback.append({ ...result, output: rejected })
     setup.externalOutput.clear()
     scrollback.replay()
     const text = setup.externalOutput
       .take()
       .flatMap((commit) => commit.rows)
       .join("\n")
-    expect(text).toContain("three words")
+    expect(text).toContain(legacy)
     expect(text).toContain("versioned-counter renderer failed: expected numeric output")
     expect(text).toContain("3 counted")
+    expect(text).toContain("Count: 3")
+    expect(text).toContain("count declined x")
+    expect(text).toContain(rejected)
+    expect(text).toContain("versioned-counter renderer failed: unknown result format")
   } finally {
     remove()
     setup.renderer.destroy()

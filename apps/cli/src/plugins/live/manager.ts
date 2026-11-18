@@ -3,7 +3,7 @@ import { mkdirSync, renameSync, rmSync, unlinkSync, writeFileSync } from "node:f
 import { readdir } from "node:fs/promises"
 import { dirname, join, relative, resolve } from "node:path"
 import { agentHome, projectConfigPath } from "../../config/paths"
-import type { PluginFailure } from "../../events"
+import { events, type PluginFailure } from "../../events"
 import { describeError } from "../../lib/error"
 import { readPluginDraft } from "../../native"
 import { findProjectRoot } from "../../project/root"
@@ -34,6 +34,8 @@ interface ActivePlugin {
   contributions: LiveContributions
   remove(): void
 }
+
+type ApprovalSnapshot = NonNullable<ReturnType<typeof readApproval>>
 
 interface TrackedApproval extends ApprovalRevision {
   pending?: ApprovalVersion & { recorded: boolean }
@@ -340,6 +342,46 @@ export class LivePlugins {
         }
       })
     })
+    events.emitRetained({
+      type: "runtime_reload",
+      source: "plugins",
+      outcome: "reloaded",
+      message: `Activated live plugin: ${scope}:${name}`,
+    })
+  }
+
+  private async restorePlugin(scope: PluginScope, name: string, signal: AbortSignal): Promise<void> {
+    const saved = readApproval(this.home, this.approvedFile(scope, name))
+    if (!saved) return
+    const track = (snapshot: ApprovalSnapshot) => ({ snapshot, entry: this.track(scope, name, snapshot) })
+    const withCurrent = <T>(entry: TrackedApproval, use: (snapshot: ApprovalSnapshot) => T) =>
+      withPublicationLock(this.home, async () => {
+        if (scope === "project" && !(await isTrusted(this.root))) return
+        if (signal.aborted || this.tracked[scope].get(name) !== entry) return
+        const current = this.reconcile(scope, name, entry)
+        if (current) return use(current)
+      })
+    let stage = await withCurrent(this.track(scope, name, saved), track)
+    for (let attempt = 1; stage; attempt++) {
+      const { snapshot, entry } = stage
+      this.checkOwner(scope, name)
+      if (scope === "project" && !(await isTrusted(this.root))) return
+      const contributions = await stageLivePlugin(name, snapshot.source, signal)
+      stage = await withCurrent(entry, (current) => {
+        if (
+          current.installation === snapshot.installation &&
+          current.revision === snapshot.revision &&
+          current.generation === snapshot.generation &&
+          current.sha256 === snapshot.sha256
+        ) {
+          this.replace(scope, name, snapshot.sha256, contributions)
+          return
+        }
+        if (attempt >= 2)
+          throw new Error("approved revision changed repeatedly during startup; restart to load the latest revision")
+        return track(current)
+      })
+    }
   }
 
   async restore(signal: AbortSignal): Promise<PluginFailure[]> {
@@ -362,32 +404,7 @@ export class LivePlugins {
         try {
           if (scope === "project" && !(await isTrusted(this.root))) break
           checkName(name)
-          const saved = readApproval(this.home, join(directory, file))
-          if (!saved) continue
-          const entry = this.track(scope, name, saved)
-          const stage = await withPublicationLock(this.home, async () => {
-            if (scope === "project" && !(await isTrusted(this.root))) return
-            if (signal.aborted || this.tracked[scope].get(name) !== entry) return
-            const snapshot = this.reconcile(scope, name, entry)
-            if (snapshot) return { snapshot, staged: this.track(scope, name, snapshot) }
-          })
-          if (!stage) continue
-          const { snapshot, staged } = stage
-          this.checkOwner(scope, name)
-          if (scope === "project" && !(await isTrusted(this.root))) break
-          const contributions = await stageLivePlugin(name, snapshot.source, signal)
-          await withPublicationLock(this.home, async () => {
-            if (scope === "project" && !(await isTrusted(this.root))) return
-            if (signal.aborted || this.tracked[scope].get(name) !== staged) return
-            const current = this.reconcile(scope, name, staged)
-            if (
-              current?.installation === snapshot.installation &&
-              current.revision === snapshot.revision &&
-              current.generation === snapshot.generation &&
-              current.sha256 === snapshot.sha256
-            )
-              this.replace(scope, name, snapshot.sha256, contributions)
-          })
+          await this.restorePlugin(scope, name, signal)
         } catch (error) {
           if (signal.aborted) return failures
           failures.push({ plugin: `${scope}:${name}`, phase: "bootstrap", reason: describeError(error) })

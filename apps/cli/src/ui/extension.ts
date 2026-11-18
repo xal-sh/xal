@@ -50,6 +50,14 @@ export function getToolRenderer(tool: string): ToolRenderer | undefined {
   return liveRenderers.get(tool) ?? renderers.get(tool)
 }
 
+function rendererWarning(tool: string, error: unknown): string {
+  try {
+    return `${tool} renderer failed: ${redactText(describeError(error))}`
+  } catch {
+    return `${tool} renderer failed: no diagnostic available`
+  }
+}
+
 export function withToolRenderer<T>(
   tool: string,
   render: (renderer?: ToolRenderer) => T,
@@ -59,6 +67,6 @@ export function withToolRenderer<T>(
   try {
     return { value: render(renderer) }
   } catch (error) {
-    return { value: render(), warning: `${tool} renderer failed: ${redactText(describeError(error))}` }
+    return { value: render(), warning: rendererWarning(tool, error) }
   }
 }

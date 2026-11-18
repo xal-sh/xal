@@ -76,7 +76,7 @@ fn read_draft(root: &Path, path: &Path, limit: u32) -> io::Result<String> {
     let parts = path
         .components()
         .map(|part| match part {
-            Component::Normal(name) => Ok(name),
+            Component::Normal(name) if Path::new(name).file_name() == Some(name) => Ok(name),
             _ => Err(io::Error::other("expected a relative plugin path")),
         })
         .collect::<io::Result<Vec<_>>>()?;
@@ -109,6 +109,14 @@ pub fn read_plugin_draft(root: String, path: String, limit: u32) -> napi::Result
 #[cfg(test)]
 mod tests {
     use super::read_plugin_draft;
+
+    #[cfg(windows)]
+    #[test]
+    fn rejects_drive_prefixed_components_before_opening_the_scope() {
+        let error = read_plugin_draft(String::new(), r"plugins\C:example\plugin.ts".into(), 1024)
+            .unwrap_err();
+        assert!(error.reason.contains("expected a relative plugin path"));
+    }
 
     #[test]
     fn rejects_parent_components_before_opening_the_scope() {

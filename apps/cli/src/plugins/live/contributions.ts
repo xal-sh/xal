@@ -1,6 +1,7 @@
 import { parseOutputSchema } from "../../agent/session/output-contract"
 import { registerCommand } from "../../commands/registry"
 import type { Command } from "../../commands/types"
+import { withAbortSignal } from "../../lib/abort"
 import { describeError } from "../../lib/error"
 import { isRecord } from "../../lib/json"
 import { registerTool } from "../../tools/registry"
@@ -32,9 +33,9 @@ export async function stageLivePlugin(name: string, source: string, signal: Abor
       throw new Error(`live plugins must be self-contained; unsupported import: ${entry.path}`)
     }
   }
-  signal.throwIfAborted()
-  const mod: unknown = await import(
-    `data:text/javascript;base64,${Buffer.from(compiler.transformSync(source)).toString("base64")}`
+  const mod: unknown = await withAbortSignal(
+    signal,
+    () => import(`data:text/javascript;base64,${Buffer.from(compiler.transformSync(source)).toString("base64")}`),
   )
   signal.throwIfAborted()
   const plugin = parsePlugin<LiveContext>(mod)

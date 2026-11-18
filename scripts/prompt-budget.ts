@@ -1,3 +1,5 @@
+import { fork } from "node:child_process"
+import { once } from "node:events"
 import { finishApp, registerApp } from "../apps/cli/src/app"
 import { appInfo } from "../apps/cli/src/app-info"
 import { composeSystemPrompt } from "../apps/cli/src/agent/prompt/registry"
@@ -34,7 +36,7 @@ function toolSize(tool: RegisteredTool): number {
   return tool.description.length + JSON.stringify(tool.parameters).length
 }
 
-async function main(args: string[]): Promise<void> {
+async function measure(args: string[]): Promise<string> {
   const options = parseArgs(args)
   const settings = await loadSettings()
   await registerApp(settings)
@@ -69,28 +71,44 @@ async function main(args: string[]): Promise<void> {
   const codingChars = coding.reduce((total, tool) => total + toolSize(tool), 0)
   const toolChars = tools.reduce((total, tool) => total + toolSize(tool), 0)
 
-  console.log(
-    JSON.stringify(
-      {
-        mode: options.mode,
-        kind: options.kind,
-        interactive: options.interactive,
-        instructionChars: instructions.length,
-        toolCount: tools.length,
-        toolChars,
-        codingToolChars: codingChars,
-        machineryToolChars: toolChars - codingChars,
-        tools: tools.map((tool) => ({ name: tool.name, chars: toolSize(tool) })),
-      },
-      null,
-      2,
-    ),
+  return JSON.stringify(
+    {
+      mode: options.mode,
+      kind: options.kind,
+      interactive: options.interactive,
+      instructionChars: instructions.length,
+      toolCount: tools.length,
+      toolChars,
+      codingToolChars: codingChars,
+      machineryToolChars: toolChars - codingChars,
+      tools: tools.map((tool) => ({ name: tool.name, chars: toolSize(tool) })),
+    },
+    null,
+    2,
   )
+}
+
+async function printReport(args: string[]): Promise<void> {
+  const child = fork(import.meta.filename, ["--measure", ...args], { execArgv: [], stdio: ["inherit", 2, 2, "ipc"] })
+  let report: string | undefined
+  child.on("message", (value: unknown) => {
+    if (typeof value === "string") report = value
+  })
+  const [code, signal] = await once(child, "close")
+  if (code !== 0) throw new Error(`prompt budget worker failed (${signal ?? code})`)
+  if (report === undefined) throw new Error("prompt budget worker exited without a report")
+  console.log(report)
 }
 
 if (import.meta.main) {
   try {
-    await main(process.argv.slice(2)).finally(finishApp)
+    const args = process.argv.slice(2)
+    if (args[0] === "--measure" && process.send) {
+      const report = await measure(args.slice(1)).finally(finishApp)
+      process.send(report)
+    } else {
+      await printReport(args)
+    }
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error))
     process.exitCode = 1
