@@ -1,9 +1,9 @@
 import { expect, test } from "bun:test"
 import { createTestRenderer } from "@opentui/core/testing"
 import { appInfo } from "../../../app-info"
-import { registerToolRenderer } from "../../../ui/extension"
+import { registerLiveToolRenderer, registerToolRenderer } from "../../../ui/extension"
 import { displayWidth, terminalGlyph } from "../lib/text"
-import type { BackgroundBlock } from "./blocks"
+import type { BackgroundBlock, ToolBlock } from "./blocks"
 import { backgroundResultHeading } from "./render"
 import { Scrollback } from "./scrollback"
 
@@ -502,6 +502,57 @@ test("a collapsed tool stays one line while naming the command and why it failed
     expect(text).not.toContain("failed")
     expect(text).not.toContain("third line of output")
   } finally {
+    setup.renderer.destroy()
+  }
+})
+
+test("a replacement renderer can fail on an old result without breaking transcript replay", async () => {
+  const setup = await createTestRenderer({
+    width: 90,
+    height: 24,
+    footerHeight: 1,
+    screenMode: "split-footer",
+    externalOutputMode: "capture-stdout",
+  })
+  await setup.renderer.setupTerminal()
+  const scrollback = new Scrollback(
+    setup.renderer,
+    0,
+    () => {},
+    { showOutputs: true, showThinking: false, scrollbackRows: 40 },
+    undefined,
+  )
+  const result = {
+    kind: "tool",
+    tool: "versioned-counter",
+    title: "Count",
+    readOnly: true,
+    expanded: true,
+    denial: undefined,
+    execution: undefined,
+    elapsed: undefined,
+  } satisfies Omit<ToolBlock, "output">
+  scrollback.append({ ...result, output: "three words" })
+  const remove = registerLiveToolRenderer({
+    tool: result.tool,
+    summarize(output) {
+      if (output !== "3") throw new Error("expected numeric output")
+      return "3 counted"
+    },
+  })
+  try {
+    scrollback.append({ ...result, output: "3" })
+    setup.externalOutput.clear()
+    scrollback.replay()
+    const text = setup.externalOutput
+      .take()
+      .flatMap((commit) => commit.rows)
+      .join("\n")
+    expect(text).toContain("three words")
+    expect(text).toContain("versioned-counter renderer failed: expected numeric output")
+    expect(text).toContain("3 counted")
+  } finally {
+    remove()
     setup.renderer.destroy()
   }
 })

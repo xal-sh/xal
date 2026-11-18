@@ -3,7 +3,7 @@ import { listCommands } from "../../commands/registry"
 import { asString } from "../../lib/json"
 import { modeDefinition } from "../../permissions/modes"
 import { contributeRules } from "../../permissions/rules"
-import { listTools, registerTool } from "../../tools/registry"
+import { getTool, listTools, registerTool } from "../../tools/registry"
 import type { Tool } from "../../tools/types"
 import type { LivePlugins, PluginScope } from "./manager"
 
@@ -12,14 +12,23 @@ function scopeOf(value: unknown): PluginScope {
   throw new Error("scope must be project or user")
 }
 
-export function registerLivePluginTools(plugins: LivePlugins): void {
+export function registerLivePluginTools(plugins: LivePlugins): string[] {
+  const notices: string[] = []
+  const add = (tool: Tool) => {
+    if (getTool(tool.name)) {
+      notices.push(`Live plugin management tool ${tool.name} is unavailable: the name is already registered`)
+      return
+    }
+    registerTool(tool)
+    if (tool.name === "activate_plugin") contributeRules({ ask: [tool.name] })
+  }
   const name = { type: "string", description: "Lower-case plugin directory and export name" }
   const scope = {
     type: "string",
     enum: ["project", "user"],
     description: "Launch project or all projects for this user",
   }
-  registerTool({
+  add({
     name: "xal_info",
     description:
       "Inspect this Xal version, registered plugins, tools, commands and live plugin draft directories. Pass a name and scope to fingerprint that single plugin.ts without executing it. Use the xal-help skill for bundled documentation.",
@@ -52,7 +61,7 @@ export function registerLivePluginTools(plugins: LivePlugins): void {
       }
     },
   } satisfies Tool)
-  registerTool({
+  add({
     name: "activate_plugin",
     description:
       "Load or replace an inspected single-file Xal plugin now and on future launches in the selected scope. Executes trusted code with full host privileges, not in a sandbox. Requires the exact draft sha256 from xal_info. Supports tools, slash commands and tool-result renderers; registration failures keep the last working version.",
@@ -75,5 +84,5 @@ export function registerLivePluginTools(plugins: LivePlugins): void {
       }
     },
   } satisfies Tool)
-  contributeRules({ ask: ["activate_plugin"] })
+  return notices
 }

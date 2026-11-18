@@ -1,10 +1,11 @@
 import { randomUUID } from "node:crypto"
 import { mkdirSync, renameSync, rmSync, unlinkSync, writeFileSync } from "node:fs"
-import { readFile, readdir, realpath, stat } from "node:fs/promises"
+import { readdir } from "node:fs/promises"
 import { dirname, join, relative, resolve } from "node:path"
 import { agentHome, projectConfigPath } from "../../config/paths"
 import type { PluginFailure } from "../../events"
 import { describeError } from "../../lib/error"
+import { readPluginDraft } from "../../native"
 import { findProjectRoot } from "../../project/root"
 import { isTrusted } from "../../project/trust"
 import {
@@ -35,7 +36,7 @@ interface ActivePlugin {
 }
 
 interface TrackedApproval extends ApprovalRevision {
-  pending?: ApprovalVersion
+  pending?: ApprovalVersion & { recorded: boolean }
 }
 
 function checkName(name: string): void {
@@ -44,6 +45,7 @@ function checkName(name: string): void {
 
 export class LivePlugins {
   private readonly active = new Map<string, ActivePlugin>()
+  private readonly cleanupFailures = new Map<string, string>()
   private readonly tracked: Record<PluginScope, Map<string, TrackedApproval>> = { user: new Map(), project: new Map() }
   private readonly home = resolve(agentHome())
   readonly directories: Record<PluginScope, string>
@@ -109,21 +111,33 @@ export class LivePlugins {
     version: ApprovalVersion,
     removed?: string[],
   ): void {
-    const pending = entry.pending
-    const generation =
-      pending?.installation === version.installation
-        ? Math.max(pending.generation, version.generation)
-        : version.generation
-    entry.pending = { installation: version.installation, generation }
-    if (pending?.installation !== version.installation) {
-      this.unload(scope, name)
-      removed?.push(`${scope}:${name}`)
+    this.unload(scope, name)
+    if (entry.pending?.installation !== version.installation || entry.pending.generation < version.generation) {
+      entry.pending = { installation: version.installation, generation: version.generation, recorded: false }
     }
-    recordRevocation(
-      this.home,
-      revocationFile(this.home, this.approvedFile(scope, name), version.installation),
-      generation,
-    )
+    const pending = entry.pending
+    if (pending.recorded) return
+    const file = this.approvedFile(scope, name)
+    try {
+      recordRevocation(this.home, revocationFile(this.home, file, pending.installation), pending.generation)
+    } catch (markerError) {
+      try {
+        const deleted = withApprovalLock(this.home, () => {
+          const current = readApproval(this.home, file)
+          if (current?.installation !== pending.installation || current.generation > pending.generation) return false
+          unlinkSync(file)
+          return true
+        })
+        if (!deleted) return
+      } catch (unlinkError) {
+        throw new Error(
+          `Unloaded locally; other sessions may still restore this plugin. Will retry: ${describeError(markerError)}; ${describeError(unlinkError)}`,
+          { cause: unlinkError },
+        )
+      }
+    }
+    pending.recorded = true
+    removed?.push(`${scope}:${name}`)
   }
 
   private discardRevoked(
@@ -131,11 +145,13 @@ export class LivePlugins {
     name: string,
     installation: string,
     current: ReturnType<typeof readApproval>,
+    pendingGeneration = -1,
   ) {
     const file = this.approvedFile(scope, name)
     const marker = revocationFile(this.home, file, installation)
     if (current?.installation === installation) {
-      if (current.generation > revokedThrough(this.home, marker)) return current
+      if (current.generation > pendingGeneration && current.generation > revokedThrough(this.home, marker))
+        return current
       this.unload(scope, name)
       unlinkSync(file)
       current = undefined
@@ -151,6 +167,13 @@ export class LivePlugins {
     try {
       if (scopedPathExists(this.home, file, "file")) {
         missing = !this.hasFolder(scope, name)
+        if (
+          !missing &&
+          removed &&
+          !entry.pending &&
+          unchangedApproval(this.home, file, revocationFile(this.home, file, entry.installation), entry.stamp)
+        )
+          return
         saved = readApproval(this.home, file)
       }
     } catch (error) {
@@ -165,20 +188,23 @@ export class LivePlugins {
       }
       throw error
     }
-    const cutoff =
-      !missing && saved ? revokedThrough(this.home, revocationFile(this.home, file, saved.installation)) : -1
-    if (saved && (missing || saved.generation <= cutoff)) this.retire(scope, name, entry, saved, removed)
-    else if (entry.pending && saved?.installation === entry.pending.installation)
+    let cutoff = -1
+    if (saved && missing) this.retire(scope, name, entry, saved, removed)
+    else if (
+      entry.pending &&
+      saved?.installation === entry.pending.installation &&
+      saved.generation <= entry.pending.generation
+    )
       this.retire(scope, name, entry, entry.pending, removed)
+    else if (saved) {
+      cutoff = revokedThrough(this.home, revocationFile(this.home, file, saved.installation))
+      if (saved.generation <= cutoff) this.retire(scope, name, entry, saved, removed)
+    }
     if (entry.pending) {
       const retired = entry.pending
       withApprovalLock(this.home, () => {
         const latest = readApproval(this.home, file)
-        let current = this.discardRevoked(scope, name, retired.installation, latest)
-        if (current && !this.hasFolder(scope, name)) {
-          this.retire(scope, name, entry, current, removed)
-          current = this.discardRevoked(scope, name, current.installation, current)
-        }
+        const current = this.discardRevoked(scope, name, retired.installation, latest, retired.generation)
         if (current) this.track(scope, name, current)
         else this.tracked[scope].delete(name)
       })
@@ -196,37 +222,33 @@ export class LivePlugins {
 
   async removeDeleted(canRemove: () => boolean) {
     const removed: string[] = []
-    const failures: string[] = []
     for (const scope of ["user", "project"] as const) {
       const entries = this.tracked[scope]
       if (!entries.size || !canRemove()) continue
       try {
-        if (scope === "project" && !(await isTrusted(this.root))) continue
+        const trusted = scope === "user" || (await isTrusted(this.root))
+        if (!trusted) continue
+        this.cleanupFailures.delete(scope)
       } catch (error) {
-        failures.push(`${scope}: ${describeError(error)}`)
+        this.cleanupFailures.set(scope, describeError(error))
         continue
       }
       for (const [name, entry] of entries) {
         if (!canRemove()) break
-        const file = this.approvedFile(scope, name)
+        const key = `${scope}:${name}`
         try {
-          const marker = revocationFile(this.home, file, entry.installation)
-          if (
-            !entry.pending &&
-            (await unchangedApproval(join(this.directories[scope], name), file, marker, entry.stamp))
-          )
-            continue
           await withPublicationLock(this.home, async () => {
             if (scope === "project" && !(await isTrusted(this.root))) return
             if (!canRemove() || entries.get(name) !== entry) return
             this.reconcile(scope, name, entry, removed)
+            this.cleanupFailures.delete(key)
           })
         } catch (error) {
-          failures.push(`${scope}:${name}: ${describeError(error)}`)
+          this.cleanupFailures.set(key, describeError(error))
         }
       }
     }
-    return { removed, failures }
+    return { removed, failures: [...this.cleanupFailures].map(([key, reason]) => `${key}: ${reason}`) }
   }
 
   private async draft(scope: PluginScope, name: string, cwd: string) {
@@ -236,16 +258,7 @@ export class LivePlugins {
     }
     const path = join(this.directories[scope], name, "plugin.ts")
     const boundary = scope === "user" ? this.home : this.root
-    const canonical = await realpath(path)
-    if (canonical !== join(await realpath(boundary), relative(boundary, path))) {
-      throw new Error("live plugin drafts cannot be symlinks or inside symlinked directories")
-    }
-    const info = await stat(canonical)
-    if (!info.isFile() || info.size > MAX_PLUGIN_BYTES)
-      throw new Error("plugin.ts must be a regular file of at most 64 KiB")
-    const bytes = await readFile(canonical)
-    if (bytes.length > MAX_PLUGIN_BYTES) throw new Error("plugin.ts exceeds 64 KiB")
-    const source = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes)
+    const source = readPluginDraft(boundary, relative(boundary, path), MAX_PLUGIN_BYTES)
     return { path, source, sha256: digest(source) }
   }
 
@@ -285,6 +298,8 @@ export class LivePlugins {
     const { source, sha256 } = await this.draft(scope, name, cwd)
     if (sha256 !== expected)
       throw new Error("plugin.ts does not match the inspected sha256; inspect the new draft before activating")
+    if (scope === "project" && !(await isTrusted(this.root)))
+      throw new Error("project plugin activation requires the trusted launch project")
     const contributions = await stageLivePlugin(name, source, signal)
     const file = this.approvedFile(scope, name)
     await withPublicationLock(this.home, async () => {
@@ -293,7 +308,16 @@ export class LivePlugins {
       withApprovalLock(this.home, () => {
         signal.throwIfAborted()
         const saved = readApproval(this.home, file)
-        const previous = saved && this.discardRevoked(scope, name, saved.installation, saved)
+        const pending = this.tracked[scope].get(name)?.pending
+        const previous =
+          saved &&
+          this.discardRevoked(
+            scope,
+            name,
+            saved.installation,
+            saved,
+            pending?.installation === saved.installation ? pending.generation : undefined,
+          )
         const revision = randomUUID()
         const installation = previous?.installation ?? revision
         const generation = previous ? previous.generation + 1 : 0
@@ -318,7 +342,7 @@ export class LivePlugins {
     })
   }
 
-  async restore(): Promise<PluginFailure[]> {
+  async restore(signal: AbortSignal): Promise<PluginFailure[]> {
     const failures: PluginFailure[] = []
     for (const scope of ["user", "project"] as const) {
       const directory = this.store(scope)
@@ -332,6 +356,7 @@ export class LivePlugins {
         continue
       }
       for (const file of names.sort()) {
+        if (signal.aborted) return failures
         if (!file.endsWith(".json")) continue
         const name = file.slice(0, -5)
         try {
@@ -340,16 +365,31 @@ export class LivePlugins {
           const saved = readApproval(this.home, join(directory, file))
           if (!saved) continue
           const entry = this.track(scope, name, saved)
-          const snapshot = await withPublicationLock(this.home, async () => {
+          const stage = await withPublicationLock(this.home, async () => {
             if (scope === "project" && !(await isTrusted(this.root))) return
-            return this.reconcile(scope, name, entry)
+            if (signal.aborted || this.tracked[scope].get(name) !== entry) return
+            const snapshot = this.reconcile(scope, name, entry)
+            if (snapshot) return { snapshot, staged: this.track(scope, name, snapshot) }
           })
-          if (!snapshot) continue
-          this.track(scope, name, snapshot)
+          if (!stage) continue
+          const { snapshot, staged } = stage
           this.checkOwner(scope, name)
-          const contributions = await stageLivePlugin(name, snapshot.source)
-          this.replace(scope, name, snapshot.sha256, contributions)
+          if (scope === "project" && !(await isTrusted(this.root))) break
+          const contributions = await stageLivePlugin(name, snapshot.source, signal)
+          await withPublicationLock(this.home, async () => {
+            if (scope === "project" && !(await isTrusted(this.root))) return
+            if (signal.aborted || this.tracked[scope].get(name) !== staged) return
+            const current = this.reconcile(scope, name, staged)
+            if (
+              current?.installation === snapshot.installation &&
+              current.revision === snapshot.revision &&
+              current.generation === snapshot.generation &&
+              current.sha256 === snapshot.sha256
+            )
+              this.replace(scope, name, snapshot.sha256, contributions)
+          })
         } catch (error) {
+          if (signal.aborted) return failures
           failures.push({ plugin: `${scope}:${name}`, phase: "bootstrap", reason: describeError(error) })
         }
       }

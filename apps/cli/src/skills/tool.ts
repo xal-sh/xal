@@ -37,7 +37,7 @@ export async function renderSkill(skill: Skill): Promise<string> {
   return result.output
 }
 
-export const skillTool: Tool = {
+export const skillTool = {
   name: "skill",
   description:
     "Load a discovered skill's instructions and supporting-file list into the conversation, or read one supporting text file from its package. Omitting path loads the skill instructions.",
@@ -80,4 +80,4 @@ export const skillTool: Tool = {
       resource,
     })
   },
-}
+} satisfies Tool

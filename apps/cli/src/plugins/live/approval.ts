@@ -11,7 +11,6 @@ import {
   statSync,
   type BigIntStats,
 } from "node:fs"
-import { lstat } from "node:fs/promises"
 import { dirname, join, relative, sep } from "node:path"
 import { isRecord } from "../../lib/json"
 import { createNativeSessionLock } from "../../native"
@@ -67,6 +66,7 @@ export function revokedThrough(home: string, marker: string): number {
     if (notFound(error)) return -1
     throw error
   }
+  if (!text.length) return -1
   let latest = -1
   for (const line of text.trimEnd().split("\n")) {
     const generation = Number(line)
@@ -87,25 +87,8 @@ export function clearRevocation(home: string, marker: string): void {
   if (scopedPathExists(home, marker, "file")) rmSync(marker, { force: true })
 }
 
-export async function unchangedApproval(
-  folder: string,
-  file: string,
-  marker: string,
-  previous?: string,
-): Promise<boolean> {
-  if (!previous) return false
-  const [saved, draft] = await Promise.allSettled([lstat(file, { bigint: true }), lstat(folder)])
-  if ([saved, draft].some((result) => result.status === "rejected" && notFound(result.reason))) return false
-  if (saved.status === "rejected") throw saved.reason
-  if (draft.status === "rejected") throw draft.reason
-  if (stamp(saved.value) !== previous || !draft.value.isDirectory()) return false
-  try {
-    await lstat(marker)
-    return false
-  } catch (error) {
-    if (!notFound(error)) throw error
-    return true
-  }
+export function unchangedApproval(home: string, file: string, marker: string, previous?: string): boolean {
+  return !!previous && stamp(lstatSync(file, { bigint: true })) === previous && !scopedPathExists(home, marker, "file")
 }
 
 export function readApproval(home: string, file: string) {
@@ -134,7 +117,7 @@ export function readApproval(home: string, file: string) {
     if (typeof generation !== "number" || !Number.isSafeInteger(generation) || generation < 0) {
       throw new Error("invalid approved plugin generation")
     }
-    return { source: value.source, sha256: value.sha256, installation, generation, stamp: stamp(info) }
+    return { source: value.source, sha256: value.sha256, installation, generation, revision, stamp: stamp(info) }
   } finally {
     closeSync(fd)
   }

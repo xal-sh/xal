@@ -1,7 +1,8 @@
-import { registerApp } from "../apps/cli/src/app"
+import { finishApp, registerApp } from "../apps/cli/src/app"
 import { appInfo } from "../apps/cli/src/app-info"
 import { composeSystemPrompt } from "../apps/cli/src/agent/prompt/registry"
 import { loadSettings } from "../apps/cli/src/config/settings"
+import { bootstrapPlugins } from "../apps/cli/src/plugins/discover"
 import { listTools } from "../apps/cli/src/tools/registry"
 import type { RegisteredTool } from "../apps/cli/src/tools/types"
 import type { SessionKind } from "../apps/cli/src/agent/types"
@@ -36,10 +37,11 @@ function toolSize(tool: RegisteredTool): number {
 async function main(args: string[]): Promise<void> {
   const options = parseArgs(args)
   const settings = await loadSettings()
-  const plugins = await registerApp(settings)
+  await registerApp(settings)
+  const plugins = await bootstrapPlugins()
   if (plugins.failures.length > 0) {
     throw new Error(
-      `plugin registration failed: ${plugins.failures.map((failure) => `${failure.plugin} (${failure.reason})`).join(", ")}`,
+      `plugin startup failed: ${plugins.failures.map((failure) => `${failure.plugin} (${failure.reason})`).join(", ")}`,
     )
   }
 
@@ -88,7 +90,7 @@ async function main(args: string[]): Promise<void> {
 
 if (import.meta.main) {
   try {
-    await main(process.argv.slice(2))
+    await main(process.argv.slice(2)).finally(finishApp)
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error))
     process.exitCode = 1

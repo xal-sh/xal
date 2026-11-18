@@ -70,9 +70,10 @@ test("refreshes open completions and the context window when runtime sources rel
     controller.handle({ type: "runtime_reload", source: "skills", outcome: "reloaded", message: "skills reloaded" })
     expect(screen.palette.visible).toBe(false)
 
-    const remove = registerCommand({ name: "uninstall-me", describe: "test", async run() {} })
     screen.composer.setValue("/uninstall-me")
-    screen.composer.refreshCompletion()
+    expect(screen.palette.visible).toBe(false)
+    const remove = registerCommand({ name: "uninstall-me", describe: "test", async run() {} })
+    controller.handle({ type: "plugin_bootstrap_finished", status: { total: 1, failures: [], notices: [] } })
     expect(screen.palette.visible).toBe(true)
     remove()
     controller.handle({ type: "runtime_reload", source: "plugins", outcome: "reloaded", message: "plugin uninstalled" })

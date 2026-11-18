@@ -2,9 +2,13 @@ import type { RegisteredTool } from "./types"
 
 const tools = new Map<string, RegisteredTool>()
 
-export function registerTool(tool: RegisteredTool): void {
-  if (tools.has(tool.name)) throw new Error(`tool already registered: ${tool.name}`)
-  tools.set(tool.name, tool)
+export function registerTool(tool: RegisteredTool): () => void {
+  const key = tool.name
+  if (tools.has(key)) throw new Error(`tool already registered: ${key}`)
+  tools.set(key, tool)
+  return () => {
+    if (tools.get(key) === tool) tools.delete(key)
+  }
 }
 
 export function unregisterTool(tool: RegisteredTool): void {

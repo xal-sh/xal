@@ -1,5 +1,5 @@
 import type { BoxRenderable, RenderContext, TextRenderable } from "@opentui/core"
-import { getToolRenderer } from "../../../ui/extension"
+import { withToolRenderer } from "../../../ui/extension"
 import { formatDuration } from "../lib/format"
 import { column, label, row } from "../lib/renderables"
 import { spinnerGlyph, spinnerHandle } from "../lib/spinner"
@@ -205,11 +205,10 @@ export class LiveTools {
 
   private render(): void {
     for (const entry of this.rows.values()) {
-      const title =
-        entry.phase === "requested"
-          ? entry.title
-          : (getToolRenderer(entry.tool)?.compactTitle?.(entry.title) ?? entry.title)
-      entry.heading.content = commandLabel(entry.tool, title)
+      const { value: title, warning } = withToolRenderer(entry.tool, (renderer) =>
+        entry.phase === "requested" ? entry.title : (renderer?.compactTitle?.(entry.title) ?? entry.title),
+      )
+      entry.heading.content = commandLabel(entry.tool, warning ? `${title} · ${warning}` : title)
       entry.status.content = liveStatus(entry.phase, formatDuration(this.elapsed(entry)), spinnerGlyph())
     }
   }

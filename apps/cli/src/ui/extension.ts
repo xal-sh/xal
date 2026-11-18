@@ -1,4 +1,6 @@
 import type { RGBA, StyledText } from "@opentui/core"
+import { describeError } from "../lib/error"
+import { redactText } from "../secrets/redactor"
 
 export interface ToolRenderer {
   tool: string
@@ -46,4 +48,17 @@ export function registerLiveToolRenderer(renderer: ToolRenderer): () => void {
 
 export function getToolRenderer(tool: string): ToolRenderer | undefined {
   return liveRenderers.get(tool) ?? renderers.get(tool)
+}
+
+export function withToolRenderer<T>(
+  tool: string,
+  render: (renderer?: ToolRenderer) => T,
+): { value: T; warning?: string } {
+  const renderer = getToolRenderer(tool)
+  if (!renderer) return { value: render() }
+  try {
+    return { value: render(renderer) }
+  } catch (error) {
+    return { value: render(), warning: `${tool} renderer failed: ${redactText(describeError(error))}` }
+  }
 }

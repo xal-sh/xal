@@ -42,9 +42,12 @@ export class AppEventController {
     switch (event.type) {
       case "runtime_reload":
         scrollback.append({ kind: event.outcome === "error" ? "error" : "info", text: event.message })
+        if (event.source === "plugins") {
+          this.screen.activeComposer.refreshCompletion()
+          break
+        }
         if (event.outcome !== "reloaded") break
         switch (event.source) {
-          case "plugins":
           case "skills":
             this.screen.activeComposer.refreshCompletion()
             break
@@ -90,6 +93,7 @@ export class AppEventController {
             details: noticeDetails(event.status.notices),
           })
         }
+        this.screen.activeComposer.refreshCompletion()
         this.input.release()
         composer.focus()
         break

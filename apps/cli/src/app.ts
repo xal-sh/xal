@@ -30,7 +30,6 @@ import {
 } from "./plugins/discover"
 import type { PluginStatus } from "./events"
 import { LivePlugins } from "./plugins/live/manager"
-import { registerLivePluginTools } from "./plugins/live/tools"
 import { prepareProjectMcp } from "./plugins/mcp/project"
 import { startProfiler, stopProfiler } from "./profiler/profiler"
 import { registerProviderClis } from "./providers/cli"
@@ -96,7 +95,6 @@ function registerCore(settings: Settings): void {
 export async function registerApp(settings: Settings, root?: string): Promise<PluginStatus> {
   registerCore(settings)
   const live = new LivePlugins(root ?? (await findProjectRoot(process.cwd())), registeredPluginNames)
-  registerLivePluginTools(live)
   const plugins = await registerPlugins(settings, live)
   registerWorkspacePrompt()
   return plugins

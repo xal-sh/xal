@@ -11,7 +11,7 @@ import type { DenialCause } from "../../../agent/events"
 import { appInfo } from "../../../app-info"
 import { formatTokens } from "../../../lib/format"
 import { parseBoundedToolOutput } from "../../../tools/output"
-import { getToolRenderer } from "../../../ui/extension"
+import { withToolRenderer, type ToolRenderer } from "../../../ui/extension"
 import { commandLabel, settledStatus, type ToolOutcome } from "../components/tool-status"
 import { formatTimestamp } from "../lib/format"
 import { column, detailPanel, label, paragraph, row } from "../lib/renderables"
@@ -94,8 +94,13 @@ export function renderBlock(
     case "text":
     case "reasoning":
       return streamView(ctx, block).view
-    case "tool":
-      return tool(ctx, block, expanded, previous?.kind === "tool")
+    case "tool": {
+      const { value, warning } = withToolRenderer(block.tool, (renderer) =>
+        tool(ctx, block, expanded, previous?.kind === "tool", renderer),
+      )
+      if (warning) value.add(paragraph(ctx, { content: warning, color: COLORS.warning }))
+      return value
+    }
   }
 }
 
@@ -267,8 +272,13 @@ const denialSummary: Record<DenialCause, string> = {
   hook: "hook",
 }
 
-function tool(ctx: RenderContext, block: ToolBlock, expanded: boolean, grouped: boolean): Renderable {
-  const toolRenderer = getToolRenderer(block.tool)
+function tool(
+  ctx: RenderContext,
+  block: ToolBlock,
+  expanded: boolean,
+  grouped: boolean,
+  toolRenderer?: ToolRenderer,
+): Renderable {
   const detailsVisible = expanded || block.expanded || toolRenderer?.alwaysExpanded
   const multilineTitle = block.title.includes("\n")
   const title =
@@ -285,6 +295,10 @@ function tool(ctx: RenderContext, block: ToolBlock, expanded: boolean, grouped: 
         ? describeToolFailure(block.output, block.execution)
         : (toolRenderer?.summarize?.(block.output) ?? summarizeToolOutput(block.output))
 
+  const width = Math.max(1, ctx.width - GUTTER * 2 - 4)
+  const coreOutput = bounded || coreFailed
+  const customOutput =
+    !coreOutput && detailsVisible && block.output ? toolRenderer?.renderOutput?.(block.output, width) : undefined
   const marginTop = grouped ? 0 : 1
   const box = column(ctx)
   const head = row(ctx, { height: 1, alignItems: "center" })
@@ -311,7 +325,6 @@ function tool(ctx: RenderContext, block: ToolBlock, expanded: boolean, grouped: 
     return frame(ctx, box, marginTop)
   }
 
-  const width = Math.max(1, ctx.width - GUTTER * 2 - 4)
   if (multilineTitle) {
     const command = detailPanel(ctx, { marginLeft: 2 })
     const script = label(ctx, {
@@ -327,9 +340,7 @@ function tool(ctx: RenderContext, block: ToolBlock, expanded: boolean, grouped: 
   }
   if (block.output.length === 0) return frame(ctx, box, marginTop)
 
-  const coreOutput = bounded || coreFailed
   const maxRows = coreOutput ? MAX_OUTPUT_ROWS : (toolRenderer?.maxRows ?? MAX_OUTPUT_ROWS)
-  const customOutput = coreOutput ? undefined : toolRenderer?.renderOutput?.(block.output, width)
   const output = customOutput ?? renderToolOutput(block.output, width, maxRows)
   const body = detailPanel(ctx, { marginLeft: 2 })
   const content = label(ctx, { content: output.content, height: output.rows })

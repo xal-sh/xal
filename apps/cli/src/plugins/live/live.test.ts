@@ -17,10 +17,12 @@ import { createNativeSessionLock } from "../../native"
 import { RuntimeReloader } from "../../config/reload"
 import { events } from "../../events"
 import { forgetTrusted, isTrusted, rememberTrusted } from "../../project/trust"
+import * as trust from "../../project/trust"
 import { getTool, registerTool } from "../../tools/registry"
 import { getToolRenderer, registerToolRenderer } from "../../ui/extension"
 import { writeTool } from "../files/write"
 import * as approval from "./approval"
+import * as contributions from "./contributions"
 import { LivePlugins, type PluginScope } from "./manager"
 import { registerLivePluginTools } from "./tools"
 
@@ -217,6 +219,66 @@ test("restores only approved source for each scope and preserves the working rev
   }
 })
 
+test("draft inspection fingerprints exact UTF-8 bytes and rejects oversized files and links", async () => {
+  const name = "draft-boundary"
+  const source = "\uFEFF" + "x".repeat(approval.MAX_PLUGIN_BYTES - 3)
+  const { path, sha256 } = await draft("user", name, source)
+  expect(sha256).toBe(createHash("sha256").update(source).digest("hex"))
+  const inspect = () => plugins.inspect("user", name, root)
+  await writeFile(path, source + "!")
+  await expect(inspect()).rejects.toThrow("65536")
+  await writeFile(path, Buffer.from([0xff]))
+  await expect(inspect()).rejects.toThrow("cannot read plugin draft")
+  await writeFile(path, source)
+  await rename(path, `${path}.saved`)
+  await symlink(`${path}.saved`, path, "file")
+  await expect(inspect()).rejects.toThrow("cannot read plugin draft")
+  await rm(path)
+  await rename(`${path}.saved`, path)
+  const folder = dirname(path)
+  await rename(folder, `${folder}-saved`)
+  await symlink(`${folder}-saved`, folder, "dir")
+  await expect(inspect()).rejects.toThrow("cannot read plugin draft")
+})
+
+function revokeAfterNextTrustRead() {
+  const check = trust.isTrusted
+  return spyOn(trust, "isTrusted").mockImplementationOnce(async (cwd) => {
+    const trusted = await check(cwd)
+    await forgetTrusted(cwd)
+    return trusted
+  })
+}
+
+test("revoking project trust after inspection prevents staging the approved draft", async () => {
+  const name = "trust-before-stage"
+  const { sha256 } = await draft("project", name, commandPlugin(name, "never-staged"))
+  const probe = revokeAfterNextTrustRead()
+  const stage = spyOn(contributions, "stageLivePlugin")
+  try {
+    await expect(plugins.activate("project", name, sha256, root, signal)).rejects.toThrow("trusted launch project")
+    expect(stage).not.toHaveBeenCalled()
+  } finally {
+    stage.mockRestore()
+    probe.mockRestore()
+    await rememberTrusted(root)
+  }
+})
+
+test("startup skips a staged plugin whose draft folder disappeared during registration", async () => {
+  const name = "removed-during-restore"
+  const folder = join(plugins.directories.user, name)
+  const trigger = join(agentHome(), "delete-on-restore")
+  const source = `import {existsSync, rmSync} from "node:fs";\n${commandPlugin(name, "should-not-restore", `if (existsSync(${JSON.stringify(trigger)})) rmSync(${JSON.stringify(folder)}, { recursive: true })`)}`
+  const { sha256 } = await draft("user", name, source)
+  await plugins.activate("user", name, sha256, root, signal)
+  await writeFile(trigger, "")
+  const state = await restart(root)
+  expect(state).toMatchObject({ failures: [] })
+  expect(state).not.toHaveProperty(`commands.${name}`)
+  expect((await plugins.removeDeleted(() => true)).removed).toContain(`user:${name}`)
+})
+
 test("startup forgets deleted plugin folders in either scope but not a missing plugin.ts", async () => {
   const entries = [await activateCommand("user", "offline-user"), await activateCommand("project", "offline-project")]
   const keep = await activateCommand("user", "offline-keep")
@@ -279,7 +341,8 @@ test("idle reload uninstalls only deleted folders, releases every contribution, 
     idle = false
     await rm(local.folder, { recursive: true })
     await reloader.refresh()
-    expect(getTool("deleted_tool")).toBeDefined()
+    const tool = getTool("deleted_tool")!
+    tool.name = "renamed_after_registration"
     expect(await Bun.file(local.approvedFile).exists()).toBe(true)
     idle = true
     await reloader.refresh()
@@ -385,6 +448,52 @@ test("uninstall never follows a linked approval directory and retries only the s
   expect(await readFile(otherFile, "utf8")).toBe(saved)
 })
 
+test("a zero-byte revocation marker accepts the next generation but malformed content does not", async () => {
+  const home = agentHome()
+  const marker = join(home, "partial-revocation")
+  await writeFile(marker, "")
+  approval.recordRevocation(home, marker, 4)
+  expect(approval.revokedThrough(home, marker)).toBe(4)
+  await writeFile(marker, "bad\n")
+  expect(() => approval.recordRevocation(home, marker, 5)).toThrow("invalid plugin revocation")
+})
+
+test("a local-only unload is reported as incomplete until the matching approval is durably removed", async () => {
+  const user = await activateCommand("user", "unrecorded-delete")
+  const home = agentHome()
+  const saved = approval.readApproval(home, user.approvedFile)!
+  const marker = approval.revocationFile(home, user.approvedFile, saved.installation)
+  const record = approval.recordRevocation
+  const failed = spyOn(approval, "recordRevocation").mockImplementation((home, path, generation) => {
+    if (path === marker) throw new Error("marker unavailable")
+    record(home, path, generation)
+  })
+  try {
+    const lock = createNativeSessionLock(join(home, "approved-plugins.lock"))
+    try {
+      await rm(user.folder, { recursive: true })
+      const result = await plugins.removeDeleted(() => true)
+      expect(result.removed).not.toContain(`user:${user.name}`)
+      expect(result.failures).toContainEqual(
+        expect.stringContaining("Unloaded locally; other sessions may still restore"),
+      )
+      expect(getCommand(user.name)).toBeUndefined()
+      await mkdir(user.folder)
+      expect(await restart(root)).toHaveProperty(`commands.${user.name}`, user.name)
+    } finally {
+      lock.close()
+    }
+    expect(await plugins.removeDeleted(() => true)).toMatchObject({
+      removed: expect.arrayContaining([`user:${user.name}`]),
+      failures: [],
+    })
+    expect(await Bun.file(user.approvedFile).exists()).toBe(false)
+    expect(await restart(root)).not.toHaveProperty(`commands.${user.name}`)
+  } finally {
+    failed.mockRestore()
+  }
+})
+
 test("a cleanup retry never removes a newer activation, even of identical source", async () => {
   const user = await activateCommand("user", "retry-install")
   const source = await readFile(user.path, "utf8")
@@ -431,24 +540,15 @@ test("a cleanup retry processes a second deletion of a freshly activated install
   expect(await restart(root)).not.toHaveProperty(`commands.${name}`)
 })
 
-test("an approval replaced during the poll stays revoked when the folder returns before cleanup", async () => {
+test("an approval updated before the poll stays revoked when the folder returns before cleanup", async () => {
   const user = await activateCommand("user", "before-delete")
   const { name, scope } = user
-  const opened = approval.readApproval(agentHome(), user.approvedFile)
-  expect(opened).toBeDefined()
   await draft(scope, name, commandPlugin(name, "before-delete-new"))
   await restart(root, agentHome(), { type: "activate", scope, name })
   const updated = await readFile(user.approvedFile, "utf8")
   await rm(user.folder, { recursive: true })
   const lock = createNativeSessionLock(join(agentHome(), "approved-plugins.lock"))
-  const read = approval.readApproval
   let recreated = false
-  let delivered = false
-  const paused = spyOn(approval, "readApproval").mockImplementation((home, file) => {
-    if (file !== user.approvedFile || delivered || recreated) return read(home, file)
-    delivered = true
-    return opened
-  })
   const exists = approval.scopedPathExists
   const probe = spyOn(approval, "scopedPathExists").mockImplementation((home, path, kind) => {
     const result = exists(home, path, kind)
@@ -472,7 +572,6 @@ test("an approval replaced during the poll stays revoked when the folder returns
     expect(await readFile(user.approvedFile, "utf8")).toBe(updated)
   } finally {
     probe.mockRestore()
-    paused.mockRestore()
     lock.close()
   }
   expect((await plugins.removeDeleted(() => true)).failures).toEqual([])
@@ -565,20 +664,19 @@ test("revoked project trust prevents project approval cleanup without blocking u
   expect(await Bun.file(project.approvedFile).exists()).toBe(false)
 })
 
-test("project trust revoked during the idle probe prevents cleanup", async () => {
+test("revoking trust between idle checks preserves the approval and its unresolved cleanup error", async () => {
   const project = await activateCommand("project", "trust-probe")
   const previous = await readFile(project.approvedFile, "utf8")
   await rm(project.folder, { recursive: true })
-  const unchanged = approval.unchangedApproval
-  const probe = spyOn(approval, "unchangedApproval").mockImplementation(async (...args) => {
-    const result = await unchanged(...args)
-    if (args[0] === project.folder) await forgetTrusted(root)
-    return result
-  })
+  await writeFile(project.folder, "not a directory")
+  const failed = await plugins.removeDeleted(() => true)
+  expect(failed.failures).toContainEqual(expect.stringContaining(project.folder))
+  await rm(project.folder)
+  const probe = revokeAfterNextTrustRead()
   try {
     const { removed, failures } = await plugins.removeDeleted(() => true)
     expect(await isTrusted(root)).toBe(false)
-    expect(failures).toEqual([])
+    expect(failures).toEqual(failed.failures)
     expect(removed).not.toContain("project:trust-probe")
     expect(getCommand(project.name)).toBeDefined()
     expect(await readFile(project.approvedFile, "utf8")).toBe(previous)
@@ -586,7 +684,10 @@ test("project trust revoked during the idle probe prevents cleanup", async () =>
     probe.mockRestore()
     await rememberTrusted(root)
   }
-  expect((await plugins.removeDeleted(() => true)).removed).toContain("project:trust-probe")
+  expect(await plugins.removeDeleted(() => true)).toMatchObject({
+    removed: expect.arrayContaining(["project:trust-probe"]),
+    failures: [],
+  })
 })
 
 test("startup cannot remove a project approval after an earlier plugin revokes trust", async () => {

@@ -3,7 +3,7 @@ import { registerCommand } from "../../commands/registry"
 import type { Command } from "../../commands/types"
 import { describeError } from "../../lib/error"
 import { isRecord } from "../../lib/json"
-import { registerTool, unregisterTool } from "../../tools/registry"
+import { registerTool } from "../../tools/registry"
 import type { RegisteredTool } from "../../tools/types"
 import { registerLiveToolRenderer, type ToolRenderer } from "../../ui/extension"
 import { parsePlugin } from "../load"
@@ -25,18 +25,18 @@ function optionalMethods(object: unknown, keys: string[]): boolean {
   return isRecord(object) && keys.every((key) => object[key] === undefined || typeof object[key] === "function")
 }
 
-export async function stageLivePlugin(name: string, source: string, signal?: AbortSignal): Promise<LiveContributions> {
+export async function stageLivePlugin(name: string, source: string, signal: AbortSignal): Promise<LiveContributions> {
   const compiler = new Bun.Transpiler({ loader: "ts", target: "bun" })
   for (const entry of compiler.scanImports(source)) {
     if (entry.path !== "bun" && !entry.path.startsWith("node:")) {
       throw new Error(`live plugins must be self-contained; unsupported import: ${entry.path}`)
     }
   }
-  signal?.throwIfAborted()
+  signal.throwIfAborted()
   const mod: unknown = await import(
     `data:text/javascript;base64,${Buffer.from(compiler.transformSync(source)).toString("base64")}`
   )
-  signal?.throwIfAborted()
+  signal.throwIfAborted()
   const plugin = parsePlugin<LiveContext>(mod)
   if (plugin.name !== name) throw new Error(`expected plugin name ${name}, got ${plugin.name}`)
   if (plugin.bootstrap || plugin.shutdown) throw new Error("live plugins support synchronous register only")
@@ -102,10 +102,7 @@ export function installContributions(contributions: LiveContributions, commit?: 
     for (const dispose of disposers.toReversed()) dispose()
   }
   try {
-    for (const tool of contributions.tools) {
-      registerTool(tool)
-      disposers.push(() => unregisterTool(tool))
-    }
+    for (const tool of contributions.tools) disposers.push(registerTool(tool))
     for (const command of contributions.commands) disposers.push(registerCommand(command))
     for (const renderer of contributions.renderers) disposers.push(registerLiveToolRenderer(renderer))
     commit?.()
