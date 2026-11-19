@@ -3,7 +3,7 @@ import { createTestRenderer } from "@opentui/core/testing"
 import { appInfo } from "../../../app-info"
 import { registerToolRenderer } from "../../../ui/extension"
 import { displayWidth, terminalGlyph } from "../lib/text"
-import type { BackgroundBlock } from "./blocks"
+import type { BackgroundBlock, ToolBlock } from "./blocks"
 import { backgroundResultHeading } from "./render"
 import { Scrollback } from "./scrollback"
 
@@ -165,6 +165,84 @@ test("settled tools leave the scrollback cursor on their row for live tool group
 
     const commits = setup.externalOutput.take()
     expect(commits.at(-1)?.trailingNewline).toBe(false)
+  } finally {
+    setup.renderer.destroy()
+  }
+})
+
+test("live and replayed exploration share a compact row without hiding individual calls or failures", async () => {
+  const setup = await createTestRenderer({
+    width: 100,
+    height: 24,
+    footerHeight: 1,
+    screenMode: "split-footer",
+    externalOutputMode: "capture-stdout",
+  })
+  const rows = () =>
+    setup.externalOutput
+      .take()
+      .flatMap((commit) => commit.rows)
+      .map((row) => row.trim())
+      .filter(Boolean)
+  try {
+    await setup.renderer.setupTerminal()
+    for (const replay of [false, true]) {
+      const view = new Scrollback(
+        setup.renderer,
+        0,
+        () => {},
+        { showOutputs: false, showThinking: false, scrollbackRows: 0 },
+        "Ctrl+O",
+      )
+      const tool = (name: string, title: string, extra: Partial<ToolBlock> = {}) =>
+        view.append({
+          kind: "tool",
+          tool: name,
+          title,
+          output: `result-${title}`,
+          readOnly: true,
+          expanded: false,
+          denial: undefined,
+          execution: undefined,
+          elapsed: undefined,
+          ...extra,
+        })
+      if (replay) view.beginReplay()
+      tool("read", "first.ts")
+      view.append({ kind: "hook", text: "after tool" })
+      view.append({ kind: "reasoning", text: "inspect related code" })
+      tool("glob", "*.ts", { output: "result-*.ts: fixture (interrupted by user)" })
+      tool("grep", "needle")
+      if (!replay) expect(view.explorationPreview).toBe("Explored · 1 read, 2 searches · needle")
+      expect(rows()).toEqual([])
+      tool("read", "missing.ts", { output: "Tool failed: missing file" })
+      tool("grep", "private", { denial: "policy" })
+      tool("read", "skipped.ts", { output: "Interrupted by user before execution." })
+      tool("grep", "cancelled", { output: "(interrupted by user)" })
+      tool("read", "last.ts")
+      view.finishTools()
+      if (replay) view.endReplay()
+      expect(rows()).toEqual([
+        "Explored · 1 read, 2 searches · needle",
+        expect.stringContaining("missing file"),
+        expect.stringContaining("blocked"),
+        expect.stringContaining("interrupted"),
+        expect.stringContaining("interrupted"),
+        "Explored · 1 read · last.ts",
+      ])
+      view.setExpanded(true)
+      const expanded = rows()
+      expect(expanded.filter((row) => row.includes("result-"))).toEqual(
+        expect.arrayContaining([
+          expect.stringContaining("result-first.ts"),
+          expect.stringContaining("result-*.ts"),
+          expect.stringContaining("result-needle"),
+          expect.stringContaining("result-last.ts"),
+        ]),
+      )
+      expect(expanded.join("\n")).toMatch(/read first\.ts[\s\S]*after tool[\s\S]*glob \*\.ts[\s\S]*grep needle/)
+      expect(expanded.join("\n")).not.toContain("Explored")
+    }
   } finally {
     setup.renderer.destroy()
   }

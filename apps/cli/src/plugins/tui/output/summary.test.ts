@@ -1,5 +1,13 @@
 import { expect, test } from "bun:test"
-import { describeToolFailure } from "./summary"
+import { describeToolFailure, toolOutputFailed } from "./summary"
+
+test("distinguishes file contents from process status while honoring structured exits", () => {
+  expect(toolOutputFailed("read", "1: (interrupted by user)")).toBe(false)
+  expect(toolOutputFailed("build", "diagnostic\n(exit code 2)")).toBe(true)
+  expect(toolOutputFailed("bash", "Not run because the result was cached.", { status: "exited", exitCode: 0 })).toBe(
+    false,
+  )
+})
 
 test("names why a tool failed instead of reporting a bare failure", () => {
   expect(describeToolFailure("", { status: "exited", exitCode: 1 })).toBe("exit 1")

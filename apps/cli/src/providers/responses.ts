@@ -11,7 +11,7 @@ export type WireSseEvent =
   | { type: "reasoning_delta"; delta: string }
   | { type: "item_done"; item: JsonObject }
   | { type: "terminal"; usage?: Usage }
-  | { type: "failure"; message: string; retryable: boolean }
+  | { type: "failure"; message: string; retryable: boolean; code?: string }
   | { type: "output_limit"; message: string }
   | { type: "context_overflow"; message: string }
 
@@ -26,7 +26,12 @@ const TRANSIENT_FAILURE = /overloaded|rate.?limit|server.?error|service.?unavail
 
 function failure(message: string, code?: string): WireSseEvent {
   if (isContextOverflow(message, code)) return { type: "context_overflow", message }
-  return { type: "failure", message, retryable: TRANSIENT_FAILURE.test(`${code ?? ""} ${message}`) }
+  return {
+    type: "failure",
+    message,
+    retryable: TRANSIENT_FAILURE.test(`${code ?? ""} ${message}`),
+    ...(code ? { code } : {}),
+  }
 }
 
 export function parseSseEvent(raw: unknown): WireSseEvent | undefined {
@@ -196,16 +201,27 @@ export function buildResponseInput(items: ConversationItem[], target: Conversati
   })
 }
 
+async function* responseSseFrames(body: ReadableStream<Uint8Array>): AsyncGenerator<WireSseEvent> {
+  for await (const raw of sseEvents(body)) {
+    if (raw.done) continue
+    const event = parseSseEvent(raw.data)
+    if (event) yield event
+  }
+}
+
 export async function* responseEvents(response: Response, options: ResponseStreamOptions): AsyncGenerator<StreamEvent> {
   if (!response.body) throw new ProviderError(`${options.providerName} response had no body`, { retryable: true })
+  yield* responseStream(responseSseFrames(response.body), options)
+}
 
+export async function* responseStream(
+  frames: AsyncIterable<WireSseEvent>,
+  options: ResponseStreamOptions,
+): AsyncGenerator<StreamEvent> {
   let terminal = false
   let outputStarted = false
   try {
-    for await (const raw of sseEvents(response.body)) {
-      if (raw.done) continue
-      const event = parseSseEvent(raw.data)
-      if (!event) continue
+    for await (const event of frames) {
       switch (event.type) {
         case "output_started":
           outputStarted = true

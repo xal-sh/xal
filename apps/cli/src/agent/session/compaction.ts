@@ -20,7 +20,7 @@ import type { ConversationItem, Provider, StreamRequest, ThinkingEffort, UserMes
 import type { AgentEvent, AgentState } from "../events"
 import { activeHistory, type CompactionItem, type HistoryItem } from "../history"
 import type { SessionKind } from "../types"
-import { effectiveAutoCompactTokenLimit, type ContextAdmission } from "./context-budget"
+import { effectiveAutoCompactTokenLimit } from "./context-budget"
 import { isAbortError } from "./types"
 
 export const MAX_RETAINED_USER_TOKENS = 20_000
@@ -166,6 +166,7 @@ export interface SummaryRequest {
   signal: AbortSignal
   attempt?: number
   parentRequest?: StreamRequest
+  estimateInputTokens?(request: StreamRequest): number
   overflowRecovery?: string
   onRequestStarted?(): void
 }
@@ -177,7 +178,6 @@ function summaryRequest(instructions: string | undefined): UserMessageItem {
 
 export async function summarizeHistory(request: SummaryRequest): Promise<string> {
   const target = { provider: request.provider.id, model: request.historyModel ?? request.model }
-  const info = await findModel(request.provider, request.profileId, request.model)
   const prompt = (request.overflowRecovery === undefined ? request.parentRequest : undefined) ?? {
     instructions: SUMMARY_SYSTEM_INSTRUCTIONS,
     tools: [],
@@ -189,6 +189,7 @@ export async function summarizeHistory(request: SummaryRequest): Promise<string>
     request.imageInput,
   )
   if (request.overflowRecovery !== undefined) {
+    const info = await findModel(request.provider, request.profileId, request.model)
     const transcript = prepareConversation(conversationForSummary(activeHistory(request.history)), target, false)
       .map((item) => JSON.stringify(item))
       .join("\n")
@@ -201,18 +202,17 @@ export async function summarizeHistory(request: SummaryRequest): Promise<string>
     ]
   }
   input.push(summaryRequest(request.instructions))
-  const maxOutputTokens = Math.max(
-    1,
-    Math.min(
-      request.overflowRecovery === undefined ? 12_000 : 4_000,
-      (info?.contextWindow ?? Infinity) - estimateRequestTokens({ ...prompt, input }),
-    ),
-  )
   const result = await collectStreamedText({
     provider: request.provider,
     profileId: request.profileId,
     kind: request.kind,
     phase: "compaction",
+    fitOutputToContext: {
+      estimateInput:
+        request.overflowRecovery === undefined
+          ? (request.estimateInputTokens ?? estimateRequestTokens)
+          : estimateRequestTokens,
+    },
     emptyResponseMessage: `${request.provider.name} returned an empty summary`,
     attempt: request.attempt,
     onRequestStarted: request.onRequestStarted,
@@ -221,7 +221,7 @@ export async function summarizeHistory(request: SummaryRequest): Promise<string>
       tools: prompt.tools,
       cacheKey: prompt.cacheKey,
       model: request.model,
-      maxOutputTokens,
+      maxOutputTokens: request.overflowRecovery === undefined ? 12_000 : 4_000,
       ...(request.historyModel === undefined ? {} : { conversationModel: request.historyModel }),
       thinking: request.thinking,
       input,
@@ -289,7 +289,7 @@ export interface CompactionHost {
     thinking: ThinkingEffort | undefined,
     signal: AbortSignal,
   ): StreamRequest
-  admitRequest(provider: Provider, request: StreamRequest): ContextAdmission
+  admitRequest(provider: Provider, request: StreamRequest): number
   onRequestStarted(): void
   observeCompaction(observation: CompactionObservation): void
   replaceHistory(item: CompactionItem): void
@@ -472,6 +472,7 @@ export async function runCompaction(
     let summary: string | undefined
     let attempt = 1
     let overflowRecovery = false
+    const parentRequest = host.buildRequestWithHistory(history, provider, model, target.thinking, signal)
     while (summary === undefined) {
       try {
         summary = await summarizeHistory({
@@ -485,7 +486,8 @@ export async function runCompaction(
           history,
           instructions,
           imageInput: target.imageInput,
-          parentRequest: host.buildRequestWithHistory(history, provider, model, target.thinking, signal),
+          parentRequest,
+          estimateInputTokens: (candidate) => host.admitRequest(provider, candidate),
           ...(overflowRecovery ? { overflowRecovery: recovery } : {}),
           onRequestStarted: () => host.onRequestStarted(),
           signal,
@@ -613,23 +615,23 @@ export async function autoCompact(
   thinking: ThinkingEffort | undefined,
 ): Promise<StreamRequest> {
   let request = host.buildRequest(provider, model, thinking, signal)
-  let admission = host.admitRequest(provider, request)
+  let activeTokens = host.admitRequest(provider, request)
   const info = await findModel(provider, host.profileId(), model)
   const tokenLimit = effectiveAutoCompactTokenLimit(info?.contextWindow, info?.autoCompactTokenLimit)
-  if (tokenLimit !== undefined && admission.activeTokens >= tokenLimit) {
+  if (tokenLimit !== undefined && activeTokens >= tokenLimit) {
     try {
-      await runCompaction(host, signal, provider, model, "auto", undefined, admission.activeTokens)
+      await runCompaction(host, signal, provider, model, "auto", undefined, activeTokens)
     } catch (error) {
       if (isCompactionInterruption(error, signal)) throw error
       throw new ContextCompactionError(`context compaction failed: ${describeError(error)}`, error)
     }
     request = host.buildRequest(provider, model, thinking, signal)
-    admission = host.admitRequest(provider, request)
+    activeTokens = host.admitRequest(provider, request)
   }
 
-  if (info?.contextWindow !== undefined && admission.activeTokens >= info.contextWindow) {
+  if (info?.contextWindow !== undefined && activeTokens >= info.contextWindow) {
     throw new ContextCompactionError(
-      `request requires approximately ${admission.activeTokens} tokens, exceeding the ${info.contextWindow}-token context window`,
+      `request requires approximately ${activeTokens} tokens, exceeding the ${info.contextWindow}-token context window`,
     )
   }
   return request

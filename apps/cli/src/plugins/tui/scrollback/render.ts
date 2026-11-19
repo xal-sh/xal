@@ -25,7 +25,7 @@ import { background, muted, paint } from "../theme/styles"
 import type {
   BackgroundBlock,
   BannerBlock,
-  Block,
+  DisplayBlock,
   CompactionBlock,
   NoticeBlock,
   PlanBlock,
@@ -33,6 +33,7 @@ import type {
   ToolBlock,
   UserBlock,
 } from "./blocks"
+import { explorationHeading } from "./exploration"
 
 const GUTTER = 2
 
@@ -67,11 +68,11 @@ export function streamView(ctx: RenderContext, block: StreamBlock): StreamView {
 
 export function renderBlock(
   ctx: RenderContext,
-  block: Block,
+  block: DisplayBlock,
   expanded: boolean,
   userBackground: RGBA,
   detailsShortcut: string | undefined,
-  previous?: Block,
+  previous?: DisplayBlock,
 ): Renderable {
   switch (block.kind) {
     case "banner":
@@ -94,8 +95,10 @@ export function renderBlock(
     case "text":
     case "reasoning":
       return streamView(ctx, block).view
+    case "exploration":
+      return frame(ctx, label(ctx, { content: explorationHeading(block), color: COLORS.faint }))
     case "tool":
-      return tool(ctx, block, expanded, previous?.kind === "tool")
+      return tool(ctx, block, expanded, previous?.kind === "tool" || previous?.kind === "exploration")
   }
 }
 
@@ -274,7 +277,7 @@ function tool(ctx: RenderContext, block: ToolBlock, expanded: boolean, grouped: 
   const title =
     detailsVisible && !multilineTitle ? block.title : (toolRenderer?.compactTitle?.(block.title) ?? block.title)
   const bounded = parseBoundedToolOutput(block.output)
-  const coreFailed = toolOutputFailed(block.output, block.execution)
+  const coreFailed = toolOutputFailed(block.tool, block.output, block.execution)
   const failed = coreFailed || (toolRenderer?.failed?.(block.output) ?? false)
   const outcome: ToolOutcome = block.denial ? "denied" : failed ? "failure" : "success"
   const summary = block.denial

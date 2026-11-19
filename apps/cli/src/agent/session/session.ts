@@ -62,7 +62,7 @@ import type { DeliveredAgentQuestion, ParentQuestionResult } from "../task/quest
 import type { SessionKind } from "../types"
 import { backgroundResultsMessage, SessionAsyncState } from "./async"
 import { autoCompact, runCompaction, type CompactionHost } from "./compaction"
-import { ContextBudget, requestIdentity } from "./context-budget"
+import { ContextBudget } from "./context-budget"
 import { performRedo, performUndo, RedoStack, type HistoryMoveHost } from "./history-moves"
 import { PendingInteractions } from "./interactions"
 import { OutputContract, parseOutputSchema } from "./output-contract"
@@ -355,7 +355,7 @@ export class AgentSession {
       replaceHistory: (item) => {
         this.items = []
         this.saveItem(item)
-        this.contextBudget.reset(this.items)
+        this.contextBudget.reset()
         if (item.strategy !== "stale_reads_v1") disposeToolContext(this.sessionId)
       },
       setState: (state) => this.setState(state),
@@ -371,7 +371,7 @@ export class AgentSession {
       restoreConversation: (state) => {
         this.items = state.items
         this.checkpoints = state.checkpoints
-        this.contextBudget.reset(this.items)
+        this.contextBudget.reset()
         disposeToolContext(this.sessionId)
       },
       recordEvent: (event) => this.recordEvent(event),
@@ -694,7 +694,7 @@ export class AgentSession {
       this.workspaceUndo.seed(
         this.checkpoints.map((checkpoint) => ({ messageId: checkpoint.messageId, prompt: checkpoint.input.text })),
       )
-      this.contextBudget.restoreDisplayed(recordedContext(target.session.events))
+      this.contextBudget.reset(recordedContext(target.session.events))
       this.verificationRecords.clear()
       this.modeBeforePlan = meta.mode === "plan" ? meta.modeBeforePlan : undefined
       this.plan = undefined
@@ -768,7 +768,7 @@ export class AgentSession {
     this.model = model
     this.modelInputModalities = inputModalities
     this.thinking = thinking
-    this.contextBudget.reset(this.items)
+    this.contextBudget.reset()
     this.emit({ type: "model_changed", provider: provider.id, profile: profileId, model })
     this.emit({ type: "thinking_changed", thinking })
     return true
@@ -784,7 +784,7 @@ export class AgentSession {
     this.profileId = undefined
     this.modelInputModalities = undefined
     this.thinking = undefined
-    this.contextBudget.reset(this.items)
+    this.contextBudget.reset()
     this.emit({ type: "model_changed", provider: this.provider.id, model: this.model })
     this.emit({ type: "thinking_changed" })
     return true
@@ -1649,9 +1649,7 @@ export class AgentSession {
   }
 
   private pushItem(item: HistoryItem): void {
-    const redacted = redactHistoryItem(item)
-    this.contextBudget.append(redacted)
-    this.saveItem(redacted)
+    this.saveItem(redactHistoryItem(item))
   }
 
   private saveItem(item: HistoryItem): void {
@@ -1686,13 +1684,15 @@ export class AgentSession {
       sessionId: () => this.sessionId,
       profileId: () => this.selectedProfileId(),
       emit: (event) => this.emit(event),
-      commitProviderRound: (items, turnUsage, request) => {
+      commitProviderRound: ({ items, usage: turnUsage, outputChanged }, request) => {
         this.providerRoundActive = false
         for (const item of items) this.saveItem(item)
         this.contextBudget.commitProvider(
-          items,
+          this.provider.id,
+          this.selectedProfileId(),
+          request,
+          outputChanged ? undefined : items,
           turnUsage,
-          requestIdentity(this.provider.id, this.selectedProfileId(), request),
         )
         if (!turnUsage) return
         usage.context = turnUsage
@@ -1764,7 +1764,7 @@ export class AgentSession {
       const item = this.items[index]!
       if (item.type !== "tool_call" || item.callId !== call.callId) continue
       this.items[index] = call
-      this.contextBudget.reset(this.items)
+      this.contextBudget.reset()
       this.emit({ type: "tool_call_updated", callId: call.callId, tool: call.name, args: call.args })
       return
     }

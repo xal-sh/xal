@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import { appendProcessOutput, createProcessJob, drainOwnerDeliveries, finishProcessJob } from "../../background/jobs"
 import { contributeRules } from "../../permissions/rules"
 import { OutputLimitError, ProviderError } from "../../providers/errors"
+import { replaceSecretValues } from "../../secrets/redactor"
 import { registerTool, unregisterTool } from "../../tools/registry"
 import { registerToolContextDisposer } from "../../tools/session"
 import type { ElicitationResult, InteractiveTool, Tool } from "../../tools/types"
@@ -459,6 +460,59 @@ describe("AgentSession control flow", () => {
       replaced: 1,
     })
     expect(compacted.tokensBefore).toBeGreaterThan(90)
+  })
+
+  test("replays encrypted reasoning without triggering automatic compaction on its wire size", async () => {
+    const response: ProviderRound = async function* (request) {
+      yield {
+        type: "item_done",
+        item: {
+          type: "reasoning",
+          summary: "checked",
+          replay: { provider: provider.id, model: request.model, data: { encrypted_content: "r".repeat(120_000) } },
+        },
+      }
+      yield { type: "item_done", item: { type: "assistant_message", text: "Ready" } }
+      yield { type: "done", usage: { totalInputTokens: 3_000, outputTokens: 200 } }
+    }
+    const provider = new ScriptedProvider(
+      [
+        response,
+        completedRound("Continued", { totalInputTokens: 16_100, outputTokens: 200 }),
+        completedRound("Summary"),
+        completedRound("Finished"),
+      ],
+      20_000,
+    )
+    const session = harness.createSession(provider)
+    await runSettledTurn(session, { text: "Start", images: [] })
+    expect((await runSettledTurn(session, { text: "Continue", images: [] })).status).toBe("completed")
+    expect(provider.requests.map((request) => request.toolChoice)).toEqual(["auto", "auto"])
+    expect(
+      provider.requests[1]?.input.find((item) => item.type === "reasoning")?.replay?.data.encrypted_content,
+    ).toHaveLength(120_000)
+    expect((await runSettledTurn(session, { text: "Finish", images: [] })).status).toBe("completed")
+    expect(provider.requests.map((request) => request.toolChoice)).toEqual(["auto", "auto", "none", "auto"])
+    expect(provider.requests[2]?.maxOutputTokens).toBeGreaterThan(3_000)
+    expect(provider.requests[2]?.maxOutputTokens).toBeLessThan(3_700)
+  })
+
+  test("credits only measured input when provider output is redacted before replay", async () => {
+    const secret = "private-context-fixture"
+    replaceSecretValues("context-replay-test", [secret])
+    try {
+      const provider = new ScriptedProvider(
+        [completedRound(secret, { totalInputTokens: 3_000, outputTokens: 16_500 }), completedRound("Continued")],
+        20_000,
+      )
+      const session = harness.createSession(provider)
+      await runSettledTurn(session, { text: "Start", images: [] })
+      expect((await runSettledTurn(session, { text: "Continue", images: [] })).status).toBe("completed")
+      expect(provider.requests.map((request) => request.toolChoice)).toEqual(["auto", "auto"])
+      expect(provider.requests[1]?.input).toContainEqual({ type: "assistant_message", text: "[REDACTED]" })
+    } finally {
+      replaceSecretValues("context-replay-test", [])
+    }
   })
 
   test("automatically compacts at the default 80% limit", async () => {

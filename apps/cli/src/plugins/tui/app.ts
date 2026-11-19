@@ -154,6 +154,7 @@ export async function startTui(events: EventService, config: TuiConfig, options:
   }
   const exitNotes: string[] = []
   const quit = (): void => {
+    screen.activeScrollback.finishTools()
     stopAttention()
     renderer.destroy()
   }

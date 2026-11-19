@@ -56,11 +56,12 @@ describe("OpenAI Responses wire conversion", () => {
         type: "response.failed",
         response: { error: { code: "server_error", message: "try again later" } },
       }),
-    ).toEqual({ type: "failure", message: "try again later", retryable: true })
+    ).toEqual({ type: "failure", message: "try again later", retryable: true, code: "server_error" })
     expect(parseSseEvent({ type: "error", message: "invalid request", code: "bad_request" })).toEqual({
       type: "failure",
       message: "invalid request",
       retryable: false,
+      code: "bad_request",
     })
   })
 

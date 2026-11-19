@@ -60,7 +60,7 @@ function hostFor(initial: HistoryItem[]): CompactionHost & { observations: Compa
     observeCompaction: (observation) => observations.push(observation),
     replaceHistory: (item) => {
       history = [item]
-      budget.reset(history)
+      budget.reset()
     },
     setState() {},
     emit() {},

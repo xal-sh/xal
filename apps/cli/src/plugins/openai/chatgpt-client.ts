@@ -14,9 +14,39 @@ function headers(access: string, accountId: string, extra: Record<string, string
     authorization: `Bearer ${access}`,
     "chatgpt-account-id": accountId,
     originator: identity.name,
-    accept: "application/json",
     "user-agent": identity.userAgent,
     ...extra,
+  }
+}
+
+export interface ChatGptSocketTarget {
+  url: string
+  accountId: string
+  headers: Record<string, string>
+}
+
+export async function chatGptSocketTarget(
+  profileId: string,
+  sessionId: string,
+): Promise<ChatGptSocketTarget | undefined> {
+  if (
+    process.env.HTTPS_PROXY ||
+    process.env.https_proxy ||
+    process.env.HTTP_PROXY ||
+    process.env.http_proxy ||
+    process.env.ALL_PROXY ||
+    process.env.all_proxy
+  )
+    return undefined
+  const { access, accountId } = await ensureAccessToken(profileId)
+  return {
+    url: `${CODEX_URL.replace("https:", "wss:")}/responses`,
+    accountId,
+    headers: headers(access, accountId, {
+      "openai-beta": "responses_websockets=2026-02-06",
+      "session-id": sessionId,
+      "x-client-request-id": crypto.randomUUID(),
+    }),
   }
 }
 
@@ -28,7 +58,7 @@ export async function chatGptFetch(profileId: string, path: string, init: ChatGp
       () =>
         fetch(`${CODEX_URL}${path}`, {
           ...init,
-          headers: headers(auth.access, auth.accountId, init.headers ?? {}),
+          headers: headers(auth.access, auth.accountId, { accept: "application/json", ...init.headers }),
         }),
       init.signal,
     )

@@ -28,9 +28,30 @@ function executionFailed(execution: ProcessExecution): boolean {
   return execution.status !== "exited" || execution.exitCode !== 0
 }
 
-export function toolOutputFailed(output: string, execution?: ProcessExecution): boolean {
+function skippedReason(output: string): string | undefined {
+  if (
+    output === "(interrupted by user)" ||
+    output === "Interrupted by user before execution." ||
+    output === "Interrupted before requesting interactive input."
+  )
+    return "interrupted"
+  if (
+    output === "Not run because a repeated tool loop stopped the turn." ||
+    output === "Not run because structured output ended the turn." ||
+    /^Repeated tool call blocked(?: again)?: [^\n]+$/.test(output)
+  )
+    return "not run"
+}
+
+export function isExplorationTool(tool: string): boolean {
+  return tool === "read" || tool === "grep" || tool === "glob"
+}
+
+export function toolOutputFailed(tool: string, output: string, execution?: ProcessExecution): boolean {
   if (toolFailed(output)) return true
   if (execution) return executionFailed(execution)
+  if (skippedReason(output)) return true
+  if (isExplorationTool(tool)) return false
   const exitCode = /\(exit code (\d+)(?: · [^)]*)?\)(?:\n\nFull output saved to: .+)?\s*$/.exec(output)
   if (exitCode && exitCode[1] !== "0") return true
   return /\(timed out after |\(interrupted by user\)|\(terminated by signal\)/.test(output)
@@ -65,7 +86,7 @@ function executionFailure(execution: ProcessExecution): string {
 
 export function describeToolFailure(output: string, execution?: ProcessExecution): string {
   if (execution && executionFailed(execution)) return executionFailure(execution)
-  const message = failureMessage(output)
+  const message = skippedReason(output) ?? failureMessage(output)
   if (message) return message
   const exited = /\(exit code (\d+)(?: · [^)]*)?\)/.exec(output)
   if (exited) return `exit ${exited[1]}`

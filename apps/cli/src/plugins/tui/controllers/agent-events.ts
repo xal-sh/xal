@@ -317,6 +317,7 @@ export class AgentEventController {
         statusBar.setUsage(event.context)
         break
       case "turn_ended":
+        scrollback.finishTools()
         statusBar.setTurnOutcome("completed")
         statusBar.setUsage(event.context)
         if (event.verification) {

@@ -104,6 +104,15 @@ export type Block =
   | StreamBlock
   | ToolBlock
 
+export interface ExplorationBlock {
+  kind: "exploration"
+  reads: number
+  searches: number
+  title: string
+}
+
+export type DisplayBlock = Block | ExplorationBlock
+
 export function blockVisible(block: Block, expanded: boolean, reasoningVisible: boolean): boolean {
   switch (block.kind) {
     case "hook":
