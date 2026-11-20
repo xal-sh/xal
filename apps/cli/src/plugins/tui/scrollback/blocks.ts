@@ -111,7 +111,7 @@ export interface ExplorationBlock {
   title: string
 }
 
-export type DisplayBlock = Block | ExplorationBlock
+export type DisplayBlock = Exclude<Block, ToolBlock> | (ToolBlock & { rendererWarning?: string }) | ExplorationBlock
 
 export function blockVisible(block: Block, expanded: boolean, reasoningVisible: boolean): boolean {
   switch (block.kind) {

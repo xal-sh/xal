@@ -394,13 +394,13 @@ export class Scrollback {
 
   private project(block: Block, emit: (block: DisplayBlock) => void): void {
     if (!this.visible(block)) return
-    const group = this.expanded ? undefined : groupExploration(block, this.exploration)
-    if (group) {
-      this.exploration = group
+    const display = this.expanded ? block : groupExploration(block, this.exploration)
+    if (display.kind === "exploration") {
+      this.exploration = display
       return
     }
     this.flushExploration(emit)
-    emit(block)
+    emit(display)
   }
 
   private flushExploration(emit: (block: ExplorationBlock) => void): void {

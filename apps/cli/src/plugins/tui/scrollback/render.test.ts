@@ -185,6 +185,13 @@ test("live and replayed exploration share a compact row without hiding individua
       .flatMap((commit) => commit.rows)
       .map((row) => row.trim())
       .filter(Boolean)
+  const removeRenderer = registerLiveToolRenderer({
+    tool: "read",
+    failed(output) {
+      if (output === "legacy read result") throw new Error("unknown read format")
+      return false
+    },
+  })
   try {
     await setup.renderer.setupTerminal()
     for (const replay of [false, true]) {
@@ -220,6 +227,7 @@ test("live and replayed exploration share a compact row without hiding individua
       tool("grep", "private", { denial: "policy" })
       tool("read", "skipped.ts", { output: "Interrupted by user before execution." })
       tool("grep", "cancelled", { output: "(interrupted by user)" })
+      tool("read", "legacy.ts", { output: "legacy read result" })
       tool("read", "last.ts")
       view.finishTools()
       if (replay) view.endReplay()
@@ -229,6 +237,8 @@ test("live and replayed exploration share a compact row without hiding individua
         expect.stringContaining("blocked"),
         expect.stringContaining("interrupted"),
         expect.stringContaining("interrupted"),
+        expect.stringContaining("legacy.ts"),
+        "read renderer failed: unknown read format",
         "Explored · 1 read · last.ts",
       ])
       view.setExpanded(true)
@@ -245,6 +255,7 @@ test("live and replayed exploration share a compact row without hiding individua
       expect(expanded.join("\n")).not.toContain("Explored")
     }
   } finally {
+    removeRenderer()
     setup.renderer.destroy()
   }
 })

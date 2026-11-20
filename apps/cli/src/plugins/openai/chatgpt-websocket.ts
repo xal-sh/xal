@@ -137,13 +137,15 @@ export async function* chatGptSocketFrames(
     for await (const raw of socketMessages(socket, payload, signal)) {
       const frame = parseSseEvent(raw)
       if (!frame) continue
-      if (
-        !started &&
-        frame.type === "failure" &&
-        (frame.code === "websocket_connection_limit_reached" || (delta && frame.code === "previous_response_not_found"))
-      )
-        throw new WebSocketUnavailable(frame.message)
-      if (started && frame.type === "failure") throw new ProviderError(frame.message, { retryable: false })
+      if (frame.type === "failure") {
+        if (started) throw new ProviderError(frame.message, { retryable: false })
+        if (
+          frame.code === "websocket_connection_limit_reached" ||
+          (delta && frame.code === "previous_response_not_found")
+        )
+          throw new WebSocketUnavailable(frame.message)
+        cooldown = frame.retryable
+      }
       if (frame.type === "item_done") output.push(structuredClone(frame.item))
       if (frame.type === "terminal") {
         const response = isRecord(raw) && isRecord(raw.response) ? raw.response : undefined

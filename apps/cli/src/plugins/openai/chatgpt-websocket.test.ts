@@ -4,7 +4,8 @@ import { streamWithWatchdog } from "../../providers/stream-watchdog"
 import { isJsonObject, type JsonObject } from "../../lib/json"
 import type { ConversationItem, StreamRequest } from "../../providers/types"
 
-let mode: "answer" | "refuse" | "lost-context" | "partial" | "stall" | "empty" | "unconfirmed" = "answer"
+let mode: "answer" | "refuse" | "lost-context" | "unavailable" | "partial" | "stall" | "empty" | "unconfirmed" =
+  "answer"
 const socketRequests: JsonObject[] = []
 const posts: JsonObject[] = []
 let connections = 0
@@ -36,6 +37,17 @@ function startServer() {
         socketRequests.push(body)
         received.resolve()
         if (mode === "stall") return
+        if (mode === "unavailable") {
+          socket.send(
+            JSON.stringify({
+              type: "error",
+              status: 503,
+              error: { message: "upstream disconnected" },
+              headers: { "Retry-After": "2" },
+            }),
+          )
+          return
+        }
         if (mode === "lost-context") {
           socket.send(
             JSON.stringify({
@@ -194,6 +206,22 @@ test("uses full HTTP on retry when an open socket times out before any output", 
   } finally {
     jest.useRealTimers()
   }
+})
+
+test("preserves a transient socket error's retry delay and sends full history over HTTP on retry", async () => {
+  const next = await followUp(request())
+  mode = "unavailable"
+  await expect(followUp(next)).rejects.toMatchObject({
+    message: "upstream disconnected",
+    retryable: true,
+    retryAfterMs: 2_000,
+  })
+  expect(posts).toHaveLength(0)
+  await followUp(next)
+  expect(socketRequests).toHaveLength(2)
+  expect(posts).toHaveLength(1)
+  expect(posts[0]?.input).toHaveLength(4)
+  expect(posts[0]).not.toHaveProperty("previous_response_id")
 })
 
 test("does not replay partial output or cancellation and starts clean on the next socket", async () => {

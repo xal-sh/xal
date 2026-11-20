@@ -182,6 +182,7 @@ export async function summarizeHistory(request: SummaryRequest): Promise<string>
     instructions: SUMMARY_SYSTEM_INSTRUCTIONS,
     tools: [],
     cacheKey: promptCacheKey(target.model, SUMMARY_SYSTEM_INSTRUCTIONS, []),
+    thinking: request.thinking,
   }
   let input = prepareConversation(
     request.parentRequest?.input ?? conversationForSummary(activeHistory(request.history)),
@@ -223,7 +224,7 @@ export async function summarizeHistory(request: SummaryRequest): Promise<string>
       model: request.model,
       maxOutputTokens: request.overflowRecovery === undefined ? 12_000 : 4_000,
       ...(request.historyModel === undefined ? {} : { conversationModel: request.historyModel }),
-      thinking: request.thinking,
+      thinking: prompt.thinking,
       input,
       toolChoice: "none",
       sessionId: request.sessionId,
@@ -258,12 +259,8 @@ async function freesEnoughContext(
   candidate: CompactionItem,
   signal: AbortSignal,
 ): Promise<boolean> {
-  const previousEstimate = estimateRequestTokens(
-    host.buildRequestWithHistory(history, provider, model, undefined, signal),
-  )
-  const replacementEstimate = estimateRequestTokens(
-    host.buildRequestWithHistory([candidate], provider, model, undefined, signal),
-  )
+  const previousEstimate = estimateRequestTokens(host.buildRequestWithHistory(history, provider, model, signal))
+  const replacementEstimate = estimateRequestTokens(host.buildRequestWithHistory([candidate], provider, model, signal))
   const info = await findModel(provider, host.profileId(), model)
   const limit = effectiveAutoCompactTokenLimit(info?.contextWindow, info?.autoCompactTokenLimit)
   return replacementEstimate < previousEstimate * 0.75 && (limit === undefined || replacementEstimate < limit * 0.9)
@@ -282,13 +279,7 @@ export interface CompactionHost {
     thinking: ThinkingEffort | undefined,
     signal: AbortSignal,
   ): StreamRequest
-  buildRequestWithHistory(
-    history: HistoryItem[],
-    provider: Provider,
-    model: string,
-    thinking: ThinkingEffort | undefined,
-    signal: AbortSignal,
-  ): StreamRequest
+  buildRequestWithHistory(history: HistoryItem[], provider: Provider, model: string, signal: AbortSignal): StreamRequest
   admitRequest(provider: Provider, request: StreamRequest): number
   onRequestStarted(): void
   observeCompaction(observation: CompactionObservation): void
@@ -472,7 +463,7 @@ export async function runCompaction(
     let summary: string | undefined
     let attempt = 1
     let overflowRecovery = false
-    const parentRequest = host.buildRequestWithHistory(history, provider, model, target.thinking, signal)
+    const parentRequest = host.buildRequestWithHistory(history, provider, model, signal)
     while (summary === undefined) {
       try {
         summary = await summarizeHistory({
@@ -537,7 +528,7 @@ export async function runCompaction(
       tokensBefore,
       retained: [],
     }
-    const baseRequest = host.buildRequestWithHistory([baseCheckpoint], provider, model, undefined, signal)
+    const baseRequest = host.buildRequestWithHistory([baseCheckpoint], provider, model, signal)
     const baseEstimate = estimateRequestTokens(baseRequest)
     if (baseEstimate > replacementBudget) {
       throw new ContextCompactionError(
@@ -569,7 +560,7 @@ export async function runCompaction(
       retained,
       ...(tail.length ? { tail } : {}),
     }
-    const replacementRequest = host.buildRequestWithHistory([checkpoint], provider, model, undefined, signal)
+    const replacementRequest = host.buildRequestWithHistory([checkpoint], provider, model, signal)
     const replacementEstimate = estimateRequestTokens(replacementRequest)
     if (replacementEstimate > replacementBudget) {
       throw new ContextCompactionError(

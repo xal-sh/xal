@@ -483,8 +483,11 @@ describe("AgentSession control flow", () => {
         completedRound("Finished"),
       ],
       20_000,
+      undefined,
+      { options: ["low", "high"], default: "low" },
     )
     const session = harness.createSession(provider)
+    session.setThinking("high")
     await runSettledTurn(session, { text: "Start", images: [] })
     expect((await runSettledTurn(session, { text: "Continue", images: [] })).status).toBe("completed")
     expect(provider.requests.map((request) => request.toolChoice)).toEqual(["auto", "auto"])
@@ -493,6 +496,10 @@ describe("AgentSession control flow", () => {
     ).toHaveLength(120_000)
     expect((await runSettledTurn(session, { text: "Finish", images: [] })).status).toBe("completed")
     expect(provider.requests.map((request) => request.toolChoice)).toEqual(["auto", "auto", "none", "auto"])
+    expect(provider.requests[2]?.thinking).toBe("high")
+    expect(provider.requests[2]?.input).toContainEqual(
+      provider.requests[1]?.input.find((item) => item.type === "reasoning"),
+    )
     expect(provider.requests[2]?.maxOutputTokens).toBeGreaterThan(3_000)
     expect(provider.requests[2]?.maxOutputTokens).toBeLessThan(3_700)
   })

@@ -98,9 +98,11 @@ export function renderBlock(
     case "exploration":
       return frame(ctx, label(ctx, { content: explorationHeading(block), color: COLORS.faint }))
     case "tool": {
-      const { value, warning } = withToolRenderer(block.tool, (renderer) =>
-        tool(ctx, block, expanded, previous?.kind === "tool" || previous?.kind === "exploration", renderer),
-      )
+      const render = (renderer?: ToolRenderer) =>
+        tool(ctx, block, expanded, previous?.kind === "tool" || previous?.kind === "exploration", renderer)
+      const { value, warning } = block.rendererWarning
+        ? { value: render(), warning: block.rendererWarning }
+        : withToolRenderer(block.tool, render)
       if (warning) value.add(paragraph(ctx, { content: warning, color: COLORS.warning }))
       return value
     }

@@ -1,7 +1,7 @@
 import { asNumber, asString, isJsonObject, isRecord, type JsonObject, type JsonValue } from "../lib/json"
 import { replayMatches, type ConversationTarget } from "./conversation"
 import { ContextOverflowError, isContextOverflow, OutputLimitError, ProviderError } from "./errors"
-import { parseToolArgs, sseEvents, streamError } from "./transport"
+import { isRetryableHttpStatus, parseToolArgs, retryAfterMs, sseEvents, streamError } from "./transport"
 import type { ConversationItem, ProviderOutputItem, ProviderReplay, StreamEvent, Usage } from "./types"
 
 export type WireSseEvent =
@@ -11,7 +11,7 @@ export type WireSseEvent =
   | { type: "reasoning_delta"; delta: string }
   | { type: "item_done"; item: JsonObject }
   | { type: "terminal"; usage?: Usage }
-  | { type: "failure"; message: string; retryable: boolean; code?: string }
+  | { type: "failure"; message: string; retryable: boolean; code?: string; retryAfterMs?: number }
   | { type: "output_limit"; message: string }
   | { type: "context_overflow"; message: string }
 
@@ -24,13 +24,28 @@ interface ResponseStreamOptions {
 
 const TRANSIENT_FAILURE = /overloaded|rate.?limit|server.?error|service.?unavailable|internal.?error|timeout|try again/i
 
-function failure(message: string, code?: string): WireSseEvent {
-  if (isContextOverflow(message, code)) return { type: "context_overflow", message }
+function headerRetryDelay(headers: unknown): number | undefined {
+  if (!isRecord(headers)) return undefined
+  let delay: number | undefined
+  for (const [name, value] of Object.entries(headers)) {
+    if (name.toLowerCase() !== "retry-after") continue
+    if (typeof value !== "string" && typeof value !== "number") continue
+    if (/[\r\n]/.test(String(value))) continue
+    const parsed = retryAfterMs(String(value))
+    if (parsed !== undefined) delay = Math.max(delay ?? 0, parsed)
+  }
+  return delay
+}
+
+function failure(message: string, code?: string, status?: number, delayMs?: number): WireSseEvent {
+  if (isContextOverflow(message, code, status)) return { type: "context_overflow", message }
   return {
     type: "failure",
     message,
-    retryable: TRANSIENT_FAILURE.test(`${code ?? ""} ${message}`),
+    retryable:
+      status === undefined ? TRANSIENT_FAILURE.test(`${code ?? ""} ${message}`) : isRetryableHttpStatus(status),
     ...(code ? { code } : {}),
+    ...(delayMs === undefined ? {} : { retryAfterMs: delayMs }),
   }
 }
 
@@ -91,10 +106,13 @@ export function parseSseEvent(raw: unknown): WireSseEvent | undefined {
       return failure(message ?? "response failed", code)
     }
     case "error": {
-      const nested = isRecord(raw.error) ? asString(raw.error.message) : undefined
-      const code =
-        asString(raw.code) ?? (isRecord(raw.error) ? (asString(raw.error.code) ?? asString(raw.error.type)) : undefined)
-      return failure(asString(raw.message) ?? nested ?? "stream error", code)
+      const error = isRecord(raw.error) ? raw.error : undefined
+      return failure(
+        asString(raw.message) ?? asString(error?.message) ?? "stream error",
+        asString(raw.code) ?? asString(error?.code) ?? asString(error?.type),
+        asNumber(raw.status) ?? asNumber(raw.status_code),
+        headerRetryDelay(error?.headers) ?? headerRetryDelay(raw.headers),
+      )
     }
     default:
       return undefined
@@ -249,7 +267,7 @@ export async function* responseStream(
           yield { type: "done", usage: event.usage }
           break
         case "failure":
-          throw new ProviderError(event.message, { retryable: event.retryable })
+          throw new ProviderError(event.message, event)
         case "output_limit":
           throw new OutputLimitError(event.message)
         case "context_overflow":

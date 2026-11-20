@@ -347,8 +347,8 @@ export class AgentSession {
       outputDirectory: () => this.outputDirectory,
       contextTokens: () => this.contextBudget.currentTokens,
       buildRequest: (provider, model, thinking, signal) => this.buildStreamRequest(provider, model, thinking, signal),
-      buildRequestWithHistory: (history, provider, model, thinking, signal) =>
-        this.buildStreamRequest(provider, model, thinking, signal, history),
+      buildRequestWithHistory: (history, provider, model, signal) =>
+        this.buildStreamRequest(provider, model, this.thinking, signal, history),
       admitRequest: (provider, request) => this.contextBudget.admit(provider.id, this.selectedProfileId(), request),
       onRequestStarted: () => this.recordProviderRequest(),
       observeCompaction: (observation) => profileCompactionShape(this.sessionId, this.kind, observation),

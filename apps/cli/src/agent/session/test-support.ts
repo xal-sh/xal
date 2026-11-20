@@ -3,7 +3,15 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { appEnvVar, appInfo } from "../../app-info"
 import type { JsonObject } from "../../lib/json"
-import type { ModelCatalog, Provider, StreamEvent, StreamRequest, Usage, UserInput } from "../../providers/types"
+import type {
+  ModelCatalog,
+  Provider,
+  StreamEvent,
+  StreamRequest,
+  ThinkingOptions,
+  Usage,
+  UserInput,
+} from "../../providers/types"
 import type { AgentEvent } from "../events"
 import type { SessionKind } from "../types"
 import type { OutputSchema } from "./output-contract"
@@ -96,6 +104,7 @@ export class ScriptedProvider implements Provider {
     private readonly rounds: ProviderRound[],
     private readonly contextWindow?: number,
     private readonly autoCompactTokenLimit?: number,
+    private readonly thinking?: ThinkingOptions,
   ) {}
 
   async listModels(): Promise<ModelCatalog> {
@@ -107,6 +116,7 @@ export class ScriptedProvider implements Provider {
           name: "Test model",
           contextWindow: this.contextWindow,
           autoCompactTokenLimit: this.autoCompactTokenLimit,
+          thinking: this.thinking,
           inputModalities: ["text"],
         },
       ],

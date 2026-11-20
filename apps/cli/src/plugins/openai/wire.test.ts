@@ -63,6 +63,14 @@ describe("OpenAI Responses wire conversion", () => {
       retryable: false,
       code: "bad_request",
     })
+    expect(parseSseEvent({ type: "error", status: 401, message: "try again" })).toMatchObject({
+      type: "failure",
+      retryable: false,
+    })
+    expect(parseSseEvent({ type: "error", status: 503, error: { code: "context_length_exceeded" } })).toMatchObject({
+      type: "failure",
+      retryable: true,
+    })
   })
 
   test("parses assistant, reasoning, and tool items with replay data", () => {
