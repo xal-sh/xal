@@ -627,7 +627,7 @@ test("replay preserves legacy result bodies and tool failure status when replace
   scrollback.append({ ...result, output: legacy })
   const remove = registerLiveToolRenderer({
     tool: result.tool,
-    failed: (output) => output === rejected,
+    failed: (output) => output === rejected || output === legacy,
     summarize(output) {
       if (output === rejected) return "count declined"
       if (output !== "3") throw new Error("expected numeric output")
@@ -648,6 +648,7 @@ test("replay preserves legacy result bodies and tool failure status when replace
       .flatMap((commit) => commit.rows)
       .join("\n")
     expect(text).toContain(legacy)
+    expect(text).toContain("1 line x")
     expect(text).toContain("versioned-counter renderer failed: expected numeric output")
     expect(text).toContain("3 counted")
     expect(text).toContain("Count: 3")
