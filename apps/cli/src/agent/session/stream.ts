@@ -1,4 +1,5 @@
 import { setTimeout as sleep } from "node:timers/promises"
+import { isDeepStrictEqual } from "node:util"
 import {
   profileProviderFirstEvent,
   profileProviderRequestFinished,
@@ -76,13 +77,14 @@ export interface StreamRoundHost {
   sessionId(): string
   profileId(): string
   emit(event: AgentEvent): void
-  commitProviderRound(items: ProviderOutputItem[], usage: Usage | undefined, request: StreamRequest): void
+  commitProviderRound(round: Pick<StreamRound, "items" | "usage" | "outputChanged">, request: StreamRequest): void
   redactOutputItem(item: ProviderOutputItem): ProviderOutputItem
   onRequestStarted(): void
 }
 
 interface StreamRound {
   received: boolean
+  outputChanged: boolean
   items: ProviderOutputItem[]
   profile: ProviderRequestProfile
   usage?: Usage
@@ -109,12 +111,12 @@ export async function streamProviderTurn(
       request.thinking,
       attempt,
     )
-    const round: StreamRound = { received: false, items: [], profile }
+    const round: StreamRound = { received: false, outputChanged: false, items: [], profile }
     try {
       await consumeStream(host, provider, request, round)
       profileProviderRequestFinished(profile, "completed", round.usage)
       host.buffer.flush()
-      host.commitProviderRound(round.items, round.usage, request)
+      host.commitProviderRound(round, request)
       return round.items
     } catch (error) {
       profileProviderRequestFinished(
@@ -124,7 +126,7 @@ export async function streamProviderTurn(
       )
       if (isAbortError(error) || signal.aborted) {
         host.buffer.flush()
-        host.commitProviderRound(round.items, round.usage, request)
+        host.commitProviderRound(round, request)
         if (!isSteeringInterrupt(signal)) host.emit({ type: "turn_interrupted" })
         return undefined
       }
@@ -145,7 +147,7 @@ export async function streamProviderTurn(
         attempt >= MAX_PROVIDER_ATTEMPTS
       ) {
         host.buffer.flush()
-        host.commitProviderRound(round.items, round.usage, request)
+        host.commitProviderRound(round, request)
         throw error
       }
 
@@ -221,6 +223,7 @@ async function consumeStream(
         break
       case "item_done": {
         const item = host.redactOutputItem(event.item)
+        round.outputChanged ||= !isDeepStrictEqual(item, event.item)
         if (event.item.type === "assistant_message") {
           if (!assistantStreamed) {
             detectLoop(outputLoops.assistant, event.item.text, "assistant response")

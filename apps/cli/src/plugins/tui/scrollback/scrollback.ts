@@ -3,7 +3,16 @@ import { createRedactedStream, redactText, type RedactedStream } from "../../../
 import type { TuiPreferences } from "../config"
 import type { RenderedMarkdown } from "../markdown/render"
 import { COLORS, userMessageBackground } from "../theme/colors"
-import { blockVisible, type Block, type HeaderBlock, type StreamBlock, type StreamKind } from "./blocks"
+import {
+  blockVisible,
+  type Block,
+  type DisplayBlock,
+  type ExplorationBlock,
+  type HeaderBlock,
+  type StreamBlock,
+  type StreamKind,
+} from "./blocks"
+import { explorationHeading, groupExploration } from "./exploration"
 import { contentWidth, renderBlock, streamContent, streamRowColumns, streamView } from "./render"
 
 const FLUSH_MS = 50
@@ -66,6 +75,8 @@ export class Scrollback {
   private readonly checkpoints: TranscriptCheckpoint[] = []
   private readonly header: Block[] = []
   private readonly redos: TranscriptRedo[] = []
+  private readonly turnEnds = new WeakSet<Block>()
+  private exploration: ExplorationBlock | undefined
   private stream: Stream | undefined
   private expanded: boolean
   private reasoningVisible: boolean
@@ -95,6 +106,16 @@ export class Scrollback {
 
   get detailsExpanded(): boolean {
     return this.expanded
+  }
+
+  get explorationPreview(): string | undefined {
+    return this.exploration && explorationHeading(this.exploration)
+  }
+
+  finishTools(): void {
+    const last = this.blocks.at(-1)
+    if (last) this.turnEnds.add(last)
+    if (this.emitting) this.flushExploration((group) => this.emit(group, undefined))
   }
 
   get endsWithTool(): boolean {
@@ -195,6 +216,7 @@ export class Scrollback {
 
   endReplay(): void {
     if (!this.deferred) return
+    this.finishTools()
     this.deferred = false
     if (!this.active) return
     this.emitTranscript(false)
@@ -202,6 +224,7 @@ export class Scrollback {
 
   clear(): void {
     this.endStream()
+    this.exploration = undefined
     this.blocks.length = 0
     this.checkpoints.length = 0
     this.header.length = 0
@@ -260,19 +283,27 @@ export class Scrollback {
       streaming.surface?.destroy()
       this.stream = undefined
     }
-    const blocks = this.blocks.filter((block) => block !== streaming?.block && this.visible(block))
+    const blocks: DisplayBlock[] = []
+    const collect = (block: DisplayBlock) => blocks.push(block)
+    this.exploration = undefined
+    for (const block of this.blocks) {
+      if (block !== streaming?.block) this.project(block, collect)
+      else if (this.visible(block)) this.flushExploration(collect)
+      if (this.turnEnds.has(block)) this.flushExploration(collect)
+    }
     const start = this.transcriptStart(blocks, streaming?.block)
     const retained = blocks.slice(start)
     if (start > 0) {
       retained.unshift({ kind: "info", text: "earlier transcript omitted · raise tui scrollbackRows to keep more" })
     }
     this.emitBatch(retained)
+    if (retained.length === 0) this.onCommit(0)
     if (!streaming) return
     this.stream = this.openRedactedStream(streaming.block, streaming.redactor)
     this.flush(this.stream, false, !cleared)
   }
 
-  private emitBatch(blocks: Block[]): void {
+  private emitBatch(blocks: DisplayBlock[]): void {
     if (blocks.length === 0) return
     const surface = this.renderer.createScrollbackSurface()
     try {
@@ -297,7 +328,7 @@ export class Scrollback {
     }
   }
 
-  private transcriptStart(blocks: Block[], streaming: StreamBlock | undefined): number {
+  private transcriptStart(blocks: DisplayBlock[], streaming: StreamBlock | undefined): number {
     if (this.maxRows === 0) return 0
     const surface = this.renderer.createScrollbackSurface()
     try {
@@ -313,7 +344,7 @@ export class Scrollback {
     }
   }
 
-  private measure(surface: ScrollbackSurface, block: Block, previous: Block | undefined): number {
+  private measure(surface: ScrollbackSurface, block: DisplayBlock, previous: DisplayBlock | undefined): number {
     const view = renderBlock(
       surface.renderContext,
       block,
@@ -356,7 +387,27 @@ export class Scrollback {
     this.endStream()
     const previous = this.blocks.findLast((candidate) => this.visible(candidate))
     this.blocks.push(block)
-    if (this.emitting) this.emit(block, previous)
+    if (!this.emitting) return
+    this.project(block, (display) => this.emit(display, previous))
+    if (this.exploration) this.onCommit(0)
+  }
+
+  private project(block: Block, emit: (block: DisplayBlock) => void): void {
+    if (!this.visible(block)) return
+    const display = this.expanded ? block : groupExploration(block, this.exploration)
+    if (display.kind === "exploration") {
+      this.exploration = display
+      return
+    }
+    this.flushExploration(emit)
+    emit(display)
+  }
+
+  private flushExploration(emit: (block: ExplorationBlock) => void): void {
+    if (!this.exploration) return
+    const group = this.exploration
+    this.exploration = undefined
+    emit(group)
   }
 
   private drop(block: Block): void {
@@ -367,6 +418,7 @@ export class Scrollback {
 
   private beginStream(kind: StreamKind): Stream {
     const block: StreamBlock = { kind, text: "" }
+    if (this.emitting && this.visible(block)) this.flushExploration((group) => this.emit(group, undefined))
     this.blocks.push(block)
     this.stream = this.openStream(block)
     return this.stream
@@ -402,8 +454,7 @@ export class Scrollback {
     stream.committed = target
   }
 
-  private emit(block: Block, previous: Block | undefined): void {
-    if (!this.visible(block)) return
+  private emit(block: DisplayBlock, previous: Block | undefined): void {
     if (block.kind === "text" || block.kind === "reasoning") {
       this.emitStream(block)
       return

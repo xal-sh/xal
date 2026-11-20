@@ -22,6 +22,7 @@ export interface StreamedTextRequest {
   kind?: SessionKind
   attempt?: number
   emptyResponseMessage: string
+  fitOutputToContext?: { estimateInput(request: StreamRequest): number }
   onRequestStarted?(): void
 }
 
@@ -64,11 +65,18 @@ export async function collectStreamedText(input: StreamedTextRequest): Promise<S
       ...input.request,
       signal: input.request.signal ? AbortSignal.any([input.request.signal, controller.signal]) : controller.signal,
     })
-    const maximum = request.maxOutputTokens
-    if (maximum !== undefined && (!Number.isSafeInteger(maximum) || maximum < 1))
+    if (
+      request.maxOutputTokens !== undefined &&
+      (!Number.isSafeInteger(request.maxOutputTokens) || request.maxOutputTokens < 1)
+    )
       throw new Error("auxiliary output limit must be a positive integer")
     const model = await findModel(input.provider, input.profileId, request.model)
-    const tokens = estimateRequestTokens(request) + (maximum ?? 0)
+    const estimated = input.fitOutputToContext?.estimateInput(request) ?? estimateRequestTokens(request)
+    if (input.fitOutputToContext && model?.contextWindow !== undefined && request.maxOutputTokens !== undefined) {
+      request.maxOutputTokens = Math.max(1, Math.min(request.maxOutputTokens, model.contextWindow - estimated))
+    }
+    const maximum = request.maxOutputTokens
+    const tokens = estimated + (maximum ?? 0)
     if (model?.contextWindow !== undefined && tokens > model.contextWindow) {
       throw new ContextOverflowError(
         `auxiliary request requires approximately ${tokens} tokens including output, exceeding ${request.model}'s ${model.contextWindow}-token context window`,

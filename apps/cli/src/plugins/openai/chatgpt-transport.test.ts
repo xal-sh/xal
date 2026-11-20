@@ -12,6 +12,7 @@ const requests: CapturedRequest[] = []
 const responses: Response[] = []
 
 mock.module("./chatgpt-client", () => ({
+  chatGptSocketTarget: () => undefined,
   async chatGptFetch(profileId: string, path: string, init: RequestInit = {}): Promise<Response> {
     requests.push({ profileId, path, init })
     const response = responses.shift()
@@ -215,6 +216,26 @@ describe("ChatGPT transport", () => {
     if (!(thrown instanceof ProviderError)) throw new Error("expected ProviderError")
     expect(thrown.message).toBe("temporarily overloaded")
     expect(thrown.retryable).toBe(true)
+  })
+
+  test("keeps the HTTP retry decision when an error body disconnects", async () => {
+    for (const status of [429, 503]) {
+      responses.push(
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.error(new Error("disconnected"))
+            },
+          }),
+          { status, headers: { "retry-after": "2" } },
+        ),
+      )
+      await expect(collect(streamResponse("test-profile", request()))).rejects.toMatchObject({
+        message: expect.stringContaining("disconnected"),
+        retryable: true,
+        retryAfterMs: 2000,
+      })
+    }
   })
 
   test("rejects a stream that ends before a terminal event", async () => {

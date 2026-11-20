@@ -9,6 +9,7 @@ export interface ChildTranscript {
   append(block: Block): void
   appendStream(kind: StreamKind, text: string): void
   endStream(): boolean
+  finishTools(): void
 }
 
 export interface ChildStatusBar {
@@ -155,6 +156,7 @@ export class ChildEventController {
         this.statusBar.setState(event.state)
         break
       case "turn_ended":
+        this.transcript.finishTools()
         this.statusBar.setTurnOutcome("completed")
         this.statusBar.setUsage(event.context)
         break

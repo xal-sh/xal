@@ -171,6 +171,95 @@ test("settled tools leave the scrollback cursor on their row for live tool group
   }
 })
 
+test("live and replayed exploration share a compact row without hiding individual calls or failures", async () => {
+  const setup = await createTestRenderer({
+    width: 100,
+    height: 24,
+    footerHeight: 1,
+    screenMode: "split-footer",
+    externalOutputMode: "capture-stdout",
+  })
+  const rows = () =>
+    setup.externalOutput
+      .take()
+      .flatMap((commit) => commit.rows)
+      .map((row) => row.trim())
+      .filter(Boolean)
+  const removeRenderer = registerLiveToolRenderer({
+    tool: "read",
+    failed(output) {
+      if (output === "legacy read result") throw new Error("unknown read format")
+      return false
+    },
+  })
+  try {
+    await setup.renderer.setupTerminal()
+    for (const replay of [false, true]) {
+      const view = new Scrollback(
+        setup.renderer,
+        0,
+        () => {},
+        { showOutputs: false, showThinking: false, scrollbackRows: 0 },
+        "Ctrl+O",
+      )
+      const tool = (name: string, title: string, extra: Partial<ToolBlock> = {}) =>
+        view.append({
+          kind: "tool",
+          tool: name,
+          title,
+          output: `result-${title}`,
+          readOnly: true,
+          expanded: false,
+          denial: undefined,
+          execution: undefined,
+          elapsed: undefined,
+          ...extra,
+        })
+      if (replay) view.beginReplay()
+      tool("read", "first.ts")
+      view.append({ kind: "hook", text: "after tool" })
+      view.append({ kind: "reasoning", text: "inspect related code" })
+      tool("glob", "*.ts", { output: "result-*.ts: fixture (interrupted by user)" })
+      tool("grep", "needle")
+      if (!replay) expect(view.explorationPreview).toBe("Explored · 1 read, 2 searches · needle")
+      expect(rows()).toEqual([])
+      tool("read", "missing.ts", { output: "Tool failed: missing file" })
+      tool("grep", "private", { denial: "policy" })
+      tool("read", "skipped.ts", { output: "Interrupted by user before execution." })
+      tool("grep", "cancelled", { output: "(interrupted by user)" })
+      tool("read", "legacy.ts", { output: "legacy read result" })
+      tool("read", "last.ts")
+      view.finishTools()
+      if (replay) view.endReplay()
+      expect(rows()).toEqual([
+        "Explored · 1 read, 2 searches · needle",
+        expect.stringContaining("missing file"),
+        expect.stringContaining("blocked"),
+        expect.stringContaining("interrupted"),
+        expect.stringContaining("interrupted"),
+        expect.stringContaining("legacy.ts"),
+        "read renderer failed: unknown read format",
+        "Explored · 1 read · last.ts",
+      ])
+      view.setExpanded(true)
+      const expanded = rows()
+      expect(expanded.filter((row) => row.includes("result-"))).toEqual(
+        expect.arrayContaining([
+          expect.stringContaining("result-first.ts"),
+          expect.stringContaining("result-*.ts"),
+          expect.stringContaining("result-needle"),
+          expect.stringContaining("result-last.ts"),
+        ]),
+      )
+      expect(expanded.join("\n")).toMatch(/read first\.ts[\s\S]*after tool[\s\S]*glob \*\.ts[\s\S]*grep needle/)
+      expect(expanded.join("\n")).not.toContain("Explored")
+    }
+  } finally {
+    removeRenderer()
+    setup.renderer.destroy()
+  }
+})
+
 test("a rebuild clears saved scrollback and re-prints one capped batch", async () => {
   const setup = await createTestRenderer({
     width: 80,
@@ -538,7 +627,7 @@ test("replay preserves legacy result bodies and tool failure status when replace
   scrollback.append({ ...result, output: legacy })
   const remove = registerLiveToolRenderer({
     tool: result.tool,
-    failed: (output) => output === rejected,
+    failed: (output) => output === rejected || output === legacy,
     summarize(output) {
       if (output === rejected) return "count declined"
       if (output !== "3") throw new Error("expected numeric output")
@@ -559,6 +648,7 @@ test("replay preserves legacy result bodies and tool failure status when replace
       .flatMap((commit) => commit.rows)
       .join("\n")
     expect(text).toContain(legacy)
+    expect(text).toContain("1 line x")
     expect(text).toContain("versioned-counter renderer failed: expected numeric output")
     expect(text).toContain("3 counted")
     expect(text).toContain("Count: 3")

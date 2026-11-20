@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from "node:util"
 import type {
   AssistantMessageItem,
   ConversationItem,
@@ -11,6 +12,13 @@ import type {
 export interface ConversationTarget {
   provider: string
   model: string
+}
+
+export function inputDelta<T>(input: T[], prefix: T[]): T[] | undefined {
+  if (input.length < prefix.length || !prefix.every((item, index) => isDeepStrictEqual(input[index], item))) {
+    return undefined
+  }
+  return input.slice(prefix.length)
 }
 
 export function replayMatches(

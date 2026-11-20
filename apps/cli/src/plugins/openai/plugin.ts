@@ -1,6 +1,7 @@
 import { asNumber } from "../../lib/json"
 import { configuredClientIdentity } from "../../providers/identity"
 import type { Plugin } from "../types"
+import { closeChatGptSocket } from "./chatgpt-websocket"
 import { setContextWindowCap } from "./context-window"
 import { defaultClientName, setClientIdentity } from "./identity"
 import { chatgptProvider, openaiProvider } from "./provider"
@@ -21,6 +22,8 @@ const plugin: Plugin = {
     setClientIdentity(configuredClientIdentity("openai", ctx.config, defaultClientName))
     ctx.registerProvider(openaiProvider)
     ctx.registerProvider(chatgptProvider)
+    ctx.registerToolSessionDisposer(closeChatGptSocket)
+    ctx.registerToolContextDisposer(closeChatGptSocket)
   },
 }
 

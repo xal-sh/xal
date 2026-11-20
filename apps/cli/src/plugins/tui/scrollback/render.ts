@@ -25,7 +25,7 @@ import { background, muted, paint } from "../theme/styles"
 import type {
   BackgroundBlock,
   BannerBlock,
-  Block,
+  DisplayBlock,
   CompactionBlock,
   NoticeBlock,
   PlanBlock,
@@ -33,6 +33,7 @@ import type {
   ToolBlock,
   UserBlock,
 } from "./blocks"
+import { explorationHeading } from "./exploration"
 
 const GUTTER = 2
 
@@ -67,11 +68,11 @@ export function streamView(ctx: RenderContext, block: StreamBlock): StreamView {
 
 export function renderBlock(
   ctx: RenderContext,
-  block: Block,
+  block: DisplayBlock,
   expanded: boolean,
   userBackground: RGBA,
   detailsShortcut: string | undefined,
-  previous?: Block,
+  previous?: DisplayBlock,
 ): Renderable {
   switch (block.kind) {
     case "banner":
@@ -94,10 +95,19 @@ export function renderBlock(
     case "text":
     case "reasoning":
       return streamView(ctx, block).view
+    case "exploration":
+      return frame(ctx, label(ctx, { content: explorationHeading(block), color: COLORS.faint }))
     case "tool": {
-      const { value, warning } = withToolRenderer(block.tool, (renderer) =>
-        tool(ctx, block, expanded, previous?.kind === "tool", renderer),
-      )
+      const coreFailed = toolOutputFailed(block.tool, block.output, block.execution)
+      const classification = block.rendererWarning
+        ? { value: coreFailed, warning: block.rendererWarning }
+        : withToolRenderer(block.tool, (renderer) => coreFailed || (renderer?.failed?.(block.output) ?? false))
+      const outcome = block.denial ? "denied" : classification.value ? "failure" : "success"
+      const grouped = previous?.kind === "tool" || previous?.kind === "exploration"
+      const render = (renderer?: ToolRenderer) => tool(ctx, block, expanded, grouped, outcome, coreFailed, renderer)
+      const { value, warning } = classification.warning
+        ? { value: render(), warning: classification.warning }
+        : withToolRenderer(block.tool, render)
       if (warning) value.add(paragraph(ctx, { content: warning, color: COLORS.warning }))
       return value
     }
@@ -277,6 +287,8 @@ function tool(
   block: ToolBlock,
   expanded: boolean,
   grouped: boolean,
+  outcome: ToolOutcome,
+  coreFailed: boolean,
   toolRenderer?: ToolRenderer,
 ): Renderable {
   const detailsVisible = expanded || block.expanded || toolRenderer?.alwaysExpanded
@@ -284,9 +296,6 @@ function tool(
   const title =
     detailsVisible && !multilineTitle ? block.title : (toolRenderer?.compactTitle?.(block.title) ?? block.title)
   const bounded = parseBoundedToolOutput(block.output)
-  const coreFailed = toolOutputFailed(block.output, block.execution)
-  const failed = coreFailed || (toolRenderer?.failed?.(block.output) ?? false)
-  const outcome: ToolOutcome = block.denial ? "denied" : failed ? "failure" : "success"
   const summary = block.denial
     ? denialSummary[block.denial]
     : bounded

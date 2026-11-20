@@ -24,7 +24,7 @@ import {
   runCompaction,
   summarizeHistory,
 } from "./compaction"
-import { ContextBudget, requestIdentity } from "./context-budget"
+import { ContextBudget } from "./context-budget"
 import { StreamBuffer, streamProviderTurn } from "./stream"
 
 let directory: string
@@ -293,7 +293,7 @@ test("rebuilds and re-admits after compaction and sends that exact snapshot", as
   let history: HistoryItem[] = [{ type: "user_message", text: "h".repeat(3_000), images: [] }]
   const budget = new ContextBudget()
   const built: StreamRequest[] = []
-  const admissions: ReturnType<ContextBudget["admit"]>[] = []
+  const admissions: number[] = []
   const buildRequest = (): StreamRequest => {
     const request: StreamRequest = {
       model: "test-model",
@@ -308,7 +308,7 @@ test("rebuilds and re-admits after compaction and sends that exact snapshot", as
     return request
   }
   const initial = buildRequest()
-  budget.commitProvider([], { totalInputTokens: 600 }, requestIdentity(provider.id, "test-profile", initial))
+  budget.commitProvider(provider.id, "test-profile", initial, [], { totalInputTokens: 600 })
   built.length = 0
   const host: CompactionHost = {
     kind: "primary",
@@ -336,7 +336,7 @@ test("rebuilds and re-admits after compaction and sends that exact snapshot", as
     observeCompaction: () => {},
     replaceHistory: (item) => {
       history = [item]
-      budget.reset(history)
+      budget.reset()
     },
     setState: () => {},
     emit: () => {},
@@ -345,12 +345,12 @@ test("rebuilds and re-admits after compaction and sends that exact snapshot", as
   const admitted = await autoCompact(host, new AbortController().signal, provider, "test-model", undefined)
 
   expect(built).toHaveLength(2)
-  expect(admissions).toHaveLength(2)
+  expect(admissions).toHaveLength(3)
   const rebuilt = built[1]
   if (!rebuilt) throw new Error("missing rebuilt request")
   expect(admitted).toBe(rebuilt)
   expect(rebuilt).not.toBe(built[0])
-  expect(admissions[1]?.activeTokens).toBe(admissions[1]?.requestEstimate)
+  expect(admissions.at(-1)).toBe(estimateRequestTokens(rebuilt))
 
   const buffer = new StreamBuffer(() => {})
   await streamProviderTurn(
@@ -432,11 +432,7 @@ test("summarizes with the parent prefix and atomically keeps users, a recent exc
     contextTokens: () => 40_000,
     buildRequest: () => buildRequestWithHistory(history),
     buildRequestWithHistory,
-    admitRequest: (candidateProvider, candidateRequest) => ({
-      identity: requestIdentity(candidateProvider.id, "test-profile", candidateRequest),
-      activeTokens: 0,
-      requestEstimate: 0,
-    }),
+    admitRequest: () => 0,
     onRequestStarted: () => {},
     observeCompaction: (value) => {
       observed = value
@@ -533,11 +529,7 @@ test("recompacts a new checkpoint once and returns nothing without later history
     contextTokens: () => 40_000,
     buildRequest: () => request(history),
     buildRequestWithHistory: request,
-    admitRequest: (candidateProvider, candidateRequest) => ({
-      identity: requestIdentity(candidateProvider.id, "test-profile", candidateRequest),
-      activeTokens: 0,
-      requestEstimate: 0,
-    }),
+    admitRequest: () => 0,
     onRequestStarted: () => {},
     observeCompaction: (observation) => observations.push(observation),
     replaceHistory: (item) => {
@@ -594,11 +586,7 @@ test("leaves history unchanged when the static prefix and summary exceed the rep
     contextTokens: () => 40_000,
     buildRequest: () => request(history),
     buildRequestWithHistory: request,
-    admitRequest: (candidateProvider, candidateRequest) => ({
-      identity: requestIdentity(candidateProvider.id, "test-profile", candidateRequest),
-      activeTokens: 0,
-      requestEstimate: 0,
-    }),
+    admitRequest: () => 0,
     onRequestStarted: () => {},
     observeCompaction: () => {},
     replaceHistory: () => {
@@ -646,11 +634,7 @@ test("replaces superseded reads locally when that frees enough context", async (
     contextTokens: () => undefined,
     buildRequest: () => buildRequestWithHistory(history),
     buildRequestWithHistory,
-    admitRequest: (candidateProvider, candidateRequest) => ({
-      identity: requestIdentity(candidateProvider.id, "test-profile", candidateRequest),
-      activeTokens: 0,
-      requestEstimate: 0,
-    }),
+    admitRequest: () => 0,
     onRequestStarted: () => {},
     observeCompaction: () => {},
     replaceHistory: (item) => {

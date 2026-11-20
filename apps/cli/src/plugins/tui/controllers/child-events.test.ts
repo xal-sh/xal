@@ -50,7 +50,7 @@ function recorder(streaming: boolean): Recorder {
     setUsage: (context) => status.push(`usage:${JSON.stringify(context)}`),
     setTurnOutcome: (outcome) => status.push(`turn:${outcome}`),
   }
-  return { blocks, status, controller: new ChildEventController(transcript, statusBar) }
+  return { blocks, status, controller: new ChildEventController({ ...transcript, finishTools() {} }, statusBar) }
 }
 
 function run(events: AgentEvent[]): Block[] {

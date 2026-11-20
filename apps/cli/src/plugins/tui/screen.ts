@@ -1,4 +1,4 @@
-import { RenderableEvents, type BoxRenderable, type CliRenderer, type RGBA } from "@opentui/core"
+import { RenderableEvents, type BoxRenderable, type CliRenderer, type RGBA, type TextRenderable } from "@opentui/core"
 import type { AgentSession } from "../../agent/session/session"
 import {
   listBackgroundTasks,
@@ -33,7 +33,7 @@ import { StatusBar, STATUS_ROWS } from "./components/status-bar"
 import { UsagePopover } from "./components/usage-popover"
 import { saveTuiConfig, type TuiConfig } from "./config"
 import { ChildEventController } from "./controllers/child-events"
-import { column } from "./lib/renderables"
+import { column, label } from "./lib/renderables"
 import { agentSnapshotMetrics } from "./lib/agent-metrics"
 import { truncateToWidth } from "./lib/text"
 import { COLORS } from "./theme/colors"
@@ -81,6 +81,7 @@ export function agentSteerDecision(
 export class Screen {
   readonly view: BoxRenderable
   private readonly mainPanel: BoxRenderable
+  private readonly exploration: TextRenderable
   readonly scrollback: Scrollback
   readonly jobViewer: JobViewer
   readonly live: LiveTools
@@ -128,6 +129,8 @@ export class Screen {
       shortcuts.help("display.toggle-details"),
     )
     this.view = column(renderer, { width: "100%", height: "100%" })
+    this.exploration = label(renderer, { marginLeft: 2, marginRight: 2, color: COLORS.faint, visible: false })
+    this.view.add(this.exploration)
     this.jobViewer = new JobViewer(renderer)
     this.live = new LiveTools(renderer, () => this.syncFooter(), preferences.showOutputs)
     this.queued = new QueuedInputs(renderer, () => this.syncFooter())
@@ -453,11 +456,15 @@ export class Screen {
     const siblingRows = this.jobViewer.visible
       ? STATUS_ROWS + this.tasks.height
       : this.live.height + this.queued.height + STATUS_ROWS + this.tasks.height
-    return Math.max(1, this.renderer.terminalHeight - siblingRows)
+    return Math.max(1, this.renderer.terminalHeight - siblingRows - Number(this.exploration.visible))
   }
 
   syncFooter(): void {
     const overlaid = this.overlayVisible
+    const preview = this.page.kind === "job" ? undefined : this.activeScrollback.explorationPreview
+    this.exploration.visible = preview !== undefined
+    if (preview !== undefined) this.exploration.content = preview
+    const explorationRows = Number(this.exploration.visible)
     if (this.page.kind === "agent") {
       this.shortcutHelp.setCovered(true)
       this.composer.setVisible(false)
@@ -470,12 +477,12 @@ export class Screen {
       if (this.paletteBelow) this.reserved = 0
       else this.reserved = Math.max(this.reserved, paletteRows)
       const editing = this.agentComposer.rows + this.shortcutHelp.height + Math.max(paletteRows, this.reserved)
-      const contentRows = editing + STATUS_ROWS + this.tasks.height
+      const contentRows = explorationRows + editing + STATUS_ROWS + this.tasks.height
       this.renderer.footerHeight = mainFooterHeight(
         this.renderer.terminalHeight,
         this.activeScrollback.rows + this.pendingScrollbackRows,
         contentRows,
-        0,
+        explorationRows,
       )
       this.activeStatusBar.setHint(this.palette.visible ? "↑↓ · Tab · Enter · Esc" : undefined)
       return
@@ -535,12 +542,17 @@ export class Screen {
     const editing = this.composer.rows + this.shortcutHelp.height + Math.max(paletteRows, this.reserved)
     this.live.setGrouped(this.scrollback.endsWithTool)
     const contentRows =
-      this.live.height + this.queued.height + (overlaid ? overlayRows : editing) + STATUS_ROWS + this.tasks.height
+      explorationRows +
+      this.live.height +
+      this.queued.height +
+      (overlaid ? overlayRows : editing) +
+      STATUS_ROWS +
+      this.tasks.height
     this.renderer.footerHeight = mainFooterHeight(
       this.renderer.terminalHeight,
       this.scrollback.rows + this.pendingScrollbackRows,
       contentRows,
-      this.live.height,
+      explorationRows + this.live.height,
     )
   }
 
@@ -556,12 +568,19 @@ export class Screen {
 
   private closedFooterRows(): number {
     if (this.page.kind === "agent") {
-      return this.agentComposer.rows + this.shortcutHelp.height + STATUS_ROWS + this.tasks.height
+      return (
+        Number(this.exploration.visible) +
+        this.agentComposer.rows +
+        this.shortcutHelp.height +
+        STATUS_ROWS +
+        this.tasks.height
+      )
     }
     if (this.jobViewer.visible) {
       return this.jobViewer.height + this.composer.rows + this.shortcutHelp.height + STATUS_ROWS + this.tasks.height
     }
     return (
+      Number(this.exploration.visible) +
       this.live.height +
       this.queued.height +
       this.composer.rows +

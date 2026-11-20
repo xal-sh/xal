@@ -29,7 +29,8 @@ export class ContextOverflowError extends ProviderError {
   }
 }
 
-export function isContextOverflow(message: string, code?: string): boolean {
+export function isContextOverflow(message: string, code?: string, status?: number): boolean {
+  if (status !== undefined && ![400, 413, 422].includes(status)) return false
   switch (code?.toLowerCase()) {
     case "context_length_exceeded":
     case "context_window_exceeded":

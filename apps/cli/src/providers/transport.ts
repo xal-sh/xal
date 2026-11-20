@@ -70,22 +70,24 @@ export function errorDetail(text: string, fallback = text.slice(0, 500)): HttpEr
   }
 }
 
+export function isRetryableHttpStatus(status: number): boolean {
+  return status === 408 || status === 429 || (status >= 500 && status < 600)
+}
+
 export function httpError(name: string, response: Response, detail: HttpErrorDetail): ProviderError {
   const delayMs = retryAfterMs(response.headers.get("retry-after"))
+  const options = { retryable: isRetryableHttpStatus(response.status), retryAfterMs: delayMs }
   if (response.status === 429) {
     return new ProviderError(
       delayMs === undefined ? `${name} rate limit reached` : `${name} rate limited — retry in ${delayMs / 1_000}s`,
-      { retryable: true, retryAfterMs: delayMs },
+      options,
     )
   }
   const message = `${name} request failed (${response.status})${detail.message ? `: ${detail.message}` : ""}`
-  if ([400, 413, 422].includes(response.status) && isContextOverflow(detail.message, detail.code)) {
+  if (isContextOverflow(detail.message, detail.code, response.status)) {
     return new ContextOverflowError(message)
   }
-  return new ProviderError(message, {
-    retryable: response.status === 408 || response.status >= 500,
-    retryAfterMs: delayMs,
-  })
+  return new ProviderError(message, options)
 }
 
 export async function providerFetch(
