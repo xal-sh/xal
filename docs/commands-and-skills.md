@@ -90,7 +90,9 @@ Session totals include normal turns, compaction, and goal evaluation requests as
 
 ## Skills
 
-Xal discovers reusable skill packages from four directories, in increasing priority:
+Xal ships two skills inside the executable. `$xal-help` lists the installed version's offline Markdown docs as supporting files. `$xal-plugin` guides the agent through creating and activating a [live plugin](/docs/plugins#live-plugins), including tool-result UI. They use the ordinary skill catalog, tool, and `$` completion; the full docs are not added to every model prompt. Neither needs a checkout, extraction step, or network connection.
+
+On-disk packages can override a bundled skill. Xal discovers them from four directories, in increasing priority:
 
 | Scope   | Path                                    |
 | ------- | --------------------------------------- |
@@ -105,7 +107,7 @@ In the interactive TUI, these directories are checked automatically every two se
 
 Invalid edits or discovery failures report an error and retain the previous skill catalog until fixed; other valid packages still load normally at startup. Reloads keep the original launch project's scope and trust rules. See [Automatic reload](/docs/configs#automatic-reload) for configuration support and restart-only settings.
 
-Every package is a directory containing a `SKILL.md` entry file. The entry file requires YAML frontmatter with a `description`. Its `name` is optional and defaults to the package directory name:
+An on-disk skill package is a directory containing a `SKILL.md` entry file. The entry file requires YAML frontmatter with a `description`. Its `name` is optional and defaults to the package directory name:
 
 ```md
 ---
@@ -118,7 +120,7 @@ Inspect the current diff, validate every finding, and report only actionable iss
 
 Skill names may contain up to 64 characters. Lower-case, hyphen-separated names remain recommended because they work naturally with `$skill-name` references. Xal normalizes metadata whitespace, accepts descriptions of any length, and repairs common third-party YAML mistakes such as unquoted prose containing colons. Unknown frontmatter fields are ignored, and the Markdown body may be empty.
 
-Only skill names and up to the first 160 characters of each normalized description enter the system prompt. Lead with concise matching criteria; put procedures and edge cases in the skill body. The model loads full instructions on demand with the read-only `skill` tool, which can also read referenced text files inside that package without allowing paths to escape the package directory. `SKILL.md` files are limited to 64 KiB and supporting files read through the tool are limited to 50,000 bytes. A structurally invalid `SKILL.md` is skipped and reported as a startup warning without blocking other skills from loading.
+Only skill names and up to the first 160 characters of each normalized description enter the system prompt. Lead with concise matching criteria; put procedures and edge cases in the skill body. The model loads full instructions on demand with the read-only `skill` tool, which can also read referenced text files inside that package without allowing paths to escape the package directory. For on-disk packages, `SKILL.md` is limited to 64 KiB and each supporting file read through the tool is limited to 50,000 bytes. A structurally invalid `SKILL.md` is skipped and reported as a startup warning without blocking other skills from loading.
 
 Type `$` anywhere in the TUI composer to open skill completion. Continue typing to filter, then press Tab, Right, or Enter to replace only the skill reference at the cursor. Known `$skill-name` references are highlighted both while editing and in the submitted user message.
 

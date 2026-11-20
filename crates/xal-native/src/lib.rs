@@ -6,6 +6,7 @@ mod lsp;
 mod mcp;
 mod memory;
 mod output_contract;
+mod plugin_draft;
 mod process;
 mod redactor;
 mod search;
@@ -24,7 +25,7 @@ use redactor::SecretMatcher;
 
 #[napi(js_name = "apiVersion", catch_unwind)]
 pub fn api_version() -> u32 {
-    15
+    16
 }
 
 #[napi]

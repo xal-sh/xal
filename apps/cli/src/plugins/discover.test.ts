@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, mock, test } from "bun:test"
+import { beforeEach, describe, expect, mock, spyOn, test } from "bun:test"
 import { resolveCli } from "../cli/registry"
 import type { Settings } from "../config/settings"
 import { events, type AppEvent } from "../events"
@@ -9,8 +9,10 @@ import type { Plugin } from "./types"
 const builtinPlugins: Plugin[] = []
 const importedPlugins = new Map<string, Plugin | Error>()
 
+const { parsePlugin } = await import("./load")
 mock.module("./builtins", () => ({ builtinPlugins }))
 mock.module("./load", () => ({
+  parsePlugin,
   async importPlugin(spec: string): Promise<Plugin> {
     const plugin = importedPlugins.get(spec)
     if (!plugin) throw new Error(`missing test plugin: ${spec}`)
@@ -20,6 +22,7 @@ mock.module("./load", () => ({
 }))
 
 const { bootstrapPlugins, registerBootstrapStep, registerPlugins, shutdownPlugins } = await import("./discover")
+const { LivePlugins } = await import("./live/manager")
 
 function settings(plugins: string[] = [], pluginConfig: Settings["pluginConfig"] = {}): Settings {
   return {
@@ -202,7 +205,9 @@ describe("plugin orchestration", () => {
     })
     builtinPlugins.push(makePlugin("first", true), makePlugin("second", false, true), makePlugin("third"))
 
-    await registerPlugins(settings())
+    const live = new LivePlugins(process.cwd(), () => [])
+    const restore = spyOn(live, "restore").mockResolvedValue([])
+    await registerPlugins(settings(), live)
     expect(signals.every((signal) => !signal.aborted)).toBe(true)
     const bootstrapping = bootstrapPlugins()
     await bootstrapEntered.promise
@@ -222,6 +227,34 @@ describe("plugin orchestration", () => {
       notices: [],
     })
     expect(stopped).toEqual(["third", "second", "first"])
+    expect(restore).not.toHaveBeenCalled()
+  })
+
+  test("startup tool registrations win collisions with live management tools", async () => {
+    const tool = {
+      name: "xal_info",
+      description: "from startup",
+      parameters: { type: "object" },
+      title: () => "startup",
+      execute: async () => ({ output: "startup" }),
+    }
+    importedPlugins.set("existing", {
+      name: "existing",
+      register(ctx) {
+        ctx.registerTool(tool)
+        ctx.registerHook({ name: "still-registered", prompt: async () => undefined })
+      },
+    })
+    const live = new LivePlugins(process.cwd(), () => [])
+    spyOn(live, "restore").mockResolvedValue([])
+    await registerPlugins(settings(["existing"]), live)
+    expect(await bootstrapPlugins()).toMatchObject({
+      failures: [],
+      notices: [{ plugin: "live plugins", reason: expect.stringContaining("xal_info") }],
+    })
+    expect(getTool("xal_info")).toBe(tool)
+    expect(getTool("activate_plugin")).toBeDefined()
+    expect(listHooks()).toEqual([{ id: "existing/still-registered", events: ["prompt"] }])
   })
 
   test("reports bootstrap step warnings without treating them as failures", async () => {

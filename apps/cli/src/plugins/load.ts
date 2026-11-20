@@ -1,6 +1,6 @@
 import { isAbsolute, join, resolve } from "node:path"
 import { isRecord } from "../lib/json"
-import type { Plugin, PluginContext } from "./types"
+import type { Plugin } from "./types"
 
 function resolveSpec(spec: string, baseDir: string): string {
   if (spec.startsWith(".")) return join(resolve(baseDir, spec), "plugin.ts")
@@ -14,6 +14,10 @@ function isPromiseLike(value: unknown): boolean {
 
 export async function importPlugin(spec: string, baseDir: string): Promise<Plugin> {
   const mod: unknown = await import(resolveSpec(spec, baseDir))
+  return parsePlugin(mod)
+}
+
+export function parsePlugin<Context>(mod: unknown): Plugin<Context> {
   if (!isRecord(mod) || !isRecord(mod.default)) {
     throw new Error("plugin must default-export an object")
   }
@@ -31,9 +35,9 @@ export async function importPlugin(spec: string, baseDir: string): Promise<Plugi
   if (shutdown !== undefined && typeof shutdown !== "function") {
     throw new Error("plugin shutdown must be a function")
   }
-  const plugin: Plugin = {
+  const plugin: Plugin<Context> = {
     name,
-    register(ctx: PluginContext) {
+    register(ctx) {
       const result: unknown = register.call(candidate, ctx)
       if (!isPromiseLike(result)) return
       void Promise.resolve(result).catch(() => {})
@@ -41,12 +45,12 @@ export async function importPlugin(spec: string, baseDir: string): Promise<Plugi
     },
   }
   if (typeof bootstrap === "function") {
-    plugin.bootstrap = async (ctx: PluginContext) => {
+    plugin.bootstrap = async (ctx) => {
       await bootstrap.call(candidate, ctx)
     }
   }
   if (typeof shutdown === "function") {
-    plugin.shutdown = async (ctx: PluginContext) => {
+    plugin.shutdown = async (ctx) => {
       await shutdown.call(candidate, ctx)
     }
   }

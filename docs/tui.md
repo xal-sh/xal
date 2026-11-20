@@ -2,6 +2,8 @@
 
 Customize Xal's terminal interface, keyboard shortcuts, transcript details, and terminal notifications.
 
+A [live plugin](/docs/plugins#live-plugins) can add slash commands or customize how a tool's result is displayed, without restarting the TUI. For example, ask Xal for a word-count tool that shows its count in the collapsed result. This extends the existing TUI; selecting a different `ui` still requires a restart.
+
 ## Display preferences
 
 Run `/config` in the TUI to change display preferences. Changes save immediately to the user configuration and apply to the current transcript. **Use TypeSafe AI** is the single switch for Jev compaction, read-ahead, and the classify tool. Enter flips it in place like the display preferences. Enabling reuses the previously selected TypeSafe profile, or the only connected one; a profile picker opens only when several profiles are connected and none is selected. `/config typesafe` opens the On/Off choice with the conversation-sharing notice. The setting remains visible when disconnected; enabling requires a connected TypeSafe profile. See [TypeSafe AI configuration](/docs/configs#typesafe-ai). `/thinking` and effort shortcuts select a fixed effort regardless of this switch. `scrollbackRows` is edited in the configuration file rather than through `/config`.

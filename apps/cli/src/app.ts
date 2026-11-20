@@ -21,8 +21,15 @@ import { usesMusl } from "./lib/process"
 import { isPermissionMode, permissionModes } from "./permissions/modes"
 import { registerPermissions } from "./permissions/register"
 import { registerPlans } from "./plans/register"
-import { bootstrapPlugins, registerBootstrapStep, registerPlugins, shutdownPlugins } from "./plugins/discover"
+import {
+  bootstrapPlugins,
+  registerBootstrapStep,
+  registeredPluginNames,
+  registerPlugins,
+  shutdownPlugins,
+} from "./plugins/discover"
 import type { PluginStatus } from "./events"
+import { LivePlugins } from "./plugins/live/manager"
 import { prepareProjectMcp } from "./plugins/mcp/project"
 import { startProfiler, stopProfiler } from "./profiler/profiler"
 import { registerProviderClis } from "./providers/cli"
@@ -85,9 +92,10 @@ function registerCore(settings: Settings): void {
   registerTrustClis()
 }
 
-export async function registerApp(settings: Settings): Promise<PluginStatus> {
+export async function registerApp(settings: Settings, root?: string): Promise<PluginStatus> {
   registerCore(settings)
-  const plugins = await registerPlugins(settings)
+  const live = new LivePlugins(root ?? (await findProjectRoot(process.cwd())), registeredPluginNames)
+  const plugins = await registerPlugins(settings, live)
   registerWorkspacePrompt()
   return plugins
 }
@@ -107,7 +115,7 @@ async function initializeApp(args: string[], profile: boolean) {
     choose: args.length === 0 && process.stdin.isTTY && process.stdout.isTTY ? chooseOption : undefined,
   })
   await loadCredentialSecrets()
-  const plugins = await registerApp(settings)
+  const plugins = await registerApp(settings, root)
   return { settings, plugins }
 }
 

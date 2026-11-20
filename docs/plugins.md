@@ -2,9 +2,65 @@
 
 Extend Xal with trusted in-process plugins that can register tools, providers, UIs, commands, and lifecycle hooks.
 
+## Live plugins
+
+Ask Xal, for example: **“Create a project plugin that counts words, gives me a `/words` command, and shows the count in the tool result. Activate it and try it on ‘one two three’.”** Say “for all my projects” to use user scope instead. The bundled `$xal-plugin` skill works even outside the Xal repository. `$xal-help` provides the docs for the installed version.
+
+1. `xal_info` reports the running version, registered names, active live revisions, and both draft directories. The project directory is `<launch-project>/.xal/plugins`; the user directory is `<app-home>/plugins`, including when `XAL_HOME` is set. Use a directory name beginning with a lower-case letter followed by lower-case letters, digits, `-`, or `_` (64 characters maximum).
+2. Write `<draft-directory>/<name>/plugin.ts`. It must be a single UTF-8 file, at most 64 KiB. Project drafts require the trusted launch project. Symlinks below either scope root are not supported. Do **not** add the draft to `config.json`.
+3. Call `xal_info` with `name` and `scope` (`project` or `user`) to get the exact draft path and SHA-256 without running it. Then call `activate_plugin` with those fields and `sha256`. Normal mode asks by default; deny rules, explicit allows, and `yolo` retain their usual meanings. Review the file before approving: **both import and plugin callbacks run with full host-process privileges**. A changed draft cannot run under the old digest. Activation is unavailable in read-only modes and task agents.
+4. On success, the agent sees the tool on its next model request, even in the same turn. The TUI looks up new slash commands and renderers without restarting. Edit, inspect, and activate again to replace a plugin. A denial, syntax error, or registration conflict leaves the previous registrations and approved revision intact. There is no watcher that executes draft edits.
+
+For example, `word-count/plugin.ts` can contribute all three extension points:
+
+```ts
+const count = (text: string) => text.trim().split(/\s+/u).filter(Boolean).length
+
+export default {
+  name: "word-count",
+  register(ctx) {
+    ctx.registerTool({
+      name: "word_count",
+      description: "Count whitespace-separated words in the supplied text.",
+      parameters: {
+        type: "object",
+        properties: { text: { type: "string" } },
+        required: ["text"],
+        additionalProperties: false,
+      },
+      title: () => "Count words",
+      readOnly: () => true,
+      async execute({ text }) {
+        return { output: String(count(text)) }
+      },
+    })
+    ctx.registerCommand({
+      name: "words",
+      describe: "Count the words after /words",
+      async run(args, ctx) {
+        ctx.print(`${count(args.join(" "))} words`)
+      },
+    })
+    ctx.registerToolRenderer({ tool: "word_count", summarize: (output) => `${output} words` })
+  },
+}
+```
+
+The exported `name` must match its directory. Live `register(ctx)` is synchronous and exposes `registerTool`, `registerCommand`, and `registerToolRenderer`. Use self-contained code; only `node:` modules and `bun` are supported imports. `execute(args, ctx)` can be async and receives the session's `cwd` and cancellation `signal`. Only declare a tool `readOnly` if every action it takes is read-only. A command can print text or use its command context's `ask` and `select`. A renderer can customize a registered tool's compact title, success summary, or expanded output. A live renderer takes precedence over its startup renderer; it does not change what the model receives. If a renderer cannot display an older result, Xal shows its default output and a warning. Core failure and approval displays remain under Xal's control.
+
+Register contributions only during `register`. Do not start timers, open connections, or perform other side effects during import or registration: Xal can roll back registry changes, not arbitrary code. Use a [startup plugin](#loading-plugins) for providers, hooks, permissions, replacement UIs, or bootstrap/shutdown lifecycle work. Live registration does not replace the running layout or switch UIs.
+
+Xal saves a private copy of the approved source under `<app-home>/approved-plugins`, separate from editable drafts. Project approvals are keyed by the launch root and restored only for that trusted project. User approvals apply across projects. Like startup plugins, live contributions are process-wide; entering a worktree does not switch them. Another already-running Xal process does not pick up an activation automatically. After startup plugins finish bootstrapping, Xal restores user revisions first, then project revisions, before releasing the first queued agent prompt. If another process approves a revision during restoration, Xal retries once with the newer revision. If it changes again, startup reports the conflict instead of loading stale code; restart to load the latest approval.
+
+Existing startup tools and slash commands (including Markdown prompt commands) keep their names. If a startup tool already owns `xal_info` or `activate_plugin`, Xal reports the conflicting management tool as unavailable. Conflicting plugin names, tools, command names/aliases, or live renderers are rejected rather than silently replacing another plugin. Keep the app home private; write access to its approvals or startup configuration is equivalent to permission to run code.
+
+**To uninstall a live plugin, delete its `<draft-directory>/<name>` folder.** The TUI checks about every two seconds while idle; startup also checks before loading approved code. When Xal finds the folder missing, it unloads the plugin’s tools, commands, and renderer overrides. It deletes only that installation’s saved approval. If deletion fails, Xal reports the error and retries while idle. Project approvals are checked only while the launch project is trusted.
+
+Once Xal records the uninstall, recreating the folder requires a fresh activation, even if another session is blocking cleanup. If Xal can neither record the uninstall nor delete the approval, it warns that the plugin is unloaded only in this process. Leave the folder absent until the retry succeeds. Other open TUIs drop the old installation when next idle; they do not automatically run its replacement. Editing or temporarily removing only `plugin.ts` leaves the last approved revision active.
+
 ## Loading plugins
 
-The top-level `plugins` array tells Xal what to load. It does not install or download anything. Every referenced plugin must already exist and be resolvable when Xal starts.
+The top-level `plugins` array tells Xal what to load at startup, separately from live plugins. It does not install or download anything. Every referenced plugin must already exist and be resolvable when Xal starts.
 
 Each entry supports one of these forms:
 

@@ -1,6 +1,7 @@
 import { expect, spyOn, test } from "bun:test"
 import { createTestRenderer } from "@opentui/core/testing"
 import { ScriptedProvider, setupAgentSessionTests } from "../../../agent/session/test-support"
+import { registerCommand } from "../../../commands/registry"
 import * as catalog from "../../../providers/catalog"
 import { listSkills, replaceSkills } from "../../../skills/registry"
 import { parseTuiConfig } from "../config"
@@ -10,7 +11,7 @@ import { ResolvedShortcuts } from "../shortcuts"
 import { AgentEventController } from "./agent-events"
 import { AppEventController, InputQueue } from "./app-events"
 
-test("refreshes open skill completion and the context window when runtime sources reload", async () => {
+test("refreshes open completions and the context window when runtime sources reload", async () => {
   const harness = await setupAgentSessionTests("tui-skill-reload-")
   const session = harness.createSession(new ScriptedProvider([]))
   const setup = await createTestRenderer({
@@ -67,6 +68,15 @@ test("refreshes open skill completion and the context window when runtime source
     screen.composer.setValue("$new")
     replaceSkills([])
     controller.handle({ type: "runtime_reload", source: "skills", outcome: "reloaded", message: "skills reloaded" })
+    expect(screen.palette.visible).toBe(false)
+
+    screen.composer.setValue("/uninstall-me")
+    expect(screen.palette.visible).toBe(false)
+    const remove = registerCommand({ name: "uninstall-me", describe: "test", async run() {} })
+    controller.handle({ type: "plugin_bootstrap_finished", status: { total: 1, failures: [], notices: [] } })
+    expect(screen.palette.visible).toBe(true)
+    remove()
+    controller.handle({ type: "runtime_reload", source: "plugins", outcome: "reloaded", message: "plugin uninstalled" })
     expect(screen.palette.visible).toBe(false)
   } finally {
     contextWindow.mockRestore()

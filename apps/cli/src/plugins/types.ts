@@ -12,11 +12,11 @@ import type { RegisteredTool } from "../tools/types"
 import type { ToolRenderer } from "../ui/extension"
 import type { Ui } from "../ui/registry"
 
-export interface Plugin {
+export interface Plugin<Context = PluginContext> {
   name: string
-  register(ctx: PluginContext): void
-  bootstrap?(ctx: PluginContext): Promise<void>
-  shutdown?(ctx: PluginContext): Promise<void>
+  register(ctx: Context): void
+  bootstrap?(ctx: Context): Promise<void>
+  shutdown?(ctx: Context): Promise<void>
 }
 
 export interface PluginRuntime {

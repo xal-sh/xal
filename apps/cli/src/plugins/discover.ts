@@ -20,6 +20,9 @@ import { registerUi } from "../ui/registry"
 import { builtinPlugins } from "./builtins"
 import { importPlugin } from "./load"
 import type { Plugin, PluginContext } from "./types"
+import type { LivePlugins } from "./live/manager"
+import { getLivePlugins, setLivePlugins } from "./live/registry"
+import { registerLivePluginTools } from "./live/tools"
 
 interface RegisteredPlugin {
   plugin: Plugin
@@ -45,6 +48,7 @@ export function registerBootstrapStep(name: string, run: () => Promise<void | st
     },
   })
 }
+let liveBootstrap = new AbortController()
 let bootstrapRun: Promise<PluginStatus> | undefined
 let shutdownRun: Promise<PluginStatus> | undefined
 
@@ -107,9 +111,15 @@ function registerPlugin(plugin: Plugin, settings: Settings, pluginOrder: number)
   return { plugin, ctx: staged.ctx, pluginOrder, abort }
 }
 
-export async function registerPlugins(settings: Settings): Promise<PluginStatus> {
+export function registeredPluginNames(): string[] {
+  return registered.map(({ plugin }) => plugin.name)
+}
+
+export async function registerPlugins(settings: Settings, live?: LivePlugins): Promise<PluginStatus> {
   const failures: PluginFailure[] = []
   registered = []
+  setLivePlugins(live)
+  liveBootstrap = new AbortController()
   bootstrapRun = undefined
   shutdownRun = undefined
   clearHooks()
@@ -137,6 +147,7 @@ export async function registerPlugins(settings: Settings): Promise<PluginStatus>
 }
 
 async function runBootstrap(): Promise<PluginStatus> {
+  const { signal } = liveBootstrap
   const entries = registered.filter((entry) => entry.plugin.bootstrap)
   const jobs: { name: string; pluginOrder?: number; run(): Promise<string[]> }[] = [
     ...bootstrapSteps,
@@ -162,9 +173,15 @@ async function runBootstrap(): Promise<PluginStatus> {
     if (job.pluginOrder !== undefined) removeHooks(job.pluginOrder)
     failures.push({ plugin: job.name, phase: "bootstrap", reason: describeError(outcome.reason) })
   }
+  const livePlugins = getLivePlugins()
+  let liveFailures: PluginFailure[] = []
+  if (livePlugins && !signal.aborted) {
+    notices.push(...registerLivePluginTools(livePlugins).map((reason) => ({ plugin: "live plugins", reason })))
+    liveFailures = await livePlugins.restore(signal)
+  }
   status = {
-    total: status.total,
-    failures: [...status.failures, ...failures],
+    total: status.total + (livePlugins?.list().length ?? 0) + liveFailures.length,
+    failures: [...status.failures, ...failures, ...liveFailures],
     notices: [...status.notices, ...notices],
   }
   events.emitRetained({ type: "plugin_bootstrap_finished", status })
@@ -177,6 +194,7 @@ export function bootstrapPlugins(): Promise<PluginStatus> {
 }
 
 async function runShutdown(): Promise<PluginStatus> {
+  liveBootstrap.abort()
   for (const entry of registered) entry.abort.abort()
   await bootstrapRun
   const entries = registered.filter((entry) => entry.plugin.shutdown).toReversed()

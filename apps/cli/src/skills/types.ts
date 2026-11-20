@@ -1,10 +1,20 @@
 export type SkillSource = "user" | "project"
 
-export interface Skill {
+interface SkillMetadata {
   name: string
   description: string
   body: string
+}
+
+export interface FileSkill extends SkillMetadata {
+  source: SkillSource
   directory: string
   path: string
-  source: SkillSource
 }
+
+export interface BuiltinSkill extends SkillMetadata {
+  source: "builtin"
+  resources: ReadonlyMap<string, string>
+}
+
+export type Skill = FileSkill | BuiltinSkill
