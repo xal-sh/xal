@@ -1,0 +1,1 @@
+Add slugify.js exporting `slugify(text)`: lowercase it, trim it, replace each run of characters other than a-z and 0-9 with a single `-`, and drop leading and trailing `-`. Add slugify.test.js with bun tests for it and make sure they pass.
