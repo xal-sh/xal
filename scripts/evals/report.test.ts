@@ -76,7 +76,14 @@ test("compares total input tokens when every run in both reports records them", 
 test("reads a written report back in the same shape and rejects anything else", () => {
   const report = evalReport("yolo", 1, [
     caseReport("alpha", [
-      { ...run(false, 50), stopped: "timeout", failure: "turn failed", error: "boom", detail: "stopped on timeout" },
+      {
+        ...run(false),
+        inputTokens: 0,
+        stopped: "timeout",
+        failure: "turn failed",
+        error: "boom",
+        detail: "stopped on timeout",
+      },
     ]),
   ])
 
