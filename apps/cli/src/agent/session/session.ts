@@ -45,9 +45,8 @@ import { isPersistable } from "../../sessions/records"
 import { normalizeSessionTitle, titleFromInput } from "../../sessions/title"
 import type { SessionMeta } from "../../sessions/types"
 import { expandSkillInvocation } from "../../skills/invoke"
-import { getTool, listTools } from "../../tools/registry"
+import { getTool, listTools, toolOffered } from "../../tools/registry"
 import { toolOutputDirectory } from "../../tools/output"
-import { isInteractiveTool } from "../../tools/types"
 import { disposeToolContext, disposeToolSession } from "../../tools/session"
 import { WorkspaceUndo } from "../../tools/undo"
 import { verificationGate, verificationCorrection, verificationSummary } from "../../verification/service"
@@ -1607,15 +1606,12 @@ export class AgentSession {
   }
 
   private canUseTool(tool: RegisteredTool): boolean {
-    if (!this.interactive && isInteractiveTool(tool)) return false
-    return (
-      tool.available?.({
-        sessionId: this.sessionId,
-        interactive: this.interactive,
-        kind: this.kind,
-        mode: this.mode,
-      }) ?? true
-    )
+    return toolOffered(tool, {
+      sessionId: this.sessionId,
+      interactive: this.interactive,
+      kind: this.kind,
+      mode: this.mode,
+    })
   }
 
   private rememberEvent(event: AgentEvent): void {

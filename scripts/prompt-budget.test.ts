@@ -29,9 +29,13 @@ test("prompt-budget reserves stdout for a successful report after plugin shutdow
     )
     const success = await run(false)
     expect(success.code).toBe(0)
-    expect(JSON.parse(success.stdout)).toMatchObject({
+    const report: unknown = JSON.parse(success.stdout)
+    expect(report).toMatchObject({
       interactive: false,
       tools: expect.arrayContaining([expect.objectContaining({ name: "activate_plugin" })]),
+    })
+    expect(report).not.toMatchObject({
+      tools: expect.arrayContaining([expect.objectContaining({ name: "request_user_input" })]),
     })
     expect(success.stderr).toContain("bootstrap message")
     expect(success.stderr).toContain("shutdown message")
