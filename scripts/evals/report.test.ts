@@ -62,6 +62,17 @@ test("calls a difference inside the run-to-run spread noise", () => {
   expect(legacyLines.some((line) => line.startsWith("rounds "))).toBe(true)
 })
 
+test("compares total input tokens when every run in both reports records them", () => {
+  const measured = { ...run(true, 10), inputTokens: 80 }
+  const candidate = evalReport("yolo", 2, [caseReport("alpha", [measured, measured])])
+  const baseline = evalReport("yolo", 2, [caseReport("alpha", [measured, { ...measured, inputTokens: 120 }])])
+  expect(compare(parseReport(baseline), candidate)).toContain("input tokens 200 -> 160 (-20%)")
+
+  const legacy = parseReport(evalReport("yolo", 2, [caseReport("alpha", [measured, run(true)])]))
+  expect(compare(legacy, candidate).some((line) => line.startsWith("input tokens "))).toBe(false)
+  expect(compare(candidate, legacy).some((line) => line.startsWith("input tokens "))).toBe(false)
+})
+
 test("reads a written report back in the same shape and rejects anything else", () => {
   const report = evalReport("yolo", 1, [
     caseReport("alpha", [
@@ -74,4 +85,7 @@ test("reads a written report back in the same shape and rejects anything else", 
   expect(() => parseReport({ ...report, cases: [{ name: "alpha", runs: [{}], passRate: 0 }] })).toThrow(
     "cases[0].runs[0].rounds",
   )
+  expect(() =>
+    parseReport({ ...report, cases: [{ name: "alpha", runs: [{ ...run(true), inputTokens: "50" }], passRate: 1 }] }),
+  ).toThrow("cases[0].runs[0].inputTokens")
 })

@@ -10,6 +10,7 @@ export interface RunObservation {
   toolCalls: number
   toolFailures?: number
   editFailures?: number
+  inputTokens?: number
   uncachedInputTokens: number
   outputTokens: number
   durationMs: number

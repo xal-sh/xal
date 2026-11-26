@@ -93,7 +93,8 @@ async function main(args: string[]): Promise<void> {
       runs.push(record)
       console.error(
         `${name} run ${attempt + 1}/${runsPerCase}: ${record.pass ? "pass" : "fail"}` +
-          `${record.detail ? ` (${record.detail})` : ""} · ${record.rounds} rounds · ${record.toolFailures} tool failures · ${record.uncachedInputTokens} uncached tokens`,
+          `${record.detail ? ` (${record.detail})` : ""} · ${record.rounds} rounds · ${record.toolFailures} tool failures` +
+          ` · ${record.inputTokens} input tokens · ${record.uncachedInputTokens} uncached tokens`,
       )
     }
     reports.push(caseReport(name, runs))

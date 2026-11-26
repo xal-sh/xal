@@ -23,12 +23,18 @@ export interface RunOptions {
   connection?: string
 }
 
-function usageDelta(event: Record<string, unknown>): { uncached: number; output: number } {
+interface LiveObservation extends RunObservation {
+  toolFailures: number
+  editFailures: number
+  inputTokens: number
+}
+
+function usageDelta(event: Record<string, unknown>): { total: number; uncached: number; output: number } {
   const context = event.context
-  if (!isRecord(context)) return { uncached: 0, output: 0 }
+  if (!isRecord(context)) return { total: 0, uncached: 0, output: 0 }
   const total = asNumber(context.totalInputTokens) ?? 0
   const cached = asNumber(context.cacheReadInputTokens) ?? 0
-  return { uncached: Math.max(total - cached, 0), output: asNumber(context.outputTokens) ?? 0 }
+  return { total, uncached: Math.max(total - cached, 0), output: asNumber(context.outputTokens) ?? 0 }
 }
 
 function parseVerdict(value: unknown, name: string): CaseVerdict {
@@ -60,7 +66,7 @@ async function seedRepo(source: string): Promise<string> {
   return workspace
 }
 
-async function drive(workspace: string, prompt: string, options: RunOptions): Promise<RunObservation> {
+async function drive(workspace: string, prompt: string, options: RunOptions): Promise<LiveObservation> {
   const started = Date.now()
   const args = [
     "run",
@@ -74,11 +80,12 @@ async function drive(workspace: string, prompt: string, options: RunOptions): Pr
     prompt,
   ]
   const child = Bun.spawn(["bun", ENTRY, ...args], { cwd: workspace, stdout: "pipe", stderr: "pipe" })
-  const observation: RunObservation = {
+  const observation: LiveObservation = {
     rounds: 0,
     toolCalls: 0,
     toolFailures: 0,
     editFailures: 0,
+    inputTokens: 0,
     uncachedInputTokens: 0,
     outputTokens: 0,
     durationMs: 0,
@@ -123,6 +130,7 @@ async function drive(workspace: string, prompt: string, options: RunOptions): Pr
         if (event.type === "context_updated") {
           observation.rounds += 1
           const delta = usageDelta(event)
+          observation.inputTokens += delta.total
           observation.uncachedInputTokens += delta.uncached
           observation.outputTokens += delta.output
           if (observation.rounds > options.maxRounds) {
@@ -145,10 +153,7 @@ async function drive(workspace: string, prompt: string, options: RunOptions): Pr
   return observation
 }
 
-export async function runCase(
-  definition: CaseDefinition,
-  options: RunOptions,
-): Promise<RunObservation & { pass: boolean; detail?: string }> {
+export async function runCase(definition: CaseDefinition, options: RunOptions): Promise<LiveObservation & CaseVerdict> {
   const workspace = await seedRepo(definition.directory)
   try {
     const observation = await drive(workspace, definition.prompt, options)

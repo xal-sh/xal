@@ -38,6 +38,7 @@ function totals(report: EvalReport): {
   toolCalls: number
   toolFailures: number | undefined
   editFailures: number | undefined
+  inputTokens: number | undefined
 } {
   const runs = report.cases.flatMap((entry) => entry.runs)
   const optional = (count: (run: RunRecord) => number | undefined): number | undefined =>
@@ -50,6 +51,7 @@ function totals(report: EvalReport): {
     toolCalls: runs.reduce((total, run) => total + run.toolCalls, 0),
     toolFailures: optional((run) => run.toolFailures),
     editFailures: optional((run) => run.editFailures),
+    inputTokens: optional((run) => run.inputTokens),
   }
 }
 
@@ -81,6 +83,7 @@ export function compare(baseline: EvalReport, candidate: EvalReport): string[] {
     `tool calls ${before.toolCalls} -> ${after.toolCalls} (${percentChange(before.toolCalls, after.toolCalls)})`,
     ...countLine("tool failures", before.toolFailures, after.toolFailures),
     ...countLine("edit failures", before.editFailures, after.editFailures),
+    ...countLine("input tokens", before.inputTokens, after.inputTokens),
     `uncached input tokens ${baseline.totalUncachedInputTokens} -> ${candidate.totalUncachedInputTokens} (${percentChange(baseline.totalUncachedInputTokens, candidate.totalUncachedInputTokens)})`,
   ]
 }
@@ -90,6 +93,10 @@ function required<T>(value: T | undefined, path: string): T {
   return value
 }
 
+function optionalNumber(value: unknown, path: string): number | undefined {
+  return value === undefined ? undefined : required(asNumber(value), path)
+}
+
 function parseRun(value: unknown, path: string): RunRecord {
   if (!isRecord(value)) throw new Error(`eval report has no valid ${path}`)
   const stopped = value.stopped === "rounds" || value.stopped === "timeout" ? value.stopped : undefined
@@ -97,15 +104,15 @@ function parseRun(value: unknown, path: string): RunRecord {
   const failure = asString(value.failure)
   const error = asString(value.error)
   const detail = asString(value.detail)
-  const toolFailures =
-    value.toolFailures === undefined ? undefined : required(asNumber(value.toolFailures), `${path}.toolFailures`)
-  const editFailures =
-    value.editFailures === undefined ? undefined : required(asNumber(value.editFailures), `${path}.editFailures`)
+  const toolFailures = optionalNumber(value.toolFailures, `${path}.toolFailures`)
+  const editFailures = optionalNumber(value.editFailures, `${path}.editFailures`)
+  const inputTokens = optionalNumber(value.inputTokens, `${path}.inputTokens`)
   return {
     rounds: required(asNumber(value.rounds), `${path}.rounds`),
     toolCalls: required(asNumber(value.toolCalls), `${path}.toolCalls`),
     ...(toolFailures === undefined ? {} : { toolFailures }),
     ...(editFailures === undefined ? {} : { editFailures }),
+    ...(inputTokens === undefined ? {} : { inputTokens }),
     uncachedInputTokens: required(asNumber(value.uncachedInputTokens), `${path}.uncachedInputTokens`),
     outputTokens: required(asNumber(value.outputTokens), `${path}.outputTokens`),
     durationMs: required(asNumber(value.durationMs), `${path}.durationMs`),
