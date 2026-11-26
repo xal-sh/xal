@@ -5,7 +5,7 @@ import { appInfo } from "../apps/cli/src/app-info"
 import { composeSystemPrompt } from "../apps/cli/src/agent/prompt/registry"
 import { loadSettings } from "../apps/cli/src/config/settings"
 import { bootstrapPlugins } from "../apps/cli/src/plugins/discover"
-import { listTools } from "../apps/cli/src/tools/registry"
+import { listTools, toolOffered } from "../apps/cli/src/tools/registry"
 import type { RegisteredTool } from "../apps/cli/src/tools/types"
 import type { SessionKind } from "../apps/cli/src/agent/types"
 
@@ -28,7 +28,7 @@ function parseArgs(args: string[]): Options {
   return {
     mode: option(args, "--mode") ?? "normal",
     kind,
-    interactive: !args.includes("--headless"),
+    interactive: kind === "primary" && !args.includes("--headless"),
   }
 }
 
@@ -54,7 +54,7 @@ async function measure(args: string[]): Promise<string> {
     mode: options.mode,
   }
   const tools = listTools()
-    .filter((tool) => tool.available?.(availability) ?? true)
+    .filter((tool) => toolOffered(tool, availability))
     .toSorted((left, right) => (left.name < right.name ? -1 : left.name > right.name ? 1 : 0))
 
   const instructions = composeSystemPrompt({

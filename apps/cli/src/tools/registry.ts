@@ -1,4 +1,4 @@
-import type { RegisteredTool } from "./types"
+import { isInteractiveTool, type RegisteredTool, type ToolAvailabilityContext } from "./types"
 
 const tools = new Map<string, RegisteredTool>()
 
@@ -21,4 +21,9 @@ export function getTool(name: string): RegisteredTool | undefined {
 
 export function listTools(): RegisteredTool[] {
   return [...tools.values()]
+}
+
+export function toolOffered(tool: RegisteredTool, ctx: ToolAvailabilityContext): boolean {
+  if (!ctx.interactive && isInteractiveTool(tool)) return false
+  return tool.available?.(ctx) ?? true
 }
