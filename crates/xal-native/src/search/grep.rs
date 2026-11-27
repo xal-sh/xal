@@ -87,6 +87,7 @@ struct GrepSink<'a> {
     deadline: Instant,
     pending: Vec<String>,
     included: bool,
+    header_shown: bool,
     broke: bool,
 }
 
@@ -108,18 +109,19 @@ impl Sink for GrepSink<'_> {
         self.included = index >= self.offset && self.result.lines.len() < GREP_LIMIT;
         if self.included {
             let mut block = Vec::with_capacity(before.len() + 2);
-            if self.broke && !self.result.lines.is_empty() {
+            if !self.header_shown {
+                if !self.result.lines.is_empty() {
+                    block.push(String::new());
+                }
+                block.push(self.shown_path.to_owned());
+                self.header_shown = true;
+            } else if self.broke {
                 block.push("--".to_owned());
             }
             block.extend(before);
             let first = found.line_number().unwrap_or(0);
             for (index, line) in (0_u64..).zip(found.lines()) {
-                block.push(format!(
-                    "{}:{}:{}",
-                    self.shown_path,
-                    first + index,
-                    shown_line(line)
-                ));
+                block.push(format!("{}:{}", first + index, shown_line(line)));
             }
             self.result.lines.push(block.join("\n"));
         }
@@ -137,8 +139,7 @@ impl Sink for GrepSink<'_> {
         context: &SinkContext<'_>,
     ) -> Result<bool, Self::Error> {
         let line = format!(
-            "{}-{}-{}",
-            self.shown_path,
+            "{}-{}",
             context.line_number().unwrap_or(0),
             shown_line(context.bytes())
         );
@@ -300,7 +301,8 @@ impl Task for GrepTask {
                 deadline,
                 pending: Vec::new(),
                 included: false,
-                broke: context > 0,
+                header_shown: false,
+                broke: false,
             };
             let search = searcher.search_reader(
                 &matcher,

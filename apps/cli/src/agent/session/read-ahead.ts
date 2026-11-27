@@ -23,6 +23,7 @@ const THRESHOLD = 0.7
 const TIMEOUT_MS = 5_000
 const OMITTED = " [... omitted ...] "
 const TOKEN_PATTERN = /[A-Za-z0-9_@~./-]+/g
+const GREP_ROW = /^\d+[:-]/
 const PREFETCHED_MARKER = "[read-ahead] Prefetched "
 const PREFETCHED_LINE = /^\[read-ahead\] Prefetched (.+) because the next step likely needs it:$/gm
 
@@ -42,6 +43,7 @@ export interface ReadAheadOptions {
 
 interface Source {
   text: string
+  grepContent?: boolean
   module?: { directory: string; extension: string }
 }
 
@@ -81,7 +83,7 @@ async function sources(trigger: ReadAheadTrigger, cwd: string, signal: AbortSign
   }
   return trigger.outcomes.map(({ call, output }) => {
     const path = call.name === "read" ? asString(call.args.file_path) : undefined
-    if (!path) return { text: output }
+    if (!path) return { text: output, grepContent: call.name === "grep" && call.args.output_mode !== "files" }
     const file = resolveFilePath(path, cwd)
     return { text: output, module: { directory: dirname(file), extension: extname(file) } }
   })
@@ -120,11 +122,18 @@ async function isFile(path: string): Promise<boolean> {
   }
 }
 
-function excerptsFor(token: string, texts: string[]): string[] {
+function excerptsFor(token: string, inputs: Source[]): string[] {
   const excerpts: string[] = []
-  for (const text of texts) {
-    for (const line of text.split("\n")) {
-      if (!line.includes(token)) continue
+  for (const { text, grepContent } of inputs) {
+    const lines = text.split("\n")
+    let inFileRows = false
+    for (const [index, line] of lines.entries()) {
+      if (grepContent && (index === 1 || lines[index - 1] === "") && GREP_ROW.test(lines[index + 1] ?? "")) {
+        inFileRows = line === token
+        continue
+      }
+      inFileRows = inFileRows && GREP_ROW.test(line)
+      if (!inFileRows && !line.includes(token)) continue
       excerpts.push(truncateUtf8Middle(line.trim(), 200, OMITTED))
       if (excerpts.length >= MAX_EXCERPTS) return excerpts
     }
@@ -140,10 +149,10 @@ async function candidatesFor(options: ReadAheadOptions): Promise<Candidate[]> {
       if (path) known.add(resolveFilePath(path, options.cwd))
     }
   }
-  const texts = await sources(options.trigger, options.cwd, options.signal)
+  const inputs = await sources(options.trigger, options.cwd, options.signal)
   const candidates: Candidate[] = []
   const seen = new Set<string>()
-  for (const source of texts) {
+  for (const source of inputs) {
     for (const token of pathTokens(source.text)) {
       for (const path of resolutions(token, source, options.cwd)) {
         if (seen.has(path) || known.has(path) || !insideWorkspace(path, options.cwd)) continue
@@ -154,10 +163,7 @@ async function candidatesFor(options: ReadAheadOptions): Promise<Candidate[]> {
           id: `file_${candidates.length}`,
           path,
           display: displayPath(path, options.cwd),
-          excerpts: excerptsFor(
-            token,
-            texts.map((entry) => entry.text),
-          ),
+          excerpts: excerptsFor(token, inputs),
         })
         if (candidates.length >= MAX_CANDIDATES) return candidates
       }

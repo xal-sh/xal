@@ -83,8 +83,17 @@ function options(overrides: Partial<ReadAheadOptions> & Pick<ReadAheadOptions, "
   }
 }
 
-const grepOutput =
-  "Found 3 matching lines\nsrc/app.ts:3:export const app = helper(other)\nsrc/lib/helper.ts:1:export function helper() {}\nsrc/lib/config.env:1:KEY=1"
+const grepOutput = [
+  "Found 3 matching lines",
+  "src/app.ts",
+  "3:export const app = helper(other)",
+  "",
+  "src/lib/helper.ts",
+  "1:export function helper() {}",
+  "",
+  "src/lib/config.env",
+  "1:KEY=1",
+].join("\n")
 
 test("scores workspace paths found in search results, skips known files, and prefetches the winners", async () => {
   const requests: DecisionRequest[] = []
