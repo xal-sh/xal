@@ -37,7 +37,7 @@ async function readForSession(args: JsonObject, ctx: ToolExecutionContext): Prom
   return result
 }
 
-test("write creates missing parent directories and reports the exact new-file diff", async () => {
+test("write creates missing parent directories and returns the new-file diff in the preview", async () => {
   await withWorkspace(async (workspace) => {
     const result = await writeTool.execute(
       { file_path: "nested/example.txt", content: "alpha\nbeta\n" },
@@ -45,7 +45,8 @@ test("write creates missing parent directories and reports the exact new-file di
     )
 
     expect(await readFile(join(workspace, "nested", "example.txt"), "utf8")).toBe("alpha\nbeta\n")
-    expect(result.output).toBe("Created nested/example.txt (2 lines)\n@@ -0,0 +1,2 @@\n+alpha\n+beta")
+    expect(result.output).toBe("Created nested/example.txt (2 lines)")
+    expect(result.preview).toBe("@@ -0,0 +1,2 @@\n+alpha\n+beta")
   })
 })
 

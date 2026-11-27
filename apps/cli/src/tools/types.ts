@@ -26,6 +26,7 @@ export type ProcessExecution = (
 
 export interface ToolResult {
   output: string
+  preview?: string
   outputSaved?: boolean
   read?: ReadCoverage
   images?: ImageInput[]

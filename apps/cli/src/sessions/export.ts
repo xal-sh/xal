@@ -4,6 +4,7 @@ import type { GoalSnapshot } from "../goals/types"
 import type { Usage } from "../providers/types"
 import type { SessionMeta } from "./types"
 import { processExecutionDetail } from "../tools/execution"
+import { toolDisplayOutput } from "../tools/output"
 import { verificationDetails } from "../verification/service"
 
 export interface SessionExport {
@@ -83,7 +84,7 @@ function renderEvent(event: AgentEvent): string | undefined {
     case "reasoning_summary":
       return `## Reasoning\n\n${event.text || "_(empty reasoning)_"}`
     case "tool_finished":
-      return `## Tool: ${event.title} (${event.tool})\n\n${indented(event.output)}`
+      return `## Tool: ${event.title} (${event.tool})\n\n${indented(toolDisplayOutput(event.output, event.preview))}`
     case "shell_finished":
       return `## Shell\n\n${indented(`$ ${event.command}\n${event.output}`)}`
     case "background_results":

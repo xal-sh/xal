@@ -323,7 +323,12 @@ export function redactAgentEvent(event: AgentEvent): AgentEvent {
         output: redactText(event.output),
       }
     case "tool_finished":
-      return { ...event, title: redactText(event.title), output: redactText(event.output) }
+      return {
+        ...event,
+        title: redactText(event.title),
+        output: redactText(event.output),
+        ...(event.preview === undefined ? {} : { preview: redactText(event.preview) }),
+      }
     case "compacted":
       return { ...event, summary: redactText(event.summary) }
     case "context_updated":

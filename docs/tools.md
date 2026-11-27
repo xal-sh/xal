@@ -22,6 +22,8 @@ The limit applies to primary and task-agent sessions independently, including re
 | `write` | Replace a file entirely, or create it along with missing parent folders. | Writable modes only |
 | `edit`  | Replace exact text in an existing file, once or several times per call.  | Writable modes only |
 
+When `write` creates a file, the model receives a one-line summary and the transcript also shows the file's contents.
+
 `write` and `edit` are withheld in read-only modes such as `plan`, because every call would be refused before it ran. `bash` stays available there, since whether a command mutates anything depends on its arguments.
 
 ### Reading files and directories

@@ -9,7 +9,7 @@ import { pathPermission } from "./permission"
 export const writeTool: Tool = {
   name: "write",
   description:
-    "Write a file with the given raw content, creating it and any missing parent directories or replacing the existing file entirely. Returns a diff of the change. An existing file must have been read completely in this session, in one or more direct read calls without truncated lines, and must not have changed since. Otherwise, read the missing content or use a targeted edit instead. Paths are absolute or relative to the working directory.",
+    "Write a file with the given raw content, creating it and any missing parent directories or replacing the existing file entirely. Returns a diff of an update, or a one-line summary when it creates the file. An existing file must have been read completely in this session, in one or more direct read calls without truncated lines, and must not have changed since. Otherwise, read the missing content or use a targeted edit instead. Paths are absolute or relative to the working directory.",
   parameters: {
     type: "object",
     properties: {
@@ -50,6 +50,6 @@ export const writeTool: Tool = {
       ...(expected === undefined ? {} : { expected }),
     })
     if (resolved) await recordFileState(ctx.sessionId, resolved, result.contentHash)
-    return { output: result.output }
+    return { output: result.output, ...(result.preview === undefined ? {} : { preview: result.preview }) }
   },
 }

@@ -16,6 +16,25 @@ test("round-trips completion hook lifecycle records", () => {
   expect(parseRecord(JSON.stringify(record))).toEqual(record)
 })
 
+test("round-trips a finished tool's preview and rejects a malformed preview", () => {
+  const record = {
+    type: "event",
+    event: {
+      type: "tool_finished",
+      callId: "create",
+      tool: "write",
+      title: "notes.txt",
+      readOnly: false,
+      output: "Created notes.txt (1 lines)",
+      preview: "@@ -0,0 +1,1 @@\n+hello",
+    },
+  } satisfies SessionRecord
+  expect(parseRecord(JSON.stringify(record))).toEqual(record)
+  expect(() => parseRecord(JSON.stringify({ ...record, event: { ...record.event, preview: null } }))).toThrow(
+    "malformed session record",
+  )
+})
+
 test("round-trips prompt state and rejects malformed records", () => {
   const record = {
     type: "prompt_state",

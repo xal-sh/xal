@@ -80,6 +80,7 @@ export interface ToolBlock {
   readOnly: boolean
   denial: DenialCause | undefined
   output: string
+  preview: string | undefined
   execution: ProcessExecution | undefined
   elapsed: string | undefined
   expanded: boolean

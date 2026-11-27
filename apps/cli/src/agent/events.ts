@@ -128,6 +128,7 @@ export type AgentEvent =
       title: string
       readOnly: boolean
       output: string
+      preview?: string
       execution?: ProcessExecution
       denial?: DenialCause
     }

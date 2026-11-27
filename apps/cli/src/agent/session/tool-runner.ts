@@ -80,6 +80,7 @@ export interface ToolCallOutcome {
   title: string
   readOnly: boolean
   output: string
+  preview?: string
   outputSaved?: boolean
   loopOutput?: string
   read?: ReadCoverage
@@ -485,6 +486,7 @@ export class ToolCallRunner {
     await this.host.flushPersistence()
     if (signal.aborted) return this.outcome(call, title, readOnly, "Interrupted by user before execution.")
     let output: string
+    let resultPreview: string | undefined
     let savedOutput: string | undefined
     let read: ReadCoverage | undefined
     let readOutput: string | undefined
@@ -562,6 +564,7 @@ export class ToolCallRunner {
           break
       }
       output = redactText(result.output)
+      resultPreview = result.preview
       if (output === result.output) {
         if (result.outputSaved) savedOutput = output
         read = result.read
@@ -617,22 +620,33 @@ export class ToolCallRunner {
     }
     const loopOutput = output
     if (scope) output = redactText(`${output}\n\nTool trace: ${scope.directory}`)
-    const originalOutput = output
-    let bounded = false
     const outputSaved = savedOutput === output
-    try {
-      output = await boundToolOutput(this.host.outputDirectory(), output, maxOutputBytes, outputSaved)
-      bounded = output !== originalOutput
-    } catch (error) {
-      output = unsavedToolOutput(originalOutput, error, maxOutputBytes)
-    }
-    profileToolOutputShape(this.host.sessionId(), this.host.kind, call.name, originalOutput, output, bounded)
+    const { text, bounded } = await this.boundOutput(output, maxOutputBytes, outputSaved)
+    const preview =
+      resultPreview !== undefined && failure === undefined && !toolFailed(text)
+        ? (await this.boundOutput(redactText(resultPreview))).text
+        : undefined
+    profileToolOutputShape(this.host.sessionId(), this.host.kind, call.name, output, text, bounded)
     return {
-      ...this.outcome(call, title, readOnly, output, undefined, events, execution),
+      ...this.outcome(call, title, readOnly, text, undefined, events, execution),
+      ...(preview === undefined ? {} : { preview }),
       ...(scope ? { loopOutput } : {}),
-      ...(bounded || (outputSaved && output === originalOutput) ? { outputSaved: true } : {}),
-      ...(read && readOutput === output ? { read } : {}),
+      ...(bounded || (outputSaved && text === output) ? { outputSaved: true } : {}),
+      ...(read && readOutput === text ? { read } : {}),
       ...(images ? { images } : {}),
+    }
+  }
+
+  private async boundOutput(
+    output: string,
+    maximumBytes?: number,
+    outputSaved = false,
+  ): Promise<{ text: string; bounded: boolean }> {
+    try {
+      const text = await boundToolOutput(this.host.outputDirectory(), output, maximumBytes, outputSaved)
+      return { text, bounded: text !== output }
+    } catch (error) {
+      return { text: unsavedToolOutput(output, error, maximumBytes), bounded: false }
     }
   }
 
@@ -750,6 +764,7 @@ export class ToolCallRunner {
       title: outcome.title,
       readOnly: outcome.readOnly,
       output: outcome.output,
+      ...(outcome.preview === undefined ? {} : { preview: outcome.preview }),
       ...(outcome.execution ? { execution: outcome.execution } : {}),
       ...(outcome.denial ? { denial: outcome.denial } : {}),
     })

@@ -73,6 +73,7 @@ function toolBlock(overrides: Partial<ToolBlock>): ToolBlock {
     readOnly: true,
     denial: undefined,
     output: "ok",
+    preview: undefined,
     execution: undefined,
     elapsed: undefined,
     expanded: false,

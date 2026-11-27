@@ -25,7 +25,7 @@ use redactor::SecretMatcher;
 
 #[napi(js_name = "apiVersion", catch_unwind)]
 pub fn api_version() -> u32 {
-    16
+    17
 }
 
 #[napi]

@@ -10,7 +10,7 @@ import {
 import type { DenialCause } from "../../../agent/events"
 import { appInfo } from "../../../app-info"
 import { formatTokens } from "../../../lib/format"
-import { parseBoundedToolOutput } from "../../../tools/output"
+import { parseBoundedToolOutput, toolDisplayOutput } from "../../../tools/output"
 import { withToolRenderer, type ToolRenderer } from "../../../ui/extension"
 import { commandLabel, settledStatus, type ToolOutcome } from "../components/tool-status"
 import { formatTimestamp } from "../lib/format"
@@ -328,7 +328,8 @@ function tool(
   )
   box.add(head)
 
-  if (!detailsVisible || (block.output.length === 0 && !multilineTitle)) {
+  const bodyText = toolDisplayOutput(block.output, block.preview)
+  if (!detailsVisible || (bodyText.length === 0 && !multilineTitle)) {
     return frame(ctx, box, marginTop)
   }
 
@@ -345,14 +346,14 @@ function tool(
     command.add(script)
     box.add(command)
   }
-  if (block.output.length === 0) return frame(ctx, box, marginTop)
+  if (bodyText.length === 0) return frame(ctx, box, marginTop)
 
   const custom =
     !coreOutput && toolRenderer
-      ? withToolRenderer(block.tool, (renderer) => renderer?.renderOutput?.(block.output, width))
+      ? withToolRenderer(block.tool, (renderer) => renderer?.renderOutput?.(bodyText, width))
       : undefined
   const maxRows = coreOutput ? MAX_OUTPUT_ROWS : (toolRenderer?.maxRows ?? MAX_OUTPUT_ROWS)
-  const output = custom?.value ?? renderToolOutput(block.output, width, maxRows)
+  const output = custom?.value ?? renderToolOutput(bodyText, width, maxRows)
   const body = detailPanel(ctx, { marginLeft: 2 })
   const content = label(ctx, { content: output.content, height: output.rows })
   if (!custom?.value) {

@@ -293,12 +293,14 @@ function parseEvent(raw: unknown): AgentEvent | undefined {
       const tool = asString(raw.tool)
       const title = asString(raw.title)
       const output = asString(raw.output)
+      const preview = asString(raw.preview)
       const execution = parseProcessExecution(raw.execution)
       if (
         !callId ||
         !tool ||
         title === undefined ||
         output === undefined ||
+        (raw.preview !== undefined && preview === undefined) ||
         (raw.execution !== undefined && execution === undefined)
       ) {
         return undefined
@@ -310,6 +312,7 @@ function parseEvent(raw: unknown): AgentEvent | undefined {
         title,
         readOnly: asBoolean(raw.readOnly) ?? false,
         output,
+        ...(preview === undefined ? {} : { preview }),
         ...(execution ? { execution } : {}),
         denial: parseDenial(raw.denial),
       }

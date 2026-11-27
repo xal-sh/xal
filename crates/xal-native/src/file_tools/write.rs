@@ -69,6 +69,7 @@ impl Task for WriteTask {
             return Ok(NativeFileToolOutput {
                 output: format!("Unchanged {}", self.display_path).into(),
                 content_hash: content_hash(utf16_lossy(&self.content).as_bytes()),
+                preview: None,
             });
         }
         let diff = unified_diff(previous.as_deref().unwrap_or(&[]), &self.content);
@@ -78,17 +79,22 @@ impl Task for WriteTask {
         let bytes = utf16_lossy(&self.content);
         replace::replace_file(&self.path, bytes.as_bytes(), previous.is_some())
             .map_err(io_error)?;
-        let header = if previous.is_some() {
-            format!(
+        let (output, preview) = if previous.is_some() {
+            let header = format!(
                 "Updated {} (+{} -{})",
                 self.display_path, diff.added, diff.removed
-            )
+            );
+            (with_diff(header, &diff.hunks).into(), None)
         } else {
-            format!("Created {} ({} lines)", self.display_path, diff.added)
+            (
+                format!("Created {} ({} lines)", self.display_path, diff.added).into(),
+                (!diff.hunks.is_empty()).then(|| diff.hunks.into()),
+            )
         };
         Ok(NativeFileToolOutput {
-            output: with_diff(header, &diff.hunks).into(),
+            output,
             content_hash: content_hash(bytes.as_bytes()),
+            preview,
         })
     }
 

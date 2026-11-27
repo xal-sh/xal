@@ -66,7 +66,12 @@ function redactBlock(block: Block): Block {
     case "plan":
       return { ...block, path: redactText(block.path), text: redactText(block.text) }
     case "tool":
-      return { ...block, title: redactText(block.title), output: redactText(block.output) }
+      return {
+        ...block,
+        title: redactText(block.title),
+        output: redactText(block.output),
+        preview: block.preview === undefined ? undefined : redactText(block.preview),
+      }
   }
 }
 

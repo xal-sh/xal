@@ -17,7 +17,7 @@ import {
   parseWorktreeToolPreparation,
   parsePathRanker,
   parseSearchOutcome,
-  parseFileToolOutput,
+  parseWriteOutput,
   parseEditOutput,
   parseReadOutput,
   parseToolOutput,
@@ -40,7 +40,7 @@ import {
   type NativeReadRequest,
   type NativeSearchOutcome,
   type NativeSkillRequest,
-  type NativeFileToolOutput,
+  type NativeWriteOutput,
   type NativeEditOutput,
   type NativeReadOutput,
   type NativeToolOutput,
@@ -83,7 +83,7 @@ export type {
   NativeReadRequest,
   NativeSearchOutcome,
   NativeSkillRequest,
-  NativeFileToolOutput,
+  NativeWriteOutput,
   NativeEditOutput,
   NativeReadOutput,
   NativeToolOutput,
@@ -143,7 +143,7 @@ interface NativeBinding {
   }): NativeToolOutput
   readFile(request: NativeReadRequest): Promise<NativeReadOutput>
   editFile(request: NativeEditRequest): Promise<NativeEditOutput>
-  writeFile(request: NativeWriteRequest): Promise<NativeFileToolOutput>
+  writeFile(request: NativeWriteRequest): Promise<NativeWriteOutput>
   skill(request: NativeSkillRequest): Promise<NativeToolOutput>
   webFetch(request: NativeWebFetchRequest, signal?: AbortSignal): Promise<NativeToolOutput>
   htmlToMarkdown(html: string): string
@@ -398,10 +398,7 @@ function createBinding(value: unknown): NativeBinding {
       return parseEditOutput(await Promise.resolve(Reflect.apply(nativeEditFile, value, [request])))
     },
     async writeFile(request) {
-      return parseFileToolOutput(
-        await Promise.resolve(Reflect.apply(nativeWriteFile, value, [request])),
-        "native write returned an invalid value",
-      )
+      return parseWriteOutput(await Promise.resolve(Reflect.apply(nativeWriteFile, value, [request])))
     },
     async skill(request) {
       return parseToolOutput(
@@ -566,7 +563,7 @@ export function nativeEditFile(request: NativeEditRequest): Promise<NativeEditOu
   return nativeBinding().editFile(request)
 }
 
-export function nativeWriteFile(request: NativeWriteRequest): Promise<NativeFileToolOutput> {
+export function nativeWriteFile(request: NativeWriteRequest): Promise<NativeWriteOutput> {
   return nativeBinding().writeFile(request)
 }
 

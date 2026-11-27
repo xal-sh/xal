@@ -17,6 +17,10 @@ export function toolFailed(output: string): boolean {
   return output.startsWith(TOOL_FAILED_PREFIX) || output.startsWith(TOOL_OUTPUT_UNSAVED_PREFIX)
 }
 
+export function toolDisplayOutput(output: string, preview?: string): string {
+  return preview === undefined ? output : `${output}\n${preview}`
+}
+
 export interface BoundedToolOutputInfo {
   lines: number
   path: string

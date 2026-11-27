@@ -96,6 +96,8 @@ When the UI or CLI exits, Xal aborts `ctx.signal` so in-progress bootstrap work 
 
 Tools that save their own output may return `outputSaved: true` alongside an output preview ending in `Full output saved to: <path>` or `Partial output saved to: <path>`. Set this only after successfully closing the artifact. The harness can then shrink that preview without saving a second artifact containing only the first preview. This transient execution metadata is cleared when redaction or a hook changes the returned text; it is not restored from transcript text.
 
+For content the model already has, a tool can return an optional `preview` field. The transcript shows it after `output`. The model and `afterTool` hooks receive only `output`.
+
 ## Hooks
 
 Plugins register trusted lifecycle hooks with `ctx.registerHook`. Hooks run in built-in and configured-plugin order. Multiple hooks for the same event run sequentially, and a replacement from one hook becomes the input to the next.

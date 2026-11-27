@@ -32,6 +32,7 @@ pub struct NativeToolOutput {
 pub struct NativeFileToolOutput {
     pub output: Utf16String,
     pub content_hash: String,
+    pub preview: Option<Utf16String>,
 }
 
 pub struct ContentHasher(Sha256);

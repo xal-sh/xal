@@ -80,6 +80,10 @@ export interface NativeFileToolOutput extends NativeToolOutput {
   contentHash: string
 }
 
+export interface NativeWriteOutput extends NativeFileToolOutput {
+  preview?: string
+}
+
 export interface NativeEditOutput extends NativeFileToolOutput {
   previousContentHash: string
 }
@@ -370,6 +374,16 @@ export function parseFileToolOutput(value: unknown, message: string): NativeFile
   const contentHash = asString(value.contentHash)
   if (output === undefined || contentHash === undefined) throw new Error(message)
   return { output, contentHash }
+}
+
+export function parseWriteOutput(value: unknown): NativeWriteOutput {
+  const message = "native write returned an invalid value"
+  if (!isRecord(value)) throw new Error(message)
+  const result = parseFileToolOutput(value, message)
+  if (value.preview === undefined) return result
+  const preview = asString(value.preview)
+  if (preview === undefined) throw new Error(message)
+  return { ...result, preview }
 }
 
 export function parseEditOutput(value: unknown): NativeEditOutput {
