@@ -133,7 +133,7 @@ test("automatic output offloading invalidates write authorization until a fresh 
 test("round-budget shortening cannot authorize a write even within the same tool-call round", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "xal-read-budget-"))
   try {
-    const content = `${"x".repeat(40)}\n`.repeat(900)
+    const content = `${"x".repeat(1024)}\n`.repeat(45)
     const paths = Array.from({ length: 5 }, (_, index) => join(cwd, `${index}.txt`))
     await Promise.all(paths.map((path) => writeFile(path, content)))
     const provider = new ScriptedProvider([
