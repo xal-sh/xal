@@ -114,7 +114,7 @@ impl Task for ReadTask {
                 continue;
             }
             let source = String::from_utf8_lossy(&buffer);
-            let mut row = format!("{:>6}: ", total).encode_utf16().collect::<Vec<_>>();
+            let mut row = line_prefix(total).encode_utf16().collect::<Vec<_>>();
             row.extend(truncate_line(&source));
             if output.len() + row.len() + 1 > MAX_OUTPUT_UNITS && !output.is_empty() {
                 retaining = false;

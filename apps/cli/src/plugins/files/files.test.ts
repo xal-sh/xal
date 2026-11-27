@@ -225,8 +225,8 @@ test("edit matches text copied from read output and CRLF files", async () => {
     const numberedResult = await editTool.execute(
       {
         file_path: "numbered.txt",
-        old_string: "     1: alpha\n     2: beta\n",
-        new_string: "     1: gamma\n     2: beta\n",
+        old_string: "1\talpha\n2\tbeta\n",
+        new_string: "1\tgamma\n2\tbeta\n",
       },
       context(workspace),
     )
@@ -235,7 +235,7 @@ test("edit matches text copied from read output and CRLF files", async () => {
     await editTool.execute(
       {
         file_path: "numbered.txt",
-        old_string: "     1: gamma\n     2: beta\n",
+        old_string: "1\tgamma\n2\tbeta\n",
         new_string: "delta\nbeta\n",
       },
       context(workspace),
@@ -254,12 +254,12 @@ test("edit matches text copied from read output and CRLF files", async () => {
     expect(crlfResult.output).toContain("Updated crlf.txt (+2 -2)")
 
     const literal = join(workspace, "literal.txt")
-    await writeFile(literal, "     1: kept\n")
+    await writeFile(literal, "1\tkept\n")
     await editTool.execute(
-      { file_path: "literal.txt", old_string: "     1: kept\n", new_string: "     1: next\n" },
+      { file_path: "literal.txt", old_string: "1\tkept\n", new_string: "1\tnext\n" },
       context(workspace),
     )
-    expect(await readFile(literal, "utf8")).toBe("     1: next\n")
+    expect(await readFile(literal, "utf8")).toBe("1\tnext\n")
   })
 })
 
@@ -353,10 +353,10 @@ test("read preserves Unicode, line truncation, and continuation wording", async 
     await writeFile(join(workspace, "unicode.txt"), `first\n猫 🔐\n${"x".repeat(2001)}\nlast\n`)
     const first = await readForSession({ file_path: "unicode.txt", offset: 2, limit: 2 }, context(workspace))
     expect(first.output).toBe(
-      `     2: 猫 🔐\n     3: ${"x".repeat(2000)}… (line truncated)\n(Showing lines 2-3 of 4. Use offset=4 to continue.)`,
+      `2\t猫 🔐\n3\t${"x".repeat(2000)}… (line truncated)\n(Showing lines 2-3 of 4. Use offset=4 to continue.)`,
     )
     expect((await readForSession({ file_path: "unicode.txt", offset: 4 }, context(workspace))).output).toBe(
-      "     4: last\n(End of file - 4 lines)",
+      "4\tlast\n(End of file - 4 lines)",
     )
     await expect(readTool.execute({ file_path: "unicode.txt", offset: 5 }, context(workspace))).rejects.toThrow(
       "Offset 5 is past the end of the file (4 lines)",

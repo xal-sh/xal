@@ -18,7 +18,7 @@ The limit applies to primary and task-agent sessions independently, including re
 
 | Tool    | Purpose                                                                  | Availability        |
 | ------- | ------------------------------------------------------------------------ | ------------------- |
-| `read`  | Read a text file with line numbers, or list a directory's entries.       | Always              |
+| `read`  | Read lines prefixed by their number and a tab, or list a directory.      | Always              |
 | `write` | Replace a file entirely, or create it along with missing parent folders. | Writable modes only |
 | `edit`  | Replace exact text in an existing file, once or several times per call.  | Writable modes only |
 

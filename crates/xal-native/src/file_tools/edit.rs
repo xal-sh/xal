@@ -134,23 +134,11 @@ fn align_newlines(haystack: &[u16], needle: &[u16]) -> Vec<u16> {
 }
 
 fn read_line_prefix_len(line: &[u16]) -> Option<usize> {
-    let mut index = 0;
-    while index < line.len() && index < 5 && line[index] == b' ' as u16 {
-        index += 1;
-    }
-    let digits_at = index;
-    while index < line.len() && (b'0' as u16..=b'9' as u16).contains(&line[index]) {
-        index += 1;
-    }
-    if index == digits_at || index < 6 {
-        return None;
-    }
-    if line.get(index).copied() != Some(b':' as u16)
-        || line.get(index + 1).copied() != Some(b' ' as u16)
-    {
-        return None;
-    }
-    Some(index + 2)
+    let digits = line
+        .iter()
+        .take_while(|unit| (b'0' as u16..=b'9' as u16).contains(*unit))
+        .count();
+    (digits > 0 && line.get(digits).copied() == Some(b'\t' as u16)).then_some(digits + 1)
 }
 
 fn strip_read_prefixes(units: &[u16]) -> Option<Vec<u16>> {
@@ -257,7 +245,9 @@ fn closest_match(text: &str, old: &str) -> Option<String> {
         } else {
             (*line).to_owned()
         };
-        hint.push_str(&format!("\n{:>6}: {line}", start + offset + 1));
+        hint.push('\n');
+        hint.push_str(&line_prefix(start + offset + 1));
+        hint.push_str(&line);
     }
     if shown < width {
         hint.push_str(&format!("\n... {} more lines", width - shown));
@@ -473,7 +463,7 @@ mod tests {
             )
             .as_deref(),
             Some(
-                "The closest text is lines 2-4, where 2 of 3 non-blank lines match ignoring whitespace:\n     2:     let total = 1;\n     3:     println!(\"{total}\");\n     4: }"
+                "The closest text is lines 2-4, where 2 of 3 non-blank lines match ignoring whitespace:\n2\t    let total = 1;\n3\t    println!(\"{total}\");\n4\t}"
             )
         );
         assert_eq!(closest_match(text, "unrelated\nlines\n"), None);
@@ -523,22 +513,25 @@ mod tests {
 
     #[test]
     fn detects_read_line_prefixes() {
-        assert_eq!(read_line_prefix_len(&units("     1: code")), Some(8));
-        assert_eq!(read_line_prefix_len(&units("    12: code")), Some(8));
-        assert_eq!(read_line_prefix_len(&units("1000000: code")), Some(9));
-        assert_eq!(read_line_prefix_len(&units("1: code")), None);
+        assert_eq!(read_line_prefix_len(&units("1\tcode")), Some(2));
+        assert_eq!(read_line_prefix_len(&units("12\tcode")), Some(3));
+        assert_eq!(read_line_prefix_len(&units("1000000\tcode")), Some(8));
+        assert_eq!(read_line_prefix_len(&units("     1: code")), None);
+        assert_eq!(read_line_prefix_len(&units("    12: code")), None);
+        assert_eq!(read_line_prefix_len(&units("1000000: code")), None);
+        assert_eq!(read_line_prefix_len(&units("\tcode")), None);
         assert_eq!(read_line_prefix_len(&units("code")), None);
     }
 
     #[test]
     fn strips_read_prefixes_only_when_every_line_has_them() {
         assert_eq!(
-            strip_read_prefixes(&units("     1: alpha\n     2: beta\n")),
-            Some(units("alpha\nbeta\n"))
+            strip_read_prefixes(&units("1\t\talpha\n2\tbeta\n")),
+            Some(units("\talpha\nbeta\n"))
         );
-        assert_eq!(strip_read_prefixes(&units("     1: alpha\nbeta\n")), None);
+        assert_eq!(strip_read_prefixes(&units("1\talpha\nbeta\n")), None);
         assert_eq!(
-            strip_read_prefixes(&units("     1: alpha\r\n     2: beta")),
+            strip_read_prefixes(&units("1\talpha\r\n2\tbeta")),
             Some(units("alpha\r\nbeta"))
         );
     }
@@ -565,15 +558,11 @@ mod tests {
 
     #[test]
     fn resolve_match_keeps_exact_prefixed_file_content() {
-        let previous = units("     1: kept\n");
-        let (old, new, positions) = resolve_match(
-            &previous,
-            &units("     1: kept\n"),
-            &units("     1: next\n"),
-        );
+        let previous = units("1\tkept\n");
+        let (old, new, positions) = resolve_match(&previous, &previous, &units("1\tnext\n"));
         assert_eq!(positions, vec![0]);
-        assert_eq!(old, units("     1: kept\n"));
-        assert_eq!(new, units("     1: next\n"));
+        assert_eq!(old, previous);
+        assert_eq!(new, units("1\tnext\n"));
     }
 
     #[test]
@@ -581,8 +570,8 @@ mod tests {
         let previous = units("alpha\r\nbeta\r\n");
         let (old, new, positions) = resolve_match(
             &previous,
-            &units("     1: alpha\n     2: beta\n"),
-            &units("     1: gamma\n     2: beta\n"),
+            &units("1\talpha\n2\tbeta\n"),
+            &units("1\tgamma\n2\tbeta\n"),
         );
         assert_eq!(positions, vec![0]);
         assert_eq!(old, units("alpha\r\nbeta\r\n"));

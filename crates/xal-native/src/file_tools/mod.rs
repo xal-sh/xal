@@ -171,6 +171,10 @@ fn truncate_line(line: &str) -> Vec<u16> {
     truncate_utf16(line, MAX_LINE_UNITS, "… (line truncated)")
 }
 
+fn line_prefix(number: usize) -> String {
+    format!("{number}\t")
+}
+
 fn with_diff(header: String, hunks: &[u16]) -> Vec<u16> {
     let mut output = header.encode_utf16().collect::<Vec<_>>();
     if hunks.is_empty() {
