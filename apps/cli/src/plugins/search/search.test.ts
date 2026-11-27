@@ -41,7 +41,7 @@ test("grep honors ignores, includes hidden files, and preserves content and file
       { pattern: "NEEDLE", case_insensitive: true, glob: "*.ts" },
       context(workspace),
     )
-    expect(content.output).toBe("Found 1 matching line\nsrc/match.ts:2:needle visible")
+    expect(content.output).toBe("Found 1 matching line\nsrc/match.ts\n2:needle visible")
 
     const files = await grepTool.execute({ pattern: "needle", output_mode: "files" }, context(workspace))
     expect(files.output).toBe("Found 3 files\n.hidden\nsrc/match.ts\nsrc/other.js")
@@ -57,11 +57,11 @@ test("grep handles explicit targets, invalid expressions, literal text, binary f
     await writeFile(join(workspace, "nested", "binary.txt"), "needle\u0000binary")
 
     const target = await grepTool.execute({ pattern: "needle", path: "nested" }, context(workspace))
-    expect(target.output).toBe("Found 1 matching line\nnested/target.txt:1:[Omitted long matching line]")
+    expect(target.output).toBe("Found 1 matching line\nnested/target.txt\n1:[Omitted long matching line]")
     await expect(grepTool.execute({ pattern: "[" }, context(workspace))).rejects.toThrow("ripgrep error:")
     await writeFile(join(workspace, "nested", "call.ts"), "run(a.b)\nrunaxb\n")
     const literal = await grepTool.execute({ pattern: "run(a.b)", literal: true, path: "nested" }, context(workspace))
-    expect(literal.output).toBe("Found 1 matching line\nnested/call.ts:1:run(a.b)")
+    expect(literal.output).toBe("Found 1 matching line\nnested/call.ts\n1:run(a.b)")
 
     const abort = new AbortController()
     abort.abort()
@@ -95,7 +95,7 @@ test("grep and glob match globs relative to the search path and say when a glob 
     const absolute = await globTool.execute({ pattern: join(workspace, "src", "*.ts") }, context(workspace))
     expect(absolute.output.split("\n")[0]).toBe("Found 2 files")
     const filtered = await grepTool.execute({ pattern: "needle", path: "src", glob: "tools/**" }, context(workspace))
-    expect(filtered.output).toBe("Found 1 matching line\nsrc/tools/registry.ts:1:needle")
+    expect(filtered.output).toBe("Found 1 matching line\nsrc/tools/registry.ts\n1:needle")
     const excluded = await grepTool.execute({ pattern: "needle", glob: "*.rs" }, context(workspace))
     expect(excluded.output).toBe(
       "No files match glob *.rs, so nothing was searched. Globs match paths relative to the search path or the working directory.",
@@ -111,7 +111,7 @@ test("grep fails on line breaks unless multiline is set, then shows every line o
       "Set multiline to true to match across lines",
     )
     const result = await grepTool.execute({ pattern: "call\\(\\n\\s*first", multiline: true }, context(workspace))
-    expect(result.output).toBe("Found 1 match\ncode.ts:1:call(\ncode.ts:2:  first,")
+    expect(result.output).toBe("Found 1 match\ncode.ts\n1:call(\n2:  first,")
   })
 })
 
@@ -120,13 +120,14 @@ test("grep counts every match while retaining only the first 250 lines", async (
     const content = Array.from({ length: 260 }, (_, index) => `needle ${index}`).join("\n")
     await writeFile(join(workspace, "many.txt"), content)
     const result = await grepTool.execute({ pattern: "needle" }, context(workspace))
-    expect(result.output.startsWith("Found 260 matching lines\n")).toBe(true)
+    expect(result.output.startsWith("Found 260 matching lines\nmany.txt\n1:needle 0\n")).toBe(true)
     expect(
       result.output.endsWith("(Showing 1-250 of 260. Narrow your pattern or path, or pass offset 250 for more.)"),
     ).toBe(true)
     const rest = await grepTool.execute({ pattern: "needle", offset: 250 }, context(workspace))
     expect(rest.output.split("\n").slice(1)).toEqual([
-      ...Array.from({ length: 10 }, (_, index) => `many.txt:${index + 251}:needle ${index + 250}`),
+      "many.txt",
+      ...Array.from({ length: 10 }, (_, index) => `${index + 251}:needle ${index + 250}`),
       "(Showing 251-260 of 260.)",
     ])
     await expect(grepTool.execute({ pattern: "needle", offset: -1 }, context(workspace))).rejects.toThrow(
@@ -138,25 +139,25 @@ test("grep counts every match while retaining only the first 250 lines", async (
 test("grep shows surrounding context and separates non-adjacent groups", async () => {
   await withWorkspace(async (workspace) => {
     await writeFile(join(workspace, "code.ts"), "a\nneedle one\nb\nc\nd\ne\nneedle two\nf\n")
+    await writeFile(join(workspace, "other.ts"), "needle three\n")
     const result = await grepTool.execute({ pattern: "needle", context: 1 }, context(workspace))
-    expect(result.output).toBe(
-      [
-        "Found 2 matching lines",
-        "code.ts-1-a",
-        "code.ts:2:needle one",
-        "code.ts-3-b",
-        "--",
-        "code.ts-6-e",
-        "code.ts:7:needle two",
-        "code.ts-8-f",
-      ].join("\n"),
-    )
+    const remainingRows = ["6-e", "7:needle two", "8-f", "", "other.ts", "1:needle three"]
+    expect(result.output.split("\n")).toEqual([
+      "Found 3 matching lines",
+      "code.ts",
+      "1-a",
+      "2:needle one",
+      "3-b",
+      "--",
+      ...remainingRows,
+    ])
     const paged = await grepTool.execute({ pattern: "needle", context: 1, offset: 1 }, context(workspace))
-    expect(paged.output).toBe(
-      ["Found 2 matching lines", "code.ts-6-e", "code.ts:7:needle two", "code.ts-8-f", "(Showing 2-2 of 2.)"].join(
-        "\n",
-      ),
-    )
+    expect(paged.output.split("\n")).toEqual([
+      "Found 3 matching lines",
+      "code.ts",
+      ...remainingRows,
+      "(Showing 2-3 of 3.)",
+    ])
   })
 })
 
