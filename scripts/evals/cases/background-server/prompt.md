@@ -1,0 +1,1 @@
+server.js starts an HTTP server and prints the address it listens on. Start it, request /health, save the exact response body to health.txt, then stop the server gracefully. Leave its .server.* files in place for verification.
