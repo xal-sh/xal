@@ -7,7 +7,7 @@ const LIMIT = 250
 
 export const grepTool: Tool = {
   name: "grep",
-  description: `Search file contents with a regular expression. Respects .gitignore. Returns matching file paths, or matching lines grouped under each file's path, with line numbers, in content mode. Shows at most ${LIMIT} results starting at offset; the footer says how many were left out and which offset continues.`,
+  description: `Search file contents with a regular expression. Respects .gitignore. Returns matching paths or numbered matches under each path in content mode. Shows at most ${LIMIT} results starting at offset. The footer says how many were left out and which offset continues.`,
   parameters: {
     type: "object",
     properties: {
@@ -47,7 +47,7 @@ export const grepTool: Tool = {
       context: {
         type: "number",
         description:
-          "Lines of context to show before and after each match in content mode, at most 10. Context lines use line-text instead of line:text, and -- separates non-adjacent groups within a file",
+          "Lines before and after each match in content mode (max 10). Matches use line:text and context uses line-text. -- separates non-adjacent groups within a file",
       },
       offset: {
         type: "number",
