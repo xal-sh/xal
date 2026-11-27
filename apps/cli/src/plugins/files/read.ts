@@ -10,7 +10,7 @@ const MAX_LINE_CHARS = 2000
 
 export const readTool: Tool = {
   name: "read",
-  description: `Read a text file and return its content with each line prefixed by its line number and a tab. Returns up to ${DEFAULT_LIMIT} lines starting at offset and truncates lines longer than ${MAX_LINE_CHARS} characters; the footer states which offset continues the file when more remains. Given a directory, lists its entries instead. A PNG or JPEG image up to ${MAX_IMAGE_BYTES / 1024 / 1024} MB is returned as an image the model can view, when the model accepts image input. Fails on other binary files and missing paths, naming similarly named files in the same directory. Paths are absolute or relative to the working directory.`,
+  description: `Read a text file and return its content with each line prefixed by its line number and →. Returns up to ${DEFAULT_LIMIT} lines starting at offset and truncates lines longer than ${MAX_LINE_CHARS} characters; the footer states which offset continues the file when more remains. Given a directory, lists its entries instead. A PNG or JPEG image up to ${MAX_IMAGE_BYTES / 1024 / 1024} MB is returned as an image the model can view, when the model accepts image input. Fails on other binary files and missing paths, naming similarly named files in the same directory. Paths are absolute or relative to the working directory.`,
   parameters: {
     type: "object",
     properties: {

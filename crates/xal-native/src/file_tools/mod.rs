@@ -172,7 +172,7 @@ fn truncate_line(line: &str) -> Vec<u16> {
 }
 
 fn line_prefix(number: usize) -> String {
-    format!("{number}\t")
+    format!("{number}→")
 }
 
 fn with_diff(header: String, hunks: &[u16]) -> Vec<u16> {

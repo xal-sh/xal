@@ -138,7 +138,7 @@ fn read_line_prefix_len(line: &[u16]) -> Option<usize> {
         .iter()
         .take_while(|unit| (b'0' as u16..=b'9' as u16).contains(*unit))
         .count();
-    (digits > 0 && line.get(digits).copied() == Some(b'\t' as u16)).then_some(digits + 1)
+    (digits > 0 && line.get(digits).copied() == Some('→' as u16)).then_some(digits + 1)
 }
 
 fn strip_read_prefixes(units: &[u16]) -> Option<Vec<u16>> {
@@ -463,7 +463,7 @@ mod tests {
             )
             .as_deref(),
             Some(
-                "The closest text is lines 2-4, where 2 of 3 non-blank lines match ignoring whitespace:\n2\t    let total = 1;\n3\t    println!(\"{total}\");\n4\t}"
+                "The closest text is lines 2-4, where 2 of 3 non-blank lines match ignoring whitespace:\n2→    let total = 1;\n3→    println!(\"{total}\");\n4→}"
             )
         );
         assert_eq!(closest_match(text, "unrelated\nlines\n"), None);
@@ -513,25 +513,26 @@ mod tests {
 
     #[test]
     fn detects_read_line_prefixes() {
-        assert_eq!(read_line_prefix_len(&units("1\tcode")), Some(2));
-        assert_eq!(read_line_prefix_len(&units("12\tcode")), Some(3));
-        assert_eq!(read_line_prefix_len(&units("1000000\tcode")), Some(8));
+        assert_eq!(read_line_prefix_len(&units("1→code")), Some(2));
+        assert_eq!(read_line_prefix_len(&units("12→code")), Some(3));
+        assert_eq!(read_line_prefix_len(&units("1000000→code")), Some(8));
+        assert_eq!(read_line_prefix_len(&units("1\tcode")), None);
         assert_eq!(read_line_prefix_len(&units("     1: code")), None);
         assert_eq!(read_line_prefix_len(&units("    12: code")), None);
         assert_eq!(read_line_prefix_len(&units("1000000: code")), None);
-        assert_eq!(read_line_prefix_len(&units("\tcode")), None);
+        assert_eq!(read_line_prefix_len(&units("→code")), None);
         assert_eq!(read_line_prefix_len(&units("code")), None);
     }
 
     #[test]
     fn strips_read_prefixes_only_when_every_line_has_them() {
         assert_eq!(
-            strip_read_prefixes(&units("1\t\talpha\n2\tbeta\n")),
-            Some(units("\talpha\nbeta\n"))
+            strip_read_prefixes(&units("1→→alpha\n2→beta\n")),
+            Some(units("→alpha\nbeta\n"))
         );
-        assert_eq!(strip_read_prefixes(&units("1\talpha\nbeta\n")), None);
+        assert_eq!(strip_read_prefixes(&units("1→alpha\nbeta\n")), None);
         assert_eq!(
-            strip_read_prefixes(&units("1\talpha\r\n2\tbeta")),
+            strip_read_prefixes(&units("1→alpha\r\n2→beta")),
             Some(units("alpha\r\nbeta"))
         );
     }
@@ -558,11 +559,24 @@ mod tests {
 
     #[test]
     fn resolve_match_keeps_exact_prefixed_file_content() {
-        let previous = units("1\tkept\n");
-        let (old, new, positions) = resolve_match(&previous, &previous, &units("1\tnext\n"));
+        let previous = units("1→kept\n");
+        let (old, new, positions) = resolve_match(&previous, &previous, &units("1→next\n"));
         assert_eq!(positions, vec![0]);
         assert_eq!(old, previous);
-        assert_eq!(new, units("1\tnext\n"));
+        assert_eq!(new, units("1→next\n"));
+    }
+
+    #[test]
+    fn resolve_match_preserves_numeric_tsv_fields() {
+        let previous = units("100\told");
+        let replacement = units("100\tnew");
+        let (old, new, positions) = resolve_match(&previous, &units("1→100\told"), &replacement);
+        assert_eq!(old, previous);
+        assert_eq!(new, replacement);
+        assert_eq!(positions, vec![0]);
+
+        let (_, _, positions) = resolve_match(&previous, &units("1\t100\told"), &replacement);
+        assert!(positions.is_empty());
     }
 
     #[test]
@@ -570,8 +584,8 @@ mod tests {
         let previous = units("alpha\r\nbeta\r\n");
         let (old, new, positions) = resolve_match(
             &previous,
-            &units("1\talpha\n2\tbeta\n"),
-            &units("1\tgamma\n2\tbeta\n"),
+            &units("1→alpha\n2→beta\n"),
+            &units("1→gamma\n2→beta\n"),
         );
         assert_eq!(positions, vec![0]);
         assert_eq!(old, units("alpha\r\nbeta\r\n"));
