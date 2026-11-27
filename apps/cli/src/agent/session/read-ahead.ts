@@ -23,6 +23,7 @@ const THRESHOLD = 0.7
 const TIMEOUT_MS = 5_000
 const OMITTED = " [... omitted ...] "
 const TOKEN_PATTERN = /[A-Za-z0-9_@~./-]+/g
+const GREP_ROW = /^\d+[:-]/
 const PREFETCHED_MARKER = "[read-ahead] Prefetched "
 const PREFETCHED_LINE = /^\[read-ahead\] Prefetched (.+) because the next step likely needs it:$/gm
 
@@ -124,13 +125,14 @@ async function isFile(path: string): Promise<boolean> {
 function excerptsFor(token: string, inputs: Source[]): string[] {
   const excerpts: string[] = []
   for (const { text, grepContent } of inputs) {
+    const lines = text.split("\n")
     let inFileRows = false
-    for (const line of text.split("\n")) {
-      if (grepContent && line === token) {
-        inFileRows = true
+    for (const [index, line] of lines.entries()) {
+      if (grepContent && (index === 1 || lines[index - 1] === "") && GREP_ROW.test(lines[index + 1] ?? "")) {
+        inFileRows = line === token
         continue
       }
-      inFileRows = inFileRows && /^\d+[:-]/.test(line)
+      inFileRows = inFileRows && GREP_ROW.test(line)
       if (!inFileRows && !line.includes(token)) continue
       excerpts.push(truncateUtf8Middle(line.trim(), 200, OMITTED))
       if (excerpts.length >= MAX_EXCERPTS) return excerpts
